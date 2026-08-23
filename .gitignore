@@ -1,0 +1,33 @@
+# Rust / Cargo build output
+/target
+**/target/
+
+# Frontend dependencies
+frontend/node_modules/
+
+# Entorno e IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Variables de entorno / secretos
+.env
+.env.*
+
+# Logs y salidas de depuración
+*.log
+*.err
+debug_output*.txt
+
+# Datos locales de la empresa (no versionar)
+data/raw/
+
+# Cache de Python
+__pycache__/
+*.pyc
+
+# Artefactos del entorno del agente (no son parte del proyecto)
+.agents/
+skills-lock.json
