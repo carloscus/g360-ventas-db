@@ -5,6 +5,9 @@
 # Frontend dependencies
 frontend/node_modules/
 
+# Frontend build output
+frontend/dist/
+
 # Entorno e IDE
 .vscode/
 .idea/

@@ -7,6 +7,7 @@ async fn main() -> Result<()> {
         .with(fmt::layer())
         .with(EnvFilter::new("info"))
         .init();
+    g360_db_ventas::config::load_dotenv();
     let pool = g360_db_ventas::db::writer::init_pool().await?;
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas")
         .fetch_one(&pool)

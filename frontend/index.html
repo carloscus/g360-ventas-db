@@ -3,11 +3,24 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<meta name="author" content="Carlos Cusi"/>
+<meta name="creator" content="Carlos Cusi"/>
+<meta name="publisher" content="G360"/>
+<meta name="description" content="G360 DB Ventas — captura, limpieza y normalización de ventas CIPSA para CRM. App de escritorio Tauri + SQLite local + Supabase."/>
+<meta name="keywords" content="CIPSA,G360,ventas,CRM,SQLite,Supabase,Tauri,ERP"/>
+<meta name="generator" content="Muse Spark (muse-spark-1.2) via OpenCode — asistencia de IA"/>
+<meta name="application-name" content="G360 DB Ventas"/>
+<meta name="theme-color" content="#0d1a2d"/>
+<meta name="color-scheme" content="dark"/>
+<meta name="robots" content="noindex,nofollow"/>
+<meta property="og:title" content="G360 DB Ventas"/>
+<meta property="og:description" content="Captura y normalización de ventas CIPSA — SQLite local + Supabase para CRM."/>
+<meta property="og:type" content="website"/>
 <title>CIPSA DB ventas</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradient(circle at top,#11233d 0%,#080e1a 55%,#050b12 100%);color:#dfeaf6;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:12px;font-size:14px}
-.app{width:min(100%,760px);min-width:300px;padding:12px;display:flex;flex-direction:column;gap:10px;background:rgba(15,22,34,0.88);border:1px solid rgba(148,163,184,0.18);border-radius:16px;box-shadow:0 16px 40px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04)}
+.app{width:min(100%,680px);min-width:300px;padding:8px;display:flex;flex-direction:column;gap:7px;background:rgba(15,22,34,0.88);border:1px solid rgba(148,163,184,0.18);border-radius:16px;box-shadow:0 16px 40px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04)}
 .header{display:flex;align-items:center;gap:8px;padding-bottom:2px}
 .header img{height:18px;filter:drop-shadow(0 0 8px rgba(0,212,140,0.35))}
 .header h1{font-size:14px;font-weight:700;color:#fff;letter-spacing:0.02em}
@@ -28,30 +41,34 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .progress{height:8px;border-radius:999px;background:rgba(148,163,184,0.12);overflow:hidden}
 .progress-bar{height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#00d48c,#6ee7b7);transition:width .35s ease}
 .db-meta{display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:11px;color:#7e96ad}
-.kpis{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-.kpi{background:rgba(255,255,255,0.03);border-radius:10px;padding:8px;text-align:center;border:1px solid rgba(255,255,255,0.06)}
-.kpi-v{font-size:19px;font-weight:800;color:#00d48c;letter-spacing:-0.02em}
-.kpi-l{font-size:11px;color:#5a7a9a;text-transform:uppercase;letter-spacing:0.08em;margin-top:3px;font-weight:700}
-.info{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-.info-item{background:rgba(255,255,255,0.02);border-radius:6px;padding:6px;text-align:center;border:1px solid rgba(255,255,255,0.04)}
-.info-v{font-size:13px;font-weight:700;color:#e8f4fd;word-break:break-all}
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.kpi{background:rgba(255,255,255,0.03);border-radius:10px;padding:6px;text-align:center;border:1px solid rgba(255,255,255,0.06)}
+.kpi-v{font-size:16px;font-weight:800;color:#00d48c;letter-spacing:-0.02em}
+.kpi-l{font-size:10px;color:#5a7a9a;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;font-weight:700}
+.info{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.info-item{background:rgba(255,255,255,0.02);border-radius:6px;padding:5px;text-align:center;border:1px solid rgba(255,255,255,0.04)}
+.info-v{font-size:12px;font-weight:700;color:#e8f4fd;word-break:break-all}
 .info-l{font-size:10px;color:#4a6a8a;margin-top:1px}
-.task-flow{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.task-flow{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
 .task{padding:6px 5px;border-radius:7px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);font-size:10px;color:#5a7a9a;font-weight:700;text-align:center;letter-spacing:0.04em;text-transform:uppercase;transition:all .2s ease}
 .task.active{background:rgba(0,212,140,0.12);color:#9feec8;border-color:rgba(0,212,140,0.18)}
 .task.done{background:rgba(96,165,250,0.12);color:#bfdbfe;border-color:rgba(96,165,250,0.2)}
-.ctrl{background:rgba(255,255,255,0.03);border-radius:9px;padding:10px;border:1px solid rgba(255,255,255,0.06)}
+.ctrl{background:rgba(255,255,255,0.03);border-radius:9px;padding:7px;border:1px solid rgba(255,255,255,0.06)}
+.btn-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px}
+.btn-grid .btn{margin-top:0}
 .row{display:flex;gap:6px;margin-bottom:6px}
 .row label{font-size:11px;color:#5a7a9a;flex:1;display:flex;flex-direction:column;gap:2px}
 .row input{width:100%;padding:5px 6px;border-radius:4px;border:1px solid rgba(255,255,255,0.1);background:rgba(10,20,35,0.6);color:#fff;font-size:13px;font-family:inherit}
 .row input:focus{outline:none;border-color:#00d48c}
-.btn{width:100%;padding:7px;border:none;border-radius:5px;font-weight:700;font-size:12px;cursor:pointer;margin-top:3px;font-family:inherit;transition:all 0.2s}
+.btn{width:100%;padding:6px;border:none;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer;margin-top:3px;font-family:inherit;transition:all 0.2s}
 .btn-p{background:#00d48c;color:#061220}
 .btn-p:hover{background:#00b377}
 .btn-s{background:rgba(255,255,255,0.06);color:#a8c8e0;border:1px solid rgba(255,255,255,0.08)}
 .btn-s:hover{background:rgba(255,255,255,0.1)}
 .btn-d{background:transparent;color:#f87171;border:1px dashed rgba(248,113,113,0.35)}
 .btn-d:hover{background:rgba(248,113,113,0.08)}
+.btn-ghost{background:rgba(255,255,255,0.06);color:#94a3b8;border:1px solid rgba(255,255,255,0.08);font-weight:400}
+.btn-ghost:hover{background:rgba(255,255,255,0.1);color:#a8c8e0}
 .btn-blue{background:rgba(59,130,246,0.2);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)}
 .btn-blue:hover{background:rgba(59,130,246,0.3)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
@@ -59,8 +76,12 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .status.act{display:flex}
 .status.err{background:rgba(248,113,113,0.08);color:#fca5a5;border-color:rgba(248,113,113,0.15)}
 .dot-sm{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
-.est{display:inline-flex;align-items:center;gap:3px;background:rgba(245,158,11,0.1);border-radius:6px;padding:2px 6px;font-size:9px;color:#fbbf24;font-weight:600;margin-top:4px;border:1px solid rgba(245,158,11,0.2)}
+.est{display:inline-flex;align-items:center;gap:4px;background:rgba(245,158,11,0.12);border-radius:8px;padding:6px 10px;font-size:12px;color:#fbbf24;font-weight:600;margin-top:6px;border:1px solid rgba(245,158,11,0.2);width:100%;box-sizing:border-box}
 .est.hid{display:none}
+.hid{display:none!important}
+.est .phase{color:#fff;font-weight:800;margin-right:4px}
+.est .eta{color:#fbbf24;font-weight:600}
+.est .elapsed{color:#9fb6cb;font-weight:400}
 .footer{text-align:center;margin-top:6px;font-size:9px;color:#3a5a7a}
 .footer span{color:#00d48c}
 .table-container{background:rgba(255,255,255,0.02);border-radius:8px;padding:8px;margin-top:8px;border:1px solid rgba(255,255,255,0.06);max-height:180px;overflow-y:auto}
@@ -90,6 +111,36 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .test-result{margin-top:8px;padding:6px 8px;border-radius:5px;font-size:11px;display:none}
 .test-result.ok{display:block;background:rgba(0,212,140,0.1);color:#6ee7b7}
 .test-result.err{display:block;background:rgba(248,113,113,0.1);color:#fca5a5}
+.btn-warn{background:rgba(245,158,11,0.15);color:#fbbf24;border:1px solid rgba(245,158,11,0.3)}
+.btn-warn:hover{background:rgba(245,158,11,0.25)}
+.month-list{max-height:280px;overflow-y:auto;margin:8px 0}
+.month-item{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);margin-bottom:4px;font-size:12px;transition:all 0.15s}
+.month-item:hover{background:rgba(255,255,255,0.04)}
+.month-item input[type=checkbox]{accent-color:#00d48c;width:14px;height:14px}
+.month-item .month-label{flex:1;color:#dfeaf6;font-weight:600}
+.month-item .month-rows{color:#7e96ad;font-size:11px}
+.month-item .month-sales{color:#9feec8;font-size:11px;font-weight:600}
+.month-select-bar{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.08);margin-bottom:6px;font-size:11px;color:#5a7a9a}
+.month-select-bar label{cursor:pointer;display:flex;align-items:center;gap:4px}
+.month-summary{display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid rgba(255,255,255,0.08);font-size:11px;color:#7e96ad}
+/* ── UI simplificada: pill, menu, dropzone ── */
+.pill{display:flex;align-items:center;gap:6px;border-radius:8px;padding:8px 11px;font-size:11px;font-weight:700;flex:1}
+.pill.ok{background:rgba(0,212,140,.1);color:#6ee7b7;border:1px solid rgba(0,212,140,.2)}
+.pill.sync{background:rgba(59,130,246,.12);color:#93c5fd;border:1px solid rgba(59,130,246,.25)}
+.pill.warn{background:rgba(245,158,11,.12);color:#fbbf24;border:1px solid rgba(245,158,11,.28)}
+.pill.err{background:rgba(248,113,113,.1);color:#fca5a5;border:1px solid rgba(248,113,113,.2)}
+.menu-wrap{position:relative;margin-top:3px}
+.menu{position:absolute;right:0;top:110%;background:#0d1a2d;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:4px;display:none;z-index:60;width:100%;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.menu.open{display:block}
+.menu button{display:block;width:100%;text-align:left;background:none;border:none;color:#d4e6f7;padding:7px 9px;border-radius:5px;font-size:11px;cursor:pointer;font-family:inherit}
+.menu button:hover{background:rgba(255,255,255,.06)}
+.menu .sep{border-top:1px solid rgba(255,255,255,.08);margin:4px 0}
+.menu .danger{color:#f87171}
+.warn-chip{display:inline-flex;align-items:center;background:rgba(245,158,11,.15);color:#fbbf24;border-radius:9px;padding:1px 6px;font-size:9px;font-weight:800;cursor:pointer;border:1px solid rgba(245,158,11,.3);margin-left:5px}
+.warn-chip:hover{background:rgba(245,158,11,.28)}
+.dropzone{border:2px dashed rgba(0,212,140,.35);border-radius:8px;padding:20px 10px;text-align:center;color:#7e96ad;font-size:11px;margin:8px 0;transition:.15s;cursor:pointer;line-height:1.5}
+.dropzone.over{background:rgba(0,212,140,.08);border-color:#00d48c;color:#00d48c}
+.field select{width:100%;padding:6px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(10,20,35,0.8);color:#fff;font-size:13px;font-family:inherit}
 </style>
 </head>
 <body>
@@ -100,11 +151,15 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <div id="dot" class="dot"></div>
 <button class="settings-btn" id="cfgBtn" title="Configuracion">&#9881;</button>
 </div>
-<div id="widgetAlert" class="widget-alert ok"><strong>Local</strong> <span id="widgetAlertText">DB lista</span></div>
+<div id="widgetAlert" class="widget-alert ok"><span id="widgetAlertText">DB lista</span></div>
 <div class="db-process">
-<div class="db-process-head"><span>Base local</span><strong id="dbStateLabel">OK</strong></div>
-<div class="progress"><div class="progress-bar" id="dbProgressBar"></div></div>
-<div class="db-meta"><span id="dbMetaText">Sincronizada</span><span id="dbMetaValue">0 registros</span></div>
+<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+<div class="pill ok" id="statusPill">🟢 Verificando…</div>
+<span id="pctLabel" style="font-size:11px;color:#93c5fd;font-weight:700;min-width:34px;text-align:right"></span>
+</div>
+<div class="progress hid" id="progWrap" style="margin-top:6px"><div class="progress-bar" id="dbProgressBar"></div></div>
+<div id="failedStrip" style="display:none;flex-wrap:wrap;gap:4px;margin-top:5px;max-height:64px;overflow-y:auto"></div>
+<div id="currentItem" class="est hid" style="margin-top:4px;font-size:10px;">⏱ <span id="currentItemText">-</span></div>
 </div>
 <div class="kpis">
 <div class="kpi"><div class="kpi-v" id="k1">-</div><div class="kpi-l">registros</div></div>
@@ -117,21 +172,31 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <div class="info-item"><div class="info-v" id="k6">-</div><div class="info-l">db size</div></div>
 </div>
 <div class="task-flow">
-<div class="task active" data-task="download">descarga</div>
-<div class="task" data-task="parse">parseo</div>
-<div class="task" data-task="clean">orden</div>
-<div class="task" data-task="local">local</div>
+  <div class="task active" data-task="download">captura</div>
+  <div class="task" data-task="parse">proceso</div>
+  <div class="task" data-task="local">local</div>
 </div>
 <div class="ctrl">
 <div class="row">
 <label>desde<input type="date" id="sd"/></label>
 <label>hasta<input type="date" id="ed"/></label>
 </div>
-<button class="btn btn-p" id="cap">ejecutar captura</button>
-<button class="btn btn-s" id="sync">sync ultima</button>
-<button class="btn btn-s" id="clr">limpiar cache</button>
-<button class="btn btn-blue" id="uploadBtn">sinc con supabase</button>
-<button class="btn btn-d" id="dbclr">recrear bd</button>
+<button class="btn btn-p" id="cap">⟳ Sincronizar rango</button>
+<button class="btn btn-d hid" id="stopBtn">⏹ detener</button>
+<div class="menu-wrap">
+  <button class="btn btn-s" id="moreBtn" style="margin-top:0">⋯ más acciones</button>
+  <div class="menu" id="moreMenu">
+    <button id="importBtn">📥 Importar mes (arrastrar XLS)</button>
+    <button id="sync">↻ Sync última fecha</button>
+    <button id="uploadBtn">☁ Subir a Supabase</button>
+    <button id="manageMonths">📅 Gestionar meses</button>
+    <button id="previewBtn">👁 Vista previa CSV</button>
+    <div class="sep"></div>
+    <button id="clr">Limpiar caché XLS</button>
+    <button id="dbclr" class="danger">Recrear BD local (borra todo)</button>
+    <button id="reparse" class="btn-ghost" title="Re-parsea CSVs en raw/ con allowed_lines actual (sin intranet)">⚡ Reprocesar raw</button>
+  </div>
+</div>
 <div id="est" class="est hid">⏱ ~<span id="estm">0</span> min</div>
 <div class="status" id="st"><div class="dot-sm"></div><span id="stxt">listo</span></div>
 </div>
@@ -149,25 +214,112 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <div class="footer">powered by <span>g360</span></div>
 </div>
 
+<!-- Import month modal (drag & drop) -->
+<div class="modal-overlay" id="importOverlay">
+<div class="modal">
+<h2>📥 <span>Importar mes completo</span></h2>
+<p style="font-size:11px;color:#7e96ad;line-height:1.5;margin-bottom:8px">Baja el <b>XLS mensual completo</b> del intranet (<code>valueFI=01/MM/YYYY</code>, valueFF=fin de mes) y arrástralo aquí.<br>Reemplaza el mes entero — sin duplicados, garantizado.</p>
+<div class="field"><label>Mes a cubrir</label><select id="impMonthSel"></select></div>
+<div class="dropzone" id="dropZone">⬇ Arrastra el archivo .xls aquí<br><span style="font-size:10px;opacity:.7">o haz clic para buscarlo</span></div>
+<input type="file" id="impFile" accept=".xls,.xlsx" class="hid">
+<div id="impFileName" style="font-size:11px;color:#6ee7b7;margin:-2px 0 6px;min-height:14px"></div>
+<div id="impPreview" style="font-size:10px;color:#94a3b8;background:rgba(15,23,42,.6);border-radius:6px;padding:8px;margin:6px 0;display:none;max-height:120px;overflow-y:auto"></div>
+<div class="modal-actions">
+<button class="btn-cancel" id="impCancel">Cancelar</button>
+<button class="btn-save" id="impGo">Importar</button>
+</div>
+</div>
+</div>
+
 <!-- Config modal -->
 <div class="modal-overlay" id="modalOverlay">
 <div class="modal">
 <h2>&#9881; <span>Configuracion</span></h2>
+
+<div style="font-size:10px;color:#5a7a9a;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Intranet CIPSA</div>
 <div class="field">
-<label>URL Supabase</label>
-<input type="text" id="cfgUrl" placeholder="https://xxx.supabase.co">
+  <label>Usuario</label>
+  <input type="text" id="cfgIntUser" placeholder="ccusi">
 </div>
 <div class="field">
-<label>Key anon</label>
-<input type="password" id="cfgKey" placeholder="eyJ...">
+  <label>Clave</label>
+  <input type="password" id="cfgIntPass" placeholder="(sin cambios)">
 </div>
+
+<div style="font-size:10px;color:#5a7a9a;text-transform:uppercase;letter-spacing:.08em;margin:8px 0 4px">Reporte</div>
+<div class="field">
+  <label>Generado por</label>
+  <input type="text" id="cfgGenPor" placeholder="Nombre del responsable">
+</div>
+
+<div style="font-size:10px;color:#5a7a9a;text-transform:uppercase;letter-spacing:.08em;margin:8px 0 4px">Destino Supabase</div>
+<div class="field">
+  <label>URL</label>
+  <input type="text" id="cfgUrl" placeholder="https://xxx.supabase.co">
+</div>
+<div class="field">
+  <label>Anon key</label>
+  <input type="password" id="cfgKey" placeholder="eyJ...">
+</div>
+<div class="field">
+  <label>Tabla</label>
+  <input type="text" id="cfgTable" value="ventas" disabled style="opacity:.6">
+</div>
+
+<div style="font-size:10px;color:#5a7a9a;text-transform:uppercase;letter-spacing:.08em;margin:8px 0 4px">Lineas permitidas (avanzado)</div>
+<div class="field">
+  <label>Sufijos separados por coma</label>
+  <input type="text" id="cfgLines" placeholder="01, 02, 09, 11, 14, ...">
+</div>
+
+<div style="font-size:10px;color:#5a7a9a;text-transform:uppercase;letter-spacing:.08em;margin:8px 0 4px">Comportamiento</div>
+<div class="field">
+  <label><input type="checkbox" id="cfgAutoSync" style="margin-right:6px"> Auto-sync al abrir app</label>
+</div>
+<div class="field">
+  <label>Retencion de datos (anos)</label>
+  <input type="number" id="cfgRetention" min="0" max="10" value="5" placeholder="5 = ilimitado si 0">
+</div>
+
 <div class="modal-actions">
-<button class="btn-test" id="cfgTest">testear</button>
+  <button class="btn-test" id="cfgTestIntra">test intranet</button>
+  <button class="btn-test" id="cfgTest">test supabase</button>
 </div>
 <div class="test-result" id="cfgTestResult"></div>
 <div class="modal-actions">
-<button class="btn-save" id="cfgSave">guardar</button>
-<button class="btn-cancel" id="cfgCancel">cancelar</button>
+  <button class="btn-save" id="cfgSave">guardar</button>
+  <button class="btn-cancel" id="cfgCancel">cancelar</button>
+</div>
+</div>
+</div>
+
+<!-- Month management modal -->
+<div class="modal-overlay" id="monthOverlay">
+<div class="modal" style="width:380px">
+<h2>📅 <span>Meses capturados</span></h2>
+<div class="month-select-bar">
+  <label><input type="checkbox" id="selectAllMonths"> seleccionar todo</label>
+  <span id="monthSelectInfo">0 seleccionados</span>
+</div>
+<div class="month-list" id="monthList"></div>
+<div class="month-summary">
+  <span id="monthTotalRegs">0 registros</span>
+  <span id="monthTotalSales">s/ 0</span>
+</div>
+<div class="modal-actions">
+  <button class="btn-d" id="deleteSelectedBtn" disabled>🗑 eliminar seleccionados</button>
+  <button class="btn-cancel" id="monthCancel">cerrar</button>
+</div>
+</div>
+</div>
+
+<!-- Preview modal -->
+<div class="modal-overlay" id="previewOverlay">
+<div class="modal" style="width:500px;max-height:80vh;overflow:auto">
+<h2>👁 <span>Vista previa CSV</span></h2>
+<div id="previewContent" style="font-size:11px;overflow-x:auto"></div>
+<div class="modal-actions">
+  <button class="btn-cancel" id="previewClose">cerrar</button>
 </div>
 </div>
 </div>
@@ -181,9 +333,7 @@ const invoke = (...args) => {
   return invokeApi.invoke(...args);
 };
 function setAppUnavailable(message){
-  const alertEl=document.getElementById('widgetAlert');
   const textEl=document.getElementById('widgetAlertText');
-  alertEl.className='widget-alert err';
   textEl.textContent=message;
   document.getElementById('st').className='status act err';
   document.getElementById('stxt').textContent='sin entorno tauri';
@@ -194,45 +344,22 @@ function setAppUnavailable(message){
 }
 function fn(n){return n==null?'-':n.toLocaleString('es-PE')}
 function fmtMoney(n){return n==null?'-':'s/ '+n.toLocaleString('es-PE',{minimumFractionDigits:2,maximumFractionDigits:2})}
-function updateWidgetAlert(state, text){
-   const el=document.getElementById('widgetAlert');
-   const label=document.getElementById('widgetAlertText');
-   el.className='widget-alert';
-   if(state==='warn'){el.classList.add('warn');}
-   else if(state==='err'){el.classList.add('err');}
-   else {el.classList.add('ok');}
-   label.textContent=text;
-}
-function updateDbProgress(status, total){
-   const bar=document.getElementById('dbProgressBar');
-   const state=document.getElementById('dbStateLabel');
-   const metaText=document.getElementById('dbMetaText');
-   const metaValue=document.getElementById('dbMetaValue');
-   const p = status === 'syncing' || status === 'uploading' ? 68 : 100;
-   bar.style.width = p + '%';
-   state.textContent = status === 'syncing' ? 'SYNC' : status === 'uploading' ? 'UPLOAD' : 'OK';
-   metaText.textContent = status === 'syncing' ? 'Procesando' : status === 'uploading' ? 'Subiendo' : 'Sincronizada';
-   metaValue.textContent = total ? fn(total) + ' registros' : '0 registros';
-}
-
 function updateTaskFlow(message=''){
    const tasks=[...document.querySelectorAll('.task')];
    const text=(message||'').toLowerCase();
    tasks.forEach(task=>task.classList.remove('active','done'));
-   if(!text){
-     tasks[0].classList.add('active');
-     return;
-   }
+   if(!text){tasks[0].classList.add('active');return;}
    if(/captur|descarga|descarg/.test(text)){tasks[0].classList.add('active');}
-   if(/parse|clean|limp|orden|filtr/.test(text)){tasks[1].classList.add('active');}
-   if(/orden|filtr|valid|proceso/.test(text)){tasks[2].classList.add('active');}
-   if(/local|sincron|db|listo|subi|upload/.test(text)){tasks[3].classList.add('active');}
+   if(/proces|parse|orden|filtr|local|sincron|db|listo|subi|upload/.test(text)){tasks[2].classList.add('active');}
    tasks.forEach(task=>{
      if(task.classList.contains('active')) return;
      task.classList.add('done');
    });
 }
+let totalRegistros=0;
 let pollTimer=null;
+let lastCaptureState='idle';
+let lastCaptureProgress=0;
   
 async function load(){
   if (!invokeApi || typeof invokeApi.invoke !== 'function') {
@@ -242,21 +369,37 @@ async function load(){
   try{
   const h=await invoke('get_health');
   const d=await invoke('get_dashboard');
+   totalRegistros=h.total_records||0;
   document.getElementById('k1').textContent=fn(h.total_records);
   document.getElementById('k2').textContent=fmtMoney(d.total_sales);
   document.getElementById('k3').textContent=fn(d.total_clients);
   document.getElementById('k4').textContent=fn(d.total_skus);
   document.getElementById('k5').textContent=h.last_capture||'-';
   document.getElementById('k6').textContent=(h.db_size_mb||0).toFixed(1)+' mb';
-  document.getElementById('sd').value=h.max_date;
-  document.getElementById('ed').value=new Date().toISOString().slice(0,10);
-  const dot=document.getElementById('dot');
+  // Preserve user selection: only set inputs if they are empty.
+  const sdEl = document.getElementById('sd');
+  const edEl = document.getElementById('ed');
+  // Default to intranet minimum available date (01/08/2026)
+  const startDefault = h.min_date || '2026-08-01';
+  const endDefault = h.max_date || new Date().toISOString().slice(0,10);
+  if (!sdEl.value) sdEl.value = startDefault;
+  // If existing start is after end, adjust start to end
+  if (sdEl.value && edEl.value && new Date(sdEl.value) > new Date(edEl.value)) {
+    sdEl.value = endDefault;
+  }
+  if (!edEl.value) edEl.value = endDefault;
+   const dot=document.getElementById('dot');
   dot.className='dot'+(h.status==='syncing'||h.status==='uploading'?' syncing':'');
-  if(h.status==='syncing'||h.status==='uploading'){updateWidgetAlert('warn', h.status==='uploading' ? 'Subiendo a Supabase' : 'Procesando base local');}
-  else if(h.status==='EMPTY'){updateWidgetAlert('warn','BD vacía');}
-  else {updateWidgetAlert('ok','DB lista');}
-  updateDbProgress(h.status, h.total_records);
-  updateTaskFlow(h.status === 'EMPTY' ? 'BD vacía' : 'DB lista');
+  const wA=document.getElementById('widgetAlert');
+  if(h.status==='EMPTY'){wA.style.display='flex';wA.className='widget-alert warn';document.getElementById('widgetAlertText').textContent='BD vacía — ejecute captura';}
+  else if(h.status==='STALE_LOCK'){wA.style.display='flex';wA.className='widget-alert err';document.getElementById('widgetAlertText').textContent='Lock huerfano — use Limpiar cache o ⏹ detener';}
+  else if(h.status==='SYNCING'){wA.style.display='none';}
+  else {wA.style.display='none';}
+  updateDbProgress(h.status);
+  // NO resetear badges si hay captura activa (lo maneja updateTaskFlowPhase)
+  if(lastCaptureState==='idle'){
+    if(h.status==='EMPTY'){updateTaskFlow('BD vacía');}else{updateTaskFlow('DB lista');}
+  }
     
   const monthsBody=document.getElementById('monthsBody');
   const monthsTable=document.getElementById('monthsTable');
@@ -265,14 +408,16 @@ async function load(){
   if(d.months.length>0){
     monthsTable.style.display='block';
     emptyState.style.display='none';
-    monthsBody.innerHTML=d.months.slice(-8).reverse().map(m=>`
+    monthsBody.innerHTML=d.months.slice(-8).reverse().map(m=>{
+      const miss=window.failedMap&&window.failedMap[m.mes_ref];
+      return `
       <tr>
-        <td><strong>${m.mes_ref}</strong></td>
+        <td><strong>${m.mes_ref}</strong>${miss?`<span class="warn-chip" data-m="${m.mes_ref}" title="${miss} días sin capturar — clic para importar XLS mensual">⚠ ${miss}</span>`:''}</td>
         <td>${fn(m.rows)}</td>
         <td>${fmtMoney(m.sales)}</td>
         <td>${fn(m.clients)}</td>
-      </tr>
-    `).join('');
+      </tr>`;
+    }).join('');
   } else {
     monthsTable.style.display='none';
     emptyState.style.display='flex';
@@ -283,16 +428,152 @@ async function load(){
   document.getElementById('monthsTable').style.display='none';
 }}
  
+window.failedMap={};let prevFailedKey='';
+async function loadFailedDays(){
+  try{
+    const fails=await invoke('get_failed_days');
+    window.failedMap={};
+    (fails||[]).forEach(f=>{window.failedMap[f.mes]=f.dias_faltantes.length;});
+    renderFailedStrip();
+    renderPill();
+    const key=JSON.stringify(window.failedMap);
+    if(key!==prevFailedKey){prevFailedKey=key;load();}
+  }catch(e){}
+}
+function renderFailedStrip(){
+  const strip=document.getElementById('failedStrip');
+  const meses=Object.keys(window.failedMap||{}).sort().reverse();
+  if(!meses.length){strip.style.display='none';strip.innerHTML='';return;}
+  strip.style.display='flex';
+  strip.innerHTML=meses.map(m=>`<span class="warn-chip" data-m="${m}" title="Clic para importar XLS mensual de ${m}">⚠ ${m} · ${window.failedMap[m]}d</span>`).join('')
+    +`<span style="font-size:9px;color:#7e96ad;align-self:center;margin-left:auto">clic en ⚠ o arrastra el XLS aquí</span>`;
+}
+function renderPill(healthStatus){
+  const pill=document.getElementById('statusPill');
+  if(lastCaptureState!=='idle')return;
+  document.getElementById('progWrap').classList.add('hid');
+  document.getElementById('pctLabel').textContent='';
+  const n=Object.keys(window.failedMap||{}).length;
+  if(n>0){pill.className='pill warn';pill.textContent='⚠ '+n+' mes'+(n>1?'es':'')+' incomplet'+(n>1?'os':'');}
+  else if(healthStatus==='EMPTY'){pill.className='pill err';pill.textContent='⚪ BD vacía — ejecuta una captura';}
+  else{pill.className='pill ok';pill.textContent='🟢 Sincronizada · '+(totalRegistros?fn(totalRegistros)+' registros':'—');}
+}
 function rangoValido(s,e){if(!s||!e)return false;const[sy,sm,sd]=s.split('-').map(Number),[ey,em,ed]=e.split('-').map(Number);if(sy>ey)return false;if(sy===ey&&sm>em)return false;if(sy===ey&&sm===em&&sd>ed)return false;return true}
 function est(s,e){if(!s||!e)return 0;const[sy,sm,sd]=s.split('-').map(Number),[ey,em,ed]=e.split('-').map(Number);const d1=new Date(sy,sm-1,sd),d2=new Date(ey,em-1,ed);return Math.max(1,Math.round(Math.ceil((d2-d1)/(30.44*24*3600*1000))*0.5))}
-function show(m,err=false){const s=document.getElementById('st');s.className='status act'+(err?' err':'');document.getElementById('stxt').textContent=m; updateTaskFlow(m); if(err){updateWidgetAlert('err', m);} else if(/sync|subi|proces|captur|upload|syncing/i.test(m)){updateWidgetAlert('warn', m);} else {updateWidgetAlert('ok', m);}}
-function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInterval(async()=>{try{const r=await invoke('get_capture_status');if(r&&r.state&&r.state!=='idle'){show(r.message);load();}else if(r&&r.state==='idle'&&document.getElementById('st').classList.contains('act')){load();}}catch(e){}},2000)}
+function show(m,err=false){
+  if(m&&m.length>180)m=m.slice(0,180)+'…';
+  const s=document.getElementById('st');s.className='status act'+(err?' err':'');
+  document.getElementById('stxt').textContent=m;
+}
+let prevPollState='';let prevPollMsg='';
+function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInterval(async()=>{try{
+  const r=await invoke('get_capture_status');
+  if(!r||!r.state)return;
+  const changed=(r.state!==prevPollState)||(r.message!==prevPollMsg);
+
+  // ── CAPTURA ACTIVA ───────────────────────────────────────────
+  if(r.state==='syncing'||r.state==='uploading'){
+    lastCaptureState=r.state;lastCaptureProgress=r.progress;
+
+    // 1) Barra de progreso + porcentaje
+    const pct=Math.min(95,r.progress*100);
+    document.getElementById('progWrap').classList.remove('hid');
+    document.getElementById('dbProgressBar').style.width=pct.toFixed(1)+'%';
+    document.getElementById('pctLabel').textContent=pct.toFixed(0)+'%';
+
+    // 2) Item actual + cronometro + ETA
+    const elapsed=r.started_at?Math.max(0,Math.floor(Date.now()/1000)-r.started_at):0;
+    const em=Math.floor(elapsed/60),es=elapsed%60;
+    const itemTxt=document.getElementById('currentItemText');
+    const itemEl=document.getElementById('currentItem');
+    const phases={downloading:'Descargando',parsing:'Parseando',normalizing:'Normalizando',uploading:'Subiendo',checking_lock:'Verificando'};
+    const phLabel=phases[r.phase]||'';
+    let txt=phLabel;
+    if(r.current_item&&r.current_item.length>0){txt+=' '+r.current_item.replace(/\s*\(intento.*\)/,'').trim();}
+    txt+=' · '+em+'m '+es+'s';
+    // ETA: usar calculo del backend o estimado fijo (~2 min/mes)
+    if(r.eta_secs&&r.eta_secs>5){
+      txt+=' · quedan ~'+Math.ceil(r.eta_secs/60)+'m';
+    }else if(elapsed>15&&r.progress<0.1){
+      txt+=' · estimado ~2 min/mes';
+    }
+    itemEl.classList.remove('hid');
+    itemTxt.textContent=txt;
+
+    // 3) Pill de estado unico con fase actual
+    const pill=document.getElementById('statusPill');
+    pill.className='pill sync';
+    pill.textContent='🔵 '+(phLabel||'Procesando')+' · '+pct.toFixed(0)+'%';
+
+    // 4) Badges sincronizados con la fase
+    updateTaskFlowPhase(r.phase);
+
+    // 5) Deshabilitar botones, mostrar detener
+    ['cap'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=true;}});
+    document.getElementById('stopBtn').classList.remove('hid');
+
+    // 6) Mensaje en barra de estado
+    if(changed){show(r.message);}
+    // NO llamar load() aqui — provoca parpadeo al re-renderizar KPIs cada 2s
+
+  // ── INACTIVO / ERROR / COMPLETADO ────────────────────────────
+  } else {
+    // Transicion desde activo a inactivo: resetear TODO
+    if(prevPollState==='syncing'||prevPollState==='uploading'){
+      document.getElementById('currentItem').classList.add('hid');
+      document.getElementById('progWrap').classList.add('hid');
+      document.getElementById('pctLabel').textContent='';
+      document.getElementById('dbProgressBar').style.width='0%';
+      // Reactivar botones, ocultar detener
+      ['cap'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=false;}});
+      document.getElementById('stopBtn').classList.add('hid');
+      // Resetear badges a estado idle
+      updateTaskFlow(r.state==='error'?'error':'DB lista');
+      // Notificacion desktop
+      if(r.state!=='error' && Notification.permission==='granted'){
+        new Notification('G360 DB Ventas', {body:r.message||'Tarea completada',icon:'logo_cipsa.svg'});
+      }
+    }
+    if(changed){
+      if(r.state==='error'){show(r.message,true);}else{show(r.message);}
+    }
+    lastCaptureState='idle';lastCaptureProgress=0;
+    load();
+  }
+  prevPollState=r.state;prevPollMsg=r.message||'';
+}catch(e){}},2000)}
+// Mapea la fase del backend a las marcas descarga/parseo/orden/local
+function updateTaskFlowPhase(phase){
+  const tasks=[...document.querySelectorAll('.task')];
+  tasks.forEach(t=>t.classList.remove('active','done'));
+  // 3 etapas: captura(0), proceso(1), local(2)
+  const idx={checking_lock:0,downloading:0,parsing:1,normalizing:1,uploading:2,done:2,error:-1};
+  const i=idx[phase]??-1;
+  if(i<0){
+    tasks.forEach(t=>t.classList.add('done'));
+    return;
+  }
+  tasks.forEach((t,j)=>{ if(j<i)t.classList.add('done'); else if(j===i)t.classList.add('active'); });
+}
+function updateDbProgress(status){
+   // If capture is active, don't override progress from capture state
+   if(lastCaptureState!=='idle'){
+     return; // keep capture-driven progress
+   }
+   renderPill(status);
+}
 function stopPolling(){if(pollTimer){clearInterval(pollTimer);pollTimer=null}}
 
 document.getElementById('cfgBtn').addEventListener('click',async()=>{
   const cfg=await invoke('get_settings');
   document.getElementById('cfgUrl').value=cfg.supabase_url==='https://TU_SUPABASE.supabase.co'?'':cfg.supabase_url;
-  document.getElementById('cfgKey').value=cfg.supabase_key==='TU_ANON_KEY'?'':cfg.supabase_key;
+  document.getElementById('cfgKey').value='';
+  document.getElementById('cfgIntUser').value=cfg.intranet_user||'';
+  document.getElementById('cfgIntPass').value='';
+  document.getElementById('cfgGenPor').value=cfg.generado_por||'';
+  document.getElementById('cfgLines').value=cfg.allowed_lines||'';
+  document.getElementById('cfgAutoSync').checked=cfg.auto_sync||false;
+  document.getElementById('cfgRetention').value=cfg.data_retention_years||5;
   document.getElementById('modalOverlay').classList.add('open');
   document.getElementById('cfgTestResult').className='test-result';
   document.getElementById('cfgTestResult').textContent='';
@@ -302,7 +583,13 @@ document.getElementById('modalOverlay').addEventListener('click',(e)=>{if(e.targ
 document.getElementById('cfgSave').addEventListener('click',async()=>{
   const url=document.getElementById('cfgUrl').value.trim();
   const key=document.getElementById('cfgKey').value.trim();
-  try{await invoke('save_settings',{supabaseUrl:url,supabaseKey:key});show('Configuracion guardada');document.getElementById('modalOverlay').classList.remove('open');}catch(e){show('Error al guardar: '+e,true)}
+  const iu=document.getElementById('cfgIntUser').value.trim();
+  const ip=document.getElementById('cfgIntPass').value;
+  const gp=document.getElementById('cfgGenPor').value.trim();
+  const al=document.getElementById('cfgLines').value.trim();
+  const as=document.getElementById('cfgAutoSync').checked;
+  const ret=parseInt(document.getElementById('cfgRetention').value)||5;
+  try{await invoke('save_settings',{supabaseUrl:url,supabaseKey:key,intranetUser:iu,intranetPass:ip,generadoPor:gp,allowedLines:al,autoSync:as,dataRetentionYears:ret});show('Configuracion guardada');document.getElementById('modalOverlay').classList.remove('open');}catch(e){show('Error al guardar: '+e,true)}
 });
 document.getElementById('cfgTest').addEventListener('click',async()=>{
   const url=document.getElementById('cfgUrl').value.trim()||'https://TU_SUPABASE.supabase.co';
@@ -311,8 +598,13 @@ document.getElementById('cfgTest').addEventListener('click',async()=>{
   r.className='test-result';r.textContent='testeando...';r.style.display='block';
   try{const res=await invoke('test_supabase',{url,key});r.className='test-result ok';r.textContent='ok: '+res;}catch(e){r.className='test-result err';r.textContent='error: '+e;}
 });
+document.getElementById('cfgTestIntra').addEventListener('click',async()=>{
+  const r=document.getElementById('cfgTestResult');
+  r.className='test-result';r.textContent='testeando intranet...';r.style.display='block';
+  try{const res=await invoke('test_intranet');r.className='test-result ok';r.textContent='ok: '+res;}catch(e){r.className='test-result err';r.textContent='error: '+e;}
+});
 
-['sd','ed'].forEach(id=>{document.getElementById(id).addEventListener('change',()=>{const s=document.getElementById('sd').value,e=document.getElementById('ed').value,b=document.getElementById('est');if(s&&e&&rangoValido(s,e)){const m=est(s,e);if(m>5){b.classList.remove('hid');document.getElementById('estm').textContent=m;return}}b.classList.add('hid')})});
+['sd','ed'].forEach(id=>{const el=document.getElementById(id); if(!el) return; el.addEventListener('change',()=>{ try{ localStorage.setItem('g360_'+id, el.value);}catch(e){} const s=document.getElementById('sd').value,e=document.getElementById('ed').value,b=document.getElementById('est'); if(s&&e&&rangoValido(s,e)){const m=est(s,e); if(m>5){b.classList.remove('hid');document.getElementById('estm').textContent=m; return}} b.classList.add('hid') })});
 document.getElementById('cap').addEventListener('click',async()=>{
   const s=document.getElementById('sd').value,e=document.getElementById('ed').value;
   if(!s||!e)return alert('Seleccione fechas');
@@ -335,14 +627,246 @@ document.getElementById('uploadBtn').addEventListener('click',async()=>{
   try{const r=await invoke('upload_all');show(r.message);load();startPolling();}catch(err){show('error: '+err,true);startPolling();}
 });
 document.getElementById('dbclr').addEventListener('click',async()=>{
-  if(!confirm('Eliminar la BD local y recrearla desde cero?'))return;
-  if(!confirm('Se borrara el archivo actual. Confirmar final.'))return;
-  show('recreando bd...');
+  if(!confirm('Reiniciar BD LOCAL?\n\n- Borra historial.db y archivos descargados (quedara vacia)\n- NO afecta a Supabase\n- Luego podra ejecutar una nueva captura con sus fechas'))return;
+  show('reiniciando bd local...');
   try{const r=await invoke('clear_db');show(r.message);load();}catch(err){show('error: '+err,true)}
 });
+// Re-parse raw sin intranet (cuando cambia allowed_lines)
+document.getElementById('reparse').addEventListener('click',async()=>{
+  if(!confirm('Reprocesar todos los CSVs en raw/ con el filtro actual?\n\n- Lee los CSVs ya descargados\n- Re-aplica allowed_lines y NC/ND cross-month\n- Reemplaza en la BD (sin intranet)'))return;
+  show('reprocesando raw...');
+  try{const r=await invoke('reparse_raw');show(r.message||r);load();}catch(err){show('error: '+err,true)}
+});
 
-load();
+// Preview de XLS arrastrado (valida sin insertar)
+async function handlePreview(xlsPath){
+  try{
+    const p = await invoke('preview_import',{xlsPath});
+    let msg = `Preview ${p.file_name}: ${p.insertable_rows}/${p.total_rows} insertables\n`;
+    msg += `Tipos: ${Object.entries(p.tipo_desglose).map(([k,v])=>k+':'+v).join(', ')}\n`;
+    msg += `Refs: ${Object.entries(p.referencia_status).map(([k,v])=>k+':'+v).join(', ')}\n`;
+    if(p.warnings.length) msg += 'Warnings: '+p.warnings.join('; ');
+    if(!confirm(msg + '\n\n¿Insertar ahora?')) return;
+    // Si confirma, usar import_manual_month con el mismo path
+    const m = prompt('Mes YYYY-MM para importar (ej 2024-01):');
+    if(!m) return;
+    show('importando...'); const r=await invoke('import_manual_month',{month:m, xlsPath}); show(r); load();
+  }catch(e){ show('preview error: '+e,true); }
+}
+document.getElementById('stopBtn').addEventListener('click',async()=>{
+  if(!confirm('Detener la captura en curso?'))return;
+  try{const r=await invoke('abort_capture');show(r.message);startPolling();}catch(e){show('error: '+e,true)}
+});
+document.getElementById('previewBtn').addEventListener('click',async()=>{
+  try{
+    const data=await invoke('preview_csv');
+    const el=document.getElementById('previewContent');
+    if(!data||data.length===0){el.innerHTML='<p style="color:#5a7a9a">No hay datos para mostrar</p>';document.getElementById('previewOverlay').classList.add('open');return;}
+    const headers=data[0];
+    let html='<table class="data-table"><thead><tr>'+headers.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>';
+    for(let i=1;i<data.length;i++){
+      html+='<tr>'+data[i].map(v=>'<td>'+v+'</td>').join('')+'</tr>';
+    }
+    html+='</tbody></table>';
+    el.innerHTML=html;
+    document.getElementById('previewOverlay').classList.add('open');
+  }catch(e){show('Error: '+e,true)}
+});
+document.getElementById('previewClose').addEventListener('click',()=>document.getElementById('previewOverlay').classList.remove('open'));
+document.getElementById('previewOverlay').addEventListener('click',(e)=>{if(e.target===e.currentTarget)document.getElementById('previewOverlay').classList.remove('open')});
+
+// ── MENU ⋯ (acciones secundarias) ────────────────────────────────
+const moreBtn=document.getElementById('moreBtn'),moreMenu=document.getElementById('moreMenu');
+moreBtn.addEventListener('click',(e)=>{e.stopPropagation();moreMenu.classList.toggle('open');});
+document.addEventListener('click',(e)=>{if(!moreMenu.contains(e.target)&&!moreBtn.contains(e.target))moreMenu.classList.remove('open');});
+
+// ── IMPORT MODAL: drag & drop mes completo ──────────────────────
+let stagedFile=null;
+function openImport(month){
+  const sel=document.getElementById('impMonthSel');
+  const meses=Object.keys(window.failedMap||{}).sort().reverse();
+  sel.innerHTML=meses.map(m=>`<option value="${m}">${m} — ${window.failedMap[m]} días faltantes</option>`).join('');
+  if(!meses.length){sel.innerHTML='<option value="">(sin meses pendientes)</option>';}
+  if(month&&meses.includes(month))sel.value=month;
+  stagedFile=null;
+  document.getElementById('impFileName').textContent='';
+  document.getElementById('impFile').value='';
+  document.getElementById('importOverlay').classList.add('open');
+}
+function stageFile(f){
+  if(!f)return;
+  if(!/\.(xls|xlsx)$/i.test(f.name)){show('Solo archivos .xls / .xlsx',true);return;}
+  stagedFile=f;
+  document.getElementById('impFileName').textContent='📄 '+f.name+(f.size?' ('+(f.size/1048576).toFixed(1)+' MB)':'');
+  // Preview sin insertar (valida y clasifica referencias)
+  const prevEl=document.getElementById('impPreview');
+  if(f.path){
+    prevEl.style.display='block'; prevEl.textContent='Validando...';
+    invoke('preview_import',{xlsPath:f.path}).then(p=>{
+      let html = `<b>${p.file_name}</b> — ${p.insertable_rows}/${p.total_rows} filas insertables<br>`;
+      html += `Tipos: ${Object.entries(p.tipo_desglose).map(([k,v])=>k+':'+v).join(', ')}<br>`;
+      if(Object.keys(p.referencia_status).length){
+        html += `Refs NC/ND: ${Object.entries(p.referencia_status).map(([k,v])=>k+':'+v).join(', ')}<br>`;
+      }
+      if(p.warnings.length) html += `<span style="color:#fbbf24">${p.warnings.join('; ')}</span><br>`;
+      html += `<span style="color:#6ee7b7">Listo para importar — revisa y haz clic en Importar</span>`;
+      prevEl.innerHTML=html;
+    }).catch(e=>{ prevEl.innerHTML=`<span style="color:#f87171">Preview fallo: ${e}</span>`; });
+  }
+}
+document.getElementById('monthsBody').addEventListener('click',(e)=>{
+  const c=e.target.closest('.warn-chip');
+  if(c){openImport(c.dataset.m);}
+});
+document.getElementById('failedStrip').addEventListener('click',(e)=>{
+  const c=e.target.closest('.warn-chip');
+  if(c){openImport(c.dataset.m);}
+});
+document.getElementById('importBtn').addEventListener('click',()=>{
+  moreMenu.classList.remove('open');
+  openImport();
+});
+const dz=document.getElementById('dropZone'),fIn=document.getElementById('impFile');
+dz.addEventListener('click',()=>fIn.click());
+fIn.addEventListener('change',()=>stageFile(fIn.files[0]));
+['dragover','dragenter'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add('over');}));
+['dragleave','dragend'].forEach(ev=>dz.addEventListener(ev,()=>dz.classList.remove('over')));
+dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('over');stageFile(e.dataTransfer.files[0]);});
+window.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('over');});
+window.addEventListener('dragleave',e=>{if(!e.relatedTarget)dz.classList.remove('over');});
+// Arrastrar en cualquier parte de la ventana abre el modal y pre-carga el archivo
+window.addEventListener('drop',e=>{
+  e.preventDefault();
+  dz.classList.remove('over');
+  const f=e.dataTransfer&&e.dataTransfer.files[0];
+  if(f&&/\.(xls|xlsx)$/i.test(f.name)){openImport();stageFile(f);}
+});
+document.getElementById('impCancel').addEventListener('click',()=>document.getElementById('importOverlay').classList.remove('open'));
+document.getElementById('importOverlay').addEventListener('click',(e)=>{if(e.target===e.currentTarget)e.currentTarget.classList.remove('open')});
+document.getElementById('impGo').addEventListener('click',async()=>{
+  const month=document.getElementById('impMonthSel').value;
+  if(!month){show('Seleccione el mes a cubrir',true);return;}
+  if(!stagedFile){show('Arrastre el XLS mensual o haga clic en la zona',true);return;}
+  const p=stagedFile.path;
+  if(!p||!p.includes('\\')){show('Ruta no disponible — use clic dentro de la zona para buscar el archivo',true);return;}
+  show('Importando '+month+' (~1 min)...');
+  try{
+    const r=await invoke('import_manual_month',{month,xlsPath:p});
+    show(r);
+    document.getElementById('importOverlay').classList.remove('open');
+    load();loadFailedDays();
+  }catch(e){show('Error import: '+e,true);}
+});
+
+// restore saved date range (if any)
+try{
+  const savedSd = localStorage.getItem('g360_sd');
+  const savedEd = localStorage.getItem('g360_ed');
+  if(savedSd && document.getElementById('sd')) document.getElementById('sd').value = savedSd;
+  if(savedEd && document.getElementById('ed')) document.getElementById('ed').value = savedEd;
+}catch(e){}
+
+// ── MONTH MANAGEMENT ────────────────────────────────────────────
+let allMonths = [];
+function updateMonthSelectInfo() {
+  const checked = document.querySelectorAll('.month-item input[type=checkbox]:checked').length;
+  const info = document.getElementById('monthSelectInfo');
+  info.textContent = checked + ' seleccionado' + (checked !== 1 ? 's' : '');
+  document.getElementById('deleteSelectedBtn').disabled = checked === 0;
+}
+
+document.getElementById('manageMonths').addEventListener('click', async () => {
+  try {
+    allMonths = await invoke('list_months');
+    renderMonthList();
+    document.getElementById('monthOverlay').classList.add('open');
+    document.getElementById('selectAllMonths').checked = false;
+  } catch (e) {
+    show('Error: ' + e, true);
+  }
+});
+
+document.getElementById('monthCancel').addEventListener('click', () => {
+  document.getElementById('monthOverlay').classList.remove('open');
+});
+
+document.getElementById('monthOverlay').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) document.getElementById('monthOverlay').classList.remove('open');
+});
+
+document.getElementById('selectAllMonths').addEventListener('change', (e) => {
+  document.querySelectorAll('.month-item input[type=checkbox]').forEach(cb => cb.checked = e.target.checked);
+  updateMonthSelectInfo();
+});
+
+function renderMonthList() {
+  const list = document.getElementById('monthList');
+  let totalRegs = 0, totalSales = 0;
+  list.innerHTML = allMonths.slice().reverse().map(m => {
+    totalRegs += m.rows;
+    totalSales += m.sales;
+    return `<div class="month-item">
+      <input type="checkbox" data-month="${m.mes_ref}">
+      <span class="month-label">${m.mes_ref}</span>
+      <span class="month-rows">${fn(m.rows)}</span>
+      <span class="month-sales">${fmtMoney(m.sales)}</span>
+    </div>`;
+  }).join('');
+  document.getElementById('monthTotalRegs').textContent = fn(totalRegs) + ' registros';
+  document.getElementById('monthTotalSales').textContent = fmtMoney(totalSales);
+  list.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.addEventListener('change', () => updateMonthSelectInfo());
+  });
+  updateMonthSelectInfo();
+}
+
+document.getElementById('deleteSelectedBtn').addEventListener('click', async () => {
+  const checked = [...document.querySelectorAll('.month-item input[type=checkbox]:checked')];
+  const months = checked.map(cb => cb.dataset.month);
+  if (months.length === 0) return;
+  const msg = months.length === 1
+    ? `Eliminar el mes ${months[0]}?\n\nEsto borrara todos los registros de ese mes de la BD local y los archivos descargados.`
+    : `Eliminar ${months.length} meses?\n\n${months.join(', ')}\n\nEsto borrara todos los registros de esos meses de la BD local y los archivos descargados.`;
+  if (!confirm(msg)) return;
+  try {
+    let result;
+    if (months.length === 1) {
+      result = await invoke('delete_month', { month: months[0] });
+    } else {
+      result = await invoke('delete_months', { months });
+    }
+    show(result);
+    load();
+    // Refresh the month list
+    allMonths = await invoke('list_months');
+    renderMonthList();
+  } catch (e) {
+    show('Error: ' + e, true);
+  }
+});
+
+// ── NOTIFICATION PERMISSION ──────────────────────────────────────
+if('Notification' in window && Notification.permission==='default'){
+  Notification.requestPermission();
+}
+
+// ── AUTO-SYNC ON STARTUP ────────────────────────────────────────
+async function checkAutoSync(){
+  try{
+    const cfg=await invoke('get_settings');
+    if(cfg.auto_sync){
+      show('auto-sync: verificando ultima captura...');
+      const r=await invoke('sync_from_last');
+      show(r.message);
+      startPolling();
+    }
+  }catch(e){}
+}
+
+load(); loadFailedDays();
 startPolling();
+checkAutoSync();
+setInterval(loadFailedDays, 10000);
 </script>
 </body>
 </html>

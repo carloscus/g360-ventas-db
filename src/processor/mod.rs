@@ -1,6 +1,6 @@
-pub mod normalizer;
 pub mod parser;
 pub mod uploader;
-pub use normalizer::*;
+pub mod xls;
 pub use parser::*;
 pub use uploader::*;
+pub use xls::*;

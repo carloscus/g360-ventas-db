@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "identifier": "pe.cipsa.g360-db-ventas",
   "build": {
-    "frontendDist": "../frontend"
+    "frontendDist": "../frontend/dist"
   },
   "app": {
     "withGlobalTauri": true,
