@@ -96,7 +96,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 /* modal */
 .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);display:none;align-items:center;justify-content:center;z-index:100}
 .modal-overlay.open{display:flex}
-.modal{background:#0d1a2d;border:1px solid rgba(255,255,255,0.12);border-radius:10px;padding:14px;width:320px;max-width:90vw}
+.modal{background:#0d1a2d;border:1px solid rgba(255,255,255,0.12);border-radius:10px;padding:14px;width:420px;max-width:90vw}
 .modal h2{font-size:13px;font-weight:700;color:#fff;margin-bottom:10px;display:flex;align-items:center;gap:6px}
 .modal h2 span{color:#00d48c}
 .field{margin-bottom:8px}
@@ -154,7 +154,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <div id="widgetAlert" class="widget-alert ok"><span id="widgetAlertText">DB lista</span></div>
 <div class="db-process">
 <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-<div class="pill ok" id="statusPill">🟢 Verificando…</div>
+<div class="pill" id="statusPill">Verificando…</div>
 <span id="pctLabel" style="font-size:11px;color:#93c5fd;font-weight:700;min-width:34px;text-align:right"></span>
 </div>
 <div class="progress hid" id="progWrap" style="margin-top:6px"><div class="progress-bar" id="dbProgressBar"></div></div>
@@ -168,8 +168,11 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <div class="kpi"><div class="kpi-v" id="k4">-</div><div class="kpi-l">skus</div></div>
 </div>
 <div class="info">
-<div class="info-item"><div class="info-v" id="k5">-</div><div class="info-l">ultima carga</div></div>
-<div class="info-item"><div class="info-v" id="k6">-</div><div class="info-l">db size</div></div>
+<div class="info-item"><div class="info-v" id="k5">-</div><div class="info-l">últ. carga</div></div>
+<div class="info-item"><div class="info-v" id="k6">-</div><div class="info-l">tamaño BD</div></div>
+</div>
+<div id="supabaseStatus" class="info" style="margin-top:2px">
+<div class="info-item" style="grid-column:span 2;border-left:2px solid rgba(148,163,184,0.15);padding-left:8px"><div class="info-v" id="sbStatus">—</div><div class="info-l" style="font-size:9px">últ. sync Supabase</div></div>
 </div>
 <div class="task-flow">
   <div class="task active" data-task="download">captura</div>
@@ -191,10 +194,10 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
     <button id="uploadBtn">☁ Subir a Supabase</button>
     <button id="manageMonths">📅 Gestionar meses</button>
     <button id="previewBtn">👁 Vista previa CSV</button>
+    <button id="reparse" class="btn-ghost" title="Re-parsea CSVs en raw/ con allowed_lines actual (sin intranet)">⚡ Reprocesar raw</button>
     <div class="sep"></div>
     <button id="clr">Limpiar caché XLS</button>
     <button id="dbclr" class="danger">Recrear BD local (borra todo)</button>
-    <button id="reparse" class="btn-ghost" title="Re-parsea CSVs en raw/ con allowed_lines actual (sin intranet)">⚡ Reprocesar raw</button>
   </div>
 </div>
 <div id="est" class="est hid">⏱ ~<span id="estm">0</span> min</div>
@@ -243,7 +246,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 </div>
 <div class="field">
   <label>Clave</label>
-  <input type="password" id="cfgIntPass" placeholder="(sin cambios)">
+  <input type="password" id="cfgIntPass" placeholder="">
 </div>
 
 <div style="font-size:10px;color:#5a7a9a;text-transform:uppercase;letter-spacing:.08em;margin:8px 0 4px">Reporte</div>
@@ -263,7 +266,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 </div>
 <div class="field">
   <label>Tabla</label>
-  <input type="text" id="cfgTable" value="ventas" disabled style="opacity:.6">
+  <span style="display:inline-block;padding:6px 10px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(10,20,35,0.8);color:#94a3b8;font-size:13px;font-family:inherit">ventas</span>
 </div>
 
 <div style="font-size:10px;color:#5a7a9a;text-transform:uppercase;letter-spacing:.08em;margin:8px 0 4px">Lineas permitidas (avanzado)</div>
@@ -284,12 +287,10 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <div class="modal-actions">
   <button class="btn-test" id="cfgTestIntra">test intranet</button>
   <button class="btn-test" id="cfgTest">test supabase</button>
-</div>
-<div class="test-result" id="cfgTestResult"></div>
-<div class="modal-actions">
   <button class="btn-save" id="cfgSave">guardar</button>
   <button class="btn-cancel" id="cfgCancel">cancelar</button>
 </div>
+<div class="test-result" id="cfgTestResult"></div>
 </div>
 </div>
 
@@ -395,11 +396,28 @@ async function load(){
   else if(h.status==='STALE_LOCK'){wA.style.display='flex';wA.className='widget-alert err';document.getElementById('widgetAlertText').textContent='Lock huerfano — use Limpiar cache o ⏹ detener';}
   else if(h.status==='SYNCING'){wA.style.display='none';}
   else {wA.style.display='none';}
-  updateDbProgress(h.status);
-  // NO resetear badges si hay captura activa (lo maneja updateTaskFlowPhase)
-  if(lastCaptureState==='idle'){
-    if(h.status==='EMPTY'){updateTaskFlow('BD vacía');}else{updateTaskFlow('DB lista');}
-  }
+   updateDbProgress(h.status);
+   // NO resetear badges si hay captura activa (lo maneja updateTaskFlowPhase)
+   if(lastCaptureState==='idle'){
+     if(h.status==='EMPTY'){updateTaskFlow('BD vacía');}else{updateTaskFlow('DB lista');}
+   }
+   // Supabase sync status
+   try{
+     const cfg=await invoke('get_settings');
+     const sbEl=document.getElementById('sbStatus');
+     if(cfg.supabase_configured){
+       if(cfg.last_supabase_sync){
+         sbEl.textContent=cfg.last_supabase_sync.slice(0,16).replace('T',' ');
+         sbEl.style.color='#6ee7b7';
+       }else{
+         sbEl.textContent='nunca sincronizado';
+         sbEl.style.color='#fbbf24';
+       }
+     }else{
+       sbEl.textContent='no configurado';
+       sbEl.style.color='#f87171';
+     }
+   }catch(e){}
     
   const monthsBody=document.getElementById('monthsBody');
   const monthsTable=document.getElementById('monthsTable');
@@ -454,9 +472,9 @@ function renderPill(healthStatus){
   document.getElementById('progWrap').classList.add('hid');
   document.getElementById('pctLabel').textContent='';
   const n=Object.keys(window.failedMap||{}).length;
-  if(n>0){pill.className='pill warn';pill.textContent='⚠ '+n+' mes'+(n>1?'es':'')+' incomplet'+(n>1?'os':'');}
-  else if(healthStatus==='EMPTY'){pill.className='pill err';pill.textContent='⚪ BD vacía — ejecuta una captura';}
-  else{pill.className='pill ok';pill.textContent='🟢 Sincronizada · '+(totalRegistros?fn(totalRegistros)+' registros':'—');}
+  if(n>0){pill.className='pill warn';pill.textContent=n+' mes'+(n>1?'es':'')+' incomplet'+(n>1?'os':'');}
+  else if(healthStatus==='EMPTY'){pill.className='pill err';pill.textContent='BD vacía — ejecuta una captura';}
+  else{pill.className='pill ok';pill.textContent=(totalRegistros?fn(totalRegistros)+' registros':'sin datos');}
 }
 function rangoValido(s,e){if(!s||!e)return false;const[sy,sm,sd]=s.split('-').map(Number),[ey,em,ed]=e.split('-').map(Number);if(sy>ey)return false;if(sy===ey&&sm>em)return false;if(sy===ey&&sm===em&&sd>ed)return false;return true}
 function est(s,e){if(!s||!e)return 0;const[sy,sm,sd]=s.split('-').map(Number),[ey,em,ed]=e.split('-').map(Number);const d1=new Date(sy,sm-1,sd),d2=new Date(ey,em-1,ed);return Math.max(1,Math.round(Math.ceil((d2-d1)/(30.44*24*3600*1000))*0.5))}
@@ -503,7 +521,7 @@ function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInter
     // 3) Pill de estado unico con fase actual
     const pill=document.getElementById('statusPill');
     pill.className='pill sync';
-    pill.textContent='🔵 '+(phLabel||'Procesando')+' · '+pct.toFixed(0)+'%';
+    pill.textContent=(phLabel||'Procesando')+' · '+pct.toFixed(0)+'%';
 
     // 4) Badges sincronizados con la fase
     updateTaskFlowPhase(r.phase);
