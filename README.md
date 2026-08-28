@@ -248,7 +248,8 @@ Almacenado en `%APPDATA%\g360-db-ventas\data\config.json`:
 {
   "supabase": {
     "url": "https://tu-proyecto.supabase.co",
-    "key": "tu_anon_key"
+    "key": "eyJ...anon key (solo lectura)",
+    "service_role_key": "eyJ...service role (solo backend Rust)"
   },
   "intranet": {
     "user": "usuario_demo",
@@ -260,6 +261,18 @@ Almacenado en `%APPDATA%\g360-db-ventas\data\config.json`:
   "data_retention_years": 5
 }
 ```
+
+### Modelo de seguridad
+
+| Key | Uso | Permisos en Supabase |
+|-----|-----|----------------------|
+| **Anon key** (`supabase.key`) | Frontend Tauri + apps downstream (nc-sustentor, etc.) | **SELECT only** (RLS: `anon` → solo lectura) |
+| **Service role key** (`supabase.service_role_key`) | Backend Rust (uploader) exclusivamente | **INSERT/UPDATE/DELETE** (bypass RLS) |
+
+> La service role key **nunca se expone al frontend** ni se almacena en el repositorio. Se configura desde el modal de configuración → campo "Service role key".  
+> Si no hay service role key configurado, el uploader cae al anon key (legado — sin restricción RLS).
+
+**Migración de seguridad** (`20250828000004_rls_readonly_anon.sql`): restringe el rol `anon` a `SELECT` únicamente. Ejecutar desde Supabase Dashboard → SQL Editor.
 
 ---
 
