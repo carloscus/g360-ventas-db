@@ -11,17 +11,26 @@ pub type ProgressCb = Option<Arc<dyn Fn(usize, usize, f32, &str) + Send + Sync>>
 
 /// Sube un batch de ventas a Supabase con upsert por folio_unico.
 /// Reintenta hasta 3 veces con backoff exponencial ante errores transitorios (5xx, timeout).
+/// Deduplica por folio_unico dentro del batch antes de enviar.
 pub async fn upload_to_supabase(ventas: &[Venta], progress_cb: &ProgressCb) -> Result<usize> {
     let url = get_supabase_url();
     let key = get_supabase_key();
     if url.contains("TU_SUPABASE") || key.contains("TU_ANON") {
         return Err(anyhow::anyhow!("Supabase credentials not configured"));
     }
+    // Deduplicar: mantener la primera ocurrencia de cada folio_unico
+    let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let deduped: Vec<&Venta> = ventas.iter().filter(|v| {
+        seen.insert(v.folio_unico.as_str(), 0).is_none()
+    }).collect();
+    if deduped.len() < ventas.len() {
+        info!("Upload dedup: {} duplicados descartados en batch de {}", ventas.len() - deduped.len(), ventas.len());
+    }
     let endpoint = format!(
-        "{}/rest/v1/{}",
+        "{}/rest/v1/{}?on_conflict=folio_unico",
         url, SUPABASE_TABLE
     );
-    let body = serde_json::to_string(ventas)?;
+    let body = serde_json::to_string(&deduped)?;
     let client = reqwest::Client::new();
 
     let max_attempts = 3;
@@ -32,7 +41,7 @@ pub async fn upload_to_supabase(ventas: &[Venta], progress_cb: &ProgressCb) -> R
             .header("apikey", &key)
             .header("Authorization", format!("Bearer {}", key))
             .header("Content-Type", "application/json")
-            .header("Prefer", "resolution=merge-upsert,onConflict=folio_unico")
+            .header("Prefer", "resolution=merge-duplicates")
             .header("Accept", "application/json")
             .body(body.clone())
             .send()
@@ -67,7 +76,7 @@ pub async fn upload_to_supabase(ventas: &[Venta], progress_cb: &ProgressCb) -> R
             if let Some(cb) = progress_cb {
                 cb(0, 0, 0.0, ""); // no-op batch done
             }
-            return Ok(ventas.len());
+            return Ok(deduped.len());
         }
         // Errores transitorios (5xx, rate-limit) -> reintentar; 4xx -> error inmediato
         if st.is_server_error() || st == reqwest::StatusCode::TOO_MANY_REQUESTS {
