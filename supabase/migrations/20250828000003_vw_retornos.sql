@@ -61,7 +61,7 @@ precio_net as (
     va.cantidad_vendida - va.devuelto as saldo_disponible,
     case 
       when nt.total_fae is not null then 
-        round(va.precio_unitario - (nt.total_monto / nt.total_fae), 4)
+        round((va.precio_unitario - (nt.total_monto / nt.total_fae))::numeric, 4)
       else va.precio_unitario
     end as precio_para_devolucion,
     case 
