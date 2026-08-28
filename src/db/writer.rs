@@ -133,8 +133,15 @@ pub async fn insert_ventas(pool: &SqlitePool, ventas: &[Venta]) -> Result<usize>
 }
 
 pub async fn dedup_ventas(pool: &SqlitePool) -> Result<usize> {
-    let r = sqlx::query("DELETE FROM ventas WHERE id NOT IN (SELECT MAX(id) FROM ventas GROUP BY id_articulo, id_cliente, tpo_doc, serie_doc, nro_doc, fecha_orig, soles)")
-        .execute(pool).await?;
+    let r = sqlx::query(
+        "DELETE FROM ventas WHERE id NOT IN (
+            SELECT MAX(id) FROM ventas WHERE folio_unico != '' GROUP BY folio_unico
+            UNION ALL
+            SELECT MAX(id) FROM ventas WHERE folio_unico = '' GROUP BY id_articulo, id_cliente, tpo_doc, serie_doc, nro_doc, fecha_orig, soles
+        )",
+    )
+    .execute(pool)
+    .await?;
     Ok(r.rows_affected() as usize)
 }
 
