@@ -40,10 +40,12 @@ flowchart TD
 - [Pipeline de captura](#pipeline-de-captura)
 - [Esquema de datos](#esquema-de-datos)
 - [Campos derivados](#campos-derivados)
+- [Vistas para API de devoluciones](#vistas-para-api-de-devoluciones)
 - [Guía rápida](#guía-rápida)
 - [Interfaz de escritorio](#interfaz-de-escritorio)
 - [Configuración](#configuración)
 - [Retención de datos](#retención-de-datos)
+- [API REST para downstream](#api-rest-para-downstream)
 - [CLI](#cli)
 - [Desarrollo](#desarrollo)
 - [Protecciones](#protecciones)
@@ -154,6 +156,30 @@ Calculados por el parser al capturar, para facilitar el cruce en el CRM:
 
 ---
 
+## Vistas para API de devoluciones
+
+Se crean en Supabase (migración `supabase/migrations/20250828000003_vw_retornos.sql`) y se sincronizan localmente a SQLite para offline.
+
+| Vista | Qué contiene | Uso |
+|-------|--------------|-----|
+| `vw_dim_articulo` | SKU, nombre, línea, grupo (agregado por `id_articulo`) | Catálogo consultable |
+| `vw_dim_cliente` | Cliente ID, RUC, razón social | Lookup de clientes |
+| `vw_nc_totales` | Suma de `cantidad_fae` y `soles` de NCs que cubren ≥99% de la factura | Cálculo de precio neto |
+| `vw_nc_parciales` | NCs que no llegan al 99% (informativas, no afectan precio) | Alertas de negocio |
+| `vw_facturas_disponibles` | Cada factura con saldo disponible y precio para devolución | Motor LIFO |
+
+**Reglas de negocio aplicadas:**
+
+- NC total = suma de `abs(cantidad_fae)` ≥ 99% de `cantidad_vendida` → reduce el precio base
+- NC parcial = <99% → solo informativa, no altera precio
+- Precio para devolución = `precio_unitario - (total_monto / total_fae)` cuando hay NC total
+- Periodo = alerta si la factura es mayor a 3 años (`FUERA_PERIOD`)
+- Moneda = todos los valores en Soles
+
+Índices creados: `idx_retorno_cliente_sku`, `idx_retorno_folio`, `idx_retorno_ref`.
+
+---
+
 ## Guía rápida
 
 ### 1. Configurar credenciales
@@ -249,6 +275,45 @@ Almacenado en `%APPDATA%\g360-db-ventas\data\config.json`:
 
 ---
 
+## API REST para downstream
+
+Las vistas SQL expuestas en Supabase están disponibles vía PostgREST para consumo por apps externas.
+
+### Endpoints disponibles
+
+| Método | Ruta PostgREST | Endpoint helper (si aplica) | Descripción |
+|--------|----------------|-----------------------------|-------------|
+| GET | `/rest/v1/vw_dim_articulo?select=*&id_articulo=eq.{sku}` | `/retornos/validar-sku?id_articulo={sku}` | Validar existencia de SKU |
+| GET | `/rest/v1/vw_dim_cliente?select=*&id_cliente=eq.{id}` | — | Lookup de cliente |
+| GET | `/rest/v1/vw_facturas_disponibles?id_cliente=eq.{id}&id_articulo=eq.{sku}&limit=50` | `/retornos/facturas` | Facturas con saldo |
+| GET | `/rest/v1/vw_nc_totales?serie_doc=eq.{serie}&nro_doc=eq.{nro}` | — | NC totales de una factura |
+| GET | `/rest/v1/vw_nc_parciales?factura_ref_serie=eq.{serie}&factura_ref_nro=eq.{nro}` | — | NC parciales |
+
+### Ejemplo: obtener facturas disponibles
+
+```bash
+curl "https://tqdmoytaucnfrpaklprc.supabase.co/rest/v1/vw_facturas_disponibles?select=*&id_cliente=eq.00068414&id_articulo=eq.02211&limit=50&order=fecha_orig.desc" \
+  -H "apikey: {ANON_KEY}" \
+  -H "Authorization: Bearer {ANON_KEY}"
+```
+
+### Auth
+
+Todos los endpoints requieren headers:
+```
+apikey: {ANON_KEY}
+Authorization: Bearer {ANON_KEY}
+```
+
+La clave anon está en `config.json` → `supabase.key` (o variables de entorno `SUPABASE_URL` / `SUPABASE_ANON_KEY`).
+
+### Consumidores conocidos
+
+- **g360-erp-nc-sustentor** — lee desde `vw_facturas_disponibles` vía cliente REST integrado (`src/core/supabase_client.py`)
+- Otros proyectos pueden consultar directamente por PostgREST
+
+---
+
 ## CLI
 
 ```bash
@@ -316,6 +381,14 @@ Este proyecto forma parte del ecosistema **G360** para apoyo CRM y gestión de d
 - **[g360-master-data](https://github.com/carloscus/g360-master-data)** — Catálogo maestro de productos
 - **[g360-stock-api](https://github.com/carloscus/g360-stock-api)** — Backend de datos de stock
 - **[g360-stock-reporter-lit](https://github.com/carloscus/g360-stock-reporter-lit)** — Frontend PWA de stock
+- **[g360-erp-nc-sustentor](https://github.com/carloscus/g360_NC_sustentor)** — App de sustento de Notas de Crédito (lee vistas desde este proyecto)
+
+```mermaid
+flowchart LR
+    DB["g360-ventas-db<br/>(Supabase + SQLite)"]
+    NC["g360-erp-nc-sustentor<br/>(Python/Flet)"]
+    NC -->|PostgREST| DB
+```
 
 ---
 
