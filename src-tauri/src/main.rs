@@ -60,6 +60,7 @@ pub struct HealthStats {
 pub struct AppSettings {
     pub supabase_url: String,
     pub supabase_key: String,
+    pub supabase_service_role_configured: bool,
     pub supabase_table: String,
     pub supabase_configured: bool,
     pub intranet_user: String,
@@ -188,6 +189,7 @@ async fn get_settings() -> Result<AppSettings, String> {
     Ok(AppSettings {
         supabase_url: cfg.supabase.url.clone(),
         supabase_key: cfg.supabase.key.clone(),
+        supabase_service_role_configured: !cfg.supabase.service_role_key.is_empty(),
         supabase_table: g360_db_ventas::config::SUPABASE_TABLE.to_string(),
         supabase_configured: cfg.supabase.is_configured(),
         intranet_user: if cfg.intranet.user.is_empty() {
@@ -236,6 +238,7 @@ async fn save_settings(
     Ok(AppSettings {
         supabase_url: cfg.supabase.url.clone(),
         supabase_key: String::new(),
+        supabase_service_role_configured: !cfg.supabase.service_role_key.is_empty(),
         supabase_table: g360_db_ventas::config::SUPABASE_TABLE.to_string(),
         supabase_configured: cfg.supabase.is_configured(),
         intranet_user: cfg.intranet.user,
@@ -1057,6 +1060,22 @@ async fn preview_csv() -> Result<Vec<Vec<String>>, String> {
     Ok(rows)
 }
 
+#[tauri::command]
+async fn save_service_role_key(service_role_key: String) -> Result<String, String> {
+    let mut cfg = g360_db_ventas::config::load_config();
+    cfg.supabase.service_role_key = if service_role_key.trim().is_empty() {
+        String::new()
+    } else {
+        service_role_key
+    };
+    g360_db_ventas::config::save_config(&cfg).map_err(|e| e.to_string())?;
+    let configured = !cfg.supabase.service_role_key.is_empty();
+    Ok(format!(
+        "Service role key {} configurado",
+        if configured { "ha sido" } else { "ha sido eliminado" }
+    ))
+}
+
 fn main() {
     g360_db_ventas::config::load_dotenv();
     // Logging a archivo: sin esto los errores de captura son invisibles en release
@@ -1072,7 +1091,7 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_dashboard, get_health, get_settings, save_settings,
-            test_supabase, upload_all, admin_reset,
+            test_supabase, upload_all, admin_reset, save_service_role_key,
             capture_range, sync_from_last,
             clear_cache, clear_db,
             get_capture_status,

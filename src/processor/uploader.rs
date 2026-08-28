@@ -1,4 +1,4 @@
-use crate::config::{get_supabase_key, get_supabase_url, SUPABASE_TABLE};
+use crate::config::{get_supabase_key, get_supabase_service_key, get_supabase_url, SUPABASE_TABLE};
 use crate::models::Venta;
 use anyhow::{Context, Result};
 use std::sync::Arc;
@@ -14,7 +14,7 @@ pub type ProgressCb = Option<Arc<dyn Fn(usize, usize, f32, &str) + Send + Sync>>
 /// Deduplica por folio_unico dentro del batch antes de enviar.
 pub async fn upload_to_supabase(ventas: &[Venta], progress_cb: &ProgressCb) -> Result<usize> {
     let url = get_supabase_url();
-    let key = get_supabase_key();
+    let key = get_supabase_service_key();
     if url.contains("TU_SUPABASE") || key.contains("TU_ANON") {
         return Err(anyhow::anyhow!("Supabase credentials not configured"));
     }
@@ -240,7 +240,7 @@ pub async fn cleanup_supabase_retention(
         return Ok(0); // retencion ilimitada
     }
     let url = get_supabase_url();
-    let key = get_supabase_key();
+    let key = get_supabase_service_key();
     if url.contains("TU_SUPABASE") || key.contains("TU_ANON") {
         return Ok(0);
     }

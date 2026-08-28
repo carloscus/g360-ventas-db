@@ -73,7 +73,12 @@ pub const MIN_AVAILABLE_DATE: chrono::NaiveDate = chrono::NaiveDate::from_ymd_op
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupabaseConfig {
     pub url: String,
+    /// Anon key: lectura publica (frontend, apps downstream). Sin permisos de escritura.
     pub key: String,
+    /// Service role key: solo lectura interna del backend Rust. Omite RLS, permite writes.
+    /// NUNCA exponer al frontend ni hardcodear en el repositorio.
+    #[serde(default)]
+    pub service_role_key: String,
 }
 
 impl SupabaseConfig {
@@ -81,6 +86,7 @@ impl SupabaseConfig {
         Self {
             url: DEFAULT_SUPABASE_URL.to_string(),
             key: DEFAULT_SUPABASE_KEY.to_string(),
+            service_role_key: String::new(),
         }
     }
     pub fn is_configured(&self) -> bool {
@@ -88,6 +94,18 @@ impl SupabaseConfig {
             && !self.url.contains("TU_SUPABASE")
             && !self.key.is_empty()
             && !self.key.contains("TU_ANON_KEY")
+    }
+}
+
+/// Clave usada por el backend Rust para writes (insert/update/delete).
+/// Retorna el service role key si existe, sino el anon key (fallback legado).
+pub fn get_supabase_service_key() -> String {
+    let cfg = load_config();
+    if !cfg.supabase.service_role_key.is_empty() {
+        cfg.supabase.service_role_key
+    } else {
+        // fallback: usar anon key si no hay service role configurado
+        cfg.supabase.key
     }
 }
 

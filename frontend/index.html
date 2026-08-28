@@ -173,6 +173,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 </div>
 <div id="supabaseStatus" class="info" style="margin-top:2px">
 <div class="info-item" style="grid-column:span 2;border-left:2px solid rgba(148,163,184,0.15);padding-left:8px"><div class="info-v" id="sbStatus">—</div><div class="info-l" style="font-size:9px">últ. sync Supabase</div></div>
+<div class="info-item" style="grid-column:span 2;border-left:2px solid rgba(0,212,140,0.2);padding-left:8px"><div class="info-v" id="sbRole">sin rol</div><div class="info-l" style="font-size:9px">escritura (service role)</div></div>
 </div>
 <div class="task-flow">
   <div class="task active" data-task="download">captura</div>
@@ -261,8 +262,13 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
   <input type="text" id="cfgUrl" placeholder="https://xxx.supabase.co">
 </div>
 <div class="field">
-  <label>Anon key</label>
+  <label>Anon key (solo lectura — apps downstream)</label>
   <input type="password" id="cfgKey" placeholder="eyJ...">
+</div>
+<div class="field">
+  <label style="color:#fbbf24">Service role key (solo Tauri — writes + ignora RLS)</label>
+  <input type="password" id="cfgSvcKey" placeholder="eyJ... (service_role)">
+  <div style="font-size:9px;color:#5a7a9a;margin-top:2px">Este valor se guarda internamente y NO se expone al frontend ni a otras apps.</div>
 </div>
 <div class="field">
   <label>Tabla</label>
@@ -405,18 +411,26 @@ async function load(){
    try{
      const cfg=await invoke('get_settings');
      const sbEl=document.getElementById('sbStatus');
-     if(cfg.supabase_configured){
-       if(cfg.last_supabase_sync){
-         sbEl.textContent=cfg.last_supabase_sync.slice(0,16).replace('T',' ');
-         sbEl.style.color='#6ee7b7';
-       }else{
-         sbEl.textContent='nunca sincronizado';
-         sbEl.style.color='#fbbf24';
-       }
-     }else{
-       sbEl.textContent='no configurado';
-       sbEl.style.color='#f87171';
-     }
+      if(cfg.supabase_configured){
+        if(cfg.last_supabase_sync){
+          sbEl.textContent=cfg.last_supabase_sync.slice(0,16).replace('T',' ');
+          sbEl.style.color='#6ee7b7';
+        }else{
+          sbEl.textContent='nunca sincronizado';
+          sbEl.style.color='#fbbf24';
+        }
+      }else{
+        sbEl.textContent='no configurado';
+        sbEl.style.color='#f87171';
+      }
+      const sbRoleEl=document.getElementById('sbRole');
+      if(cfg.supabase_service_role_configured){
+        sbRoleEl.textContent='✅ service role';
+        sbRoleEl.style.color='#00d48c';
+      }else{
+        sbRoleEl.textContent='⚠ sin service role';
+        sbRoleEl.style.color='#fbbf24';
+      }
    }catch(e){}
     
   const monthsBody=document.getElementById('monthsBody');
@@ -586,6 +600,7 @@ document.getElementById('cfgBtn').addEventListener('click',async()=>{
   const cfg=await invoke('get_settings');
   document.getElementById('cfgUrl').value=cfg.supabase_url==='https://TU_SUPABASE.supabase.co'?'':cfg.supabase_url;
   document.getElementById('cfgKey').value='';
+  document.getElementById('cfgSvcKey').value='';
   document.getElementById('cfgIntUser').value=cfg.intranet_user||'';
   document.getElementById('cfgIntPass').value='';
   document.getElementById('cfgGenPor').value=cfg.generado_por||'';
@@ -601,13 +616,18 @@ document.getElementById('modalOverlay').addEventListener('click',(e)=>{if(e.targ
 document.getElementById('cfgSave').addEventListener('click',async()=>{
   const url=document.getElementById('cfgUrl').value.trim();
   const key=document.getElementById('cfgKey').value.trim();
+  const svcKey=document.getElementById('cfgSvcKey').value.trim();
   const iu=document.getElementById('cfgIntUser').value.trim();
   const ip=document.getElementById('cfgIntPass').value;
   const gp=document.getElementById('cfgGenPor').value.trim();
   const al=document.getElementById('cfgLines').value.trim();
   const as=document.getElementById('cfgAutoSync').checked;
   const ret=parseInt(document.getElementById('cfgRetention').value)||5;
-  try{await invoke('save_settings',{supabaseUrl:url,supabaseKey:key,intranetUser:iu,intranetPass:ip,generadoPor:gp,allowedLines:al,autoSync:as,dataRetentionYears:ret});show('Configuracion guardada');document.getElementById('modalOverlay').classList.remove('open');}catch(e){show('Error al guardar: '+e,true)}
+  try{
+    if(svcKey){await invoke('save_service_role_key',{serviceRoleKey:svcKey});}
+    await invoke('save_settings',{supabaseUrl:url,supabaseKey:key,intranetUser:iu,intranetPass:ip,generadoPor:gp,allowedLines:al,autoSync:as,dataRetentionYears:ret});
+    show('Configuracion guardada');document.getElementById('modalOverlay').classList.remove('open');
+  }catch(e){show('Error al guardar: '+e,true)}
 });
 document.getElementById('cfgTest').addEventListener('click',async()=>{
   const url=document.getElementById('cfgUrl').value.trim()||'https://TU_SUPABASE.supabase.co';
