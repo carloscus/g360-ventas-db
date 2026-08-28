@@ -37,6 +37,9 @@ pub const CREATE_INDEXES_SQL: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_venta_tipo_op ON ventas(tipo_operacion);",
     "CREATE INDEX IF NOT EXISTS idx_venta_fact_ref ON ventas(factura_ref_serie, factura_ref_nro);",
     "CREATE INDEX IF NOT EXISTS idx_venta_fecha ON ventas(fecha_orig);",
+    "CREATE INDEX IF NOT EXISTS idx_retorno_cliente_sku ON ventas(id_cliente, id_articulo, fecha_orig);",
+    "CREATE INDEX IF NOT EXISTS idx_retorno_folio ON ventas(folio_unico);",
+    "CREATE INDEX IF NOT EXISTS idx_retorno_ref ON ventas(factura_ref_serie, factura_ref_nro);",
 ];
 
 /// Vistas listas para consumir por CRM / dashboard / plataforma de devoluciones.
@@ -116,5 +119,66 @@ pub const CREATE_VIEWS_SQL: &[&str] = &[
         ROUND(SUM(v.soles) / NULLIF(SUM(v.cantidad), 0), 4) AS p_u_neto
     FROM ventas v
     GROUP BY v.id_articulo, v.mes_ref
+    "#,
+    // NC totales (>=99% cantidad vendida) por factura referencia — para precio neto
+    r#"
+    CREATE VIEW IF NOT EXISTS vw_nc_totales AS
+    WITH base AS (
+      SELECT v.id as venta_id, v.serie_doc, v.nro_doc, v.cantidad as cant_venta
+      FROM ventas v WHERE v.tpo_doc LIKE 'F01%'
+    )
+    SELECT b.serie_doc, b.nro_doc,
+           SUM(abs(n.cantidad_fae)) as total_fae,
+           SUM(abs(n.soles)) as total_monto,
+           COUNT(*) as nc_count
+    FROM base b
+    JOIN ventas n ON n.factura_ref_serie = b.serie_doc AND n.factura_ref_nro = b.nro_doc
+      AND n.tipo_operacion = 'ajuste_valor'
+      AND abs(n.cantidad_fae) >= b.cant_venta * 0.99
+    GROUP BY b.serie_doc, b.nro_doc
+    "#,
+    // NC parciales (<99%) — solo informativo, no afecta precio
+    r#"
+    CREATE VIEW IF NOT EXISTS vw_nc_parciales AS
+    SELECT n.factura_ref_serie, n.factura_ref_nro, n.folio_unico as nc_folio,
+           abs(n.cantidad_fae) as cantidad_fae, abs(n.soles) as monto
+    FROM ventas n
+    WHERE n.tipo_operacion = 'ajuste_valor'
+      AND NOT EXISTS (
+        SELECT 1 FROM vw_nc_totales t
+        WHERE t.serie_doc = n.factura_ref_serie AND t.nro_doc = n.factura_ref_nro
+      )
+    "#,
+    // Facturas disponibles con saldo y precio neto — para App devoluciones (LIFO)
+    r#"
+    CREATE VIEW IF NOT EXISTS vw_facturas_disponibles AS
+    WITH ventas_agg AS (
+      SELECT 
+        v.id, v.folio_unico, v.serie_doc, v.nro_doc,
+        v.id_cliente, v.id_articulo, v.nom_articulo,
+        v.fecha_orig, v.cantidad as cantidad_vendida,
+        v.precio_unitario, v.moneda, v.mes_ref,
+        COALESCE(SUM(CASE WHEN d.tipo_operacion='devolucion' THEN abs(d.cantidad) ELSE 0 END), 0) as devuelto
+      FROM ventas v
+      LEFT JOIN ventas d ON d.factura_ref_serie = v.serie_doc AND d.factura_ref_nro = v.nro_doc
+        AND d.tipo_operacion = 'devolucion'
+      WHERE v.tpo_doc LIKE 'F01%'
+      GROUP BY v.id, v.folio_unico, v.serie_doc, v.nro_doc, v.id_cliente, v.id_articulo,
+               v.nom_articulo, v.fecha_orig, v.cantidad, v.precio_unitario, v.moneda, v.mes_ref
+    )
+    SELECT va.*,
+      va.cantidad_vendida - va.devuelto as saldo_disponible,
+      CASE 
+        WHEN nt.total_fae IS NOT NULL THEN 
+          ROUND(va.precio_unitario - (nt.total_monto / nt.total_fae), 4)
+        ELSE va.precio_unitario
+      END as precio_para_devolucion,
+      CASE 
+        WHEN date(va.fecha_orig) < date('now', '-3 years') THEN 'FUERA_PERIOD'
+        ELSE 'DENTRO_PERIOD'
+      END as estado_periodo
+    FROM ventas_agg va
+    LEFT JOIN vw_nc_totales nt ON nt.serie_doc = va.serie_doc AND nt.nro_doc = va.nro_doc
+    ORDER BY va.fecha_orig DESC
     "#,
 ];
