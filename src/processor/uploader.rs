@@ -18,7 +18,7 @@ pub async fn upload_to_supabase(ventas: &[Venta], progress_cb: &ProgressCb) -> R
         return Err(anyhow::anyhow!("Supabase credentials not configured"));
     }
     let endpoint = format!(
-        "{}/rest/v1/{}?onConflict=folio_unico",
+        "{}/rest/v1/{}",
         url, SUPABASE_TABLE
     );
     let body = serde_json::to_string(ventas)?;
@@ -32,7 +32,8 @@ pub async fn upload_to_supabase(ventas: &[Venta], progress_cb: &ProgressCb) -> R
             .header("apikey", &key)
             .header("Authorization", format!("Bearer {}", key))
             .header("Content-Type", "application/json")
-            .header("Prefer", "resolution=merge-upsert")
+            .header("Prefer", "resolution=merge-upsert,onConflict=folio_unico")
+            .header("Accept", "application/json")
             .body(body.clone())
             .send()
             .await
