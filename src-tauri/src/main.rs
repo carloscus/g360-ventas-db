@@ -109,10 +109,15 @@ fn phase_to_state(phase: &CapturePhase) -> &'static str {
 #[tauri::command]
 async fn get_dashboard() -> Result<DashboardStats, String> {
     let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
-    let total_records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas").fetch_one(&pool).await.map_err(|e| e.to_string())?;
-    let total_sales: f64 = sqlx::query_scalar("SELECT COALESCE(SUM(soles), 0.0) FROM ventas").fetch_one(&pool).await.map_err(|e| e.to_string())?;
-    let total_clients: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT id_cliente) FROM ventas").fetch_one(&pool).await.map_err(|e| e.to_string())?;
-    let total_skus: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT original_sku) FROM ventas").fetch_one(&pool).await.map_err(|e| e.to_string())?;
+    // Stats cache: evita full-scan de 1.1M filas en queries lentas
+    let total_records: i64 = sqlx::query_scalar("SELECT value FROM stats_cache WHERE key='total_records'")
+        .fetch_one(&pool).await.map_err(|e| e.to_string()).unwrap_or(0) as i64;
+    let total_sales: f64 = sqlx::query_scalar("SELECT value FROM stats_cache WHERE key='total_sales'")
+        .fetch_one(&pool).await.map_err(|e| e.to_string()).unwrap_or(0.0) as f64;
+    let total_clients: i64 = sqlx::query_scalar("SELECT value FROM stats_cache WHERE key='total_clients'")
+        .fetch_one(&pool).await.map_err(|e| e.to_string()).unwrap_or(0) as i64;
+    let total_skus: i64 = sqlx::query_scalar("SELECT value FROM stats_cache WHERE key='total_skus'")
+        .fetch_one(&pool).await.map_err(|e| e.to_string()).unwrap_or(0) as i64;
     let months: Vec<MonthStats> = sqlx::query_as("SELECT mes_ref, COUNT(*) as rows, COALESCE(SUM(soles), 0.0) as sales, COUNT(DISTINCT id_cliente) as clients FROM ventas GROUP BY mes_ref ORDER BY mes_ref").fetch_all(&pool).await.map_err(|e| e.to_string())?;
     Ok(DashboardStats { total_records, total_sales, total_clients, total_skus, months })
 }

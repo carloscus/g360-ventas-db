@@ -1,7 +1,7 @@
 // Comentarios en espanol - fechas internas yyyy-mm-dd, display dd/mm/yyyy
 use crate::config::db_path;
 use crate::models::Venta;
-use crate::db::schema::{CREATE_INDEXES_SQL, CREATE_TABLE_SQL, CREATE_VIEWS_SQL};
+use crate::db::schema::{CREATE_INDEXES_SQL, CREATE_TABLE_SQL, CREATE_VIEWS_SQL, CREATE_STATS_CACHE_SQL};
 use anyhow::{Context, Result};
 use sqlx::{query, SqlitePool};
 use std::sync::Mutex;
@@ -71,6 +71,10 @@ pub async fn init_pool() -> Result<SqlitePool> {
     for v in CREATE_VIEWS_SQL {
         let _ = sqlx::query(v).execute(&pool).await;
     }
+    // Stats cache table (dashboard performance)
+    let _ = sqlx::query(CREATE_STATS_CACHE_SQL).execute(&pool).await;
+    // Refresh stats cache on init
+    let _ = refresh_stats_cache(&pool).await;
     let _ = sqlx::query("UPDATE ventas SET precio_unitario = CASE WHEN cantidad != 0 THEN soles / cantidad ELSE 0 END WHERE precio_unitario IS NULL").execute(&pool).await;
     // Repopular precio_unitario para ajustes de valor (cantidad=0) usando CANTIDAD FAE como base
     // (ej. vendi 1000 pero descuente 500 entregados -> precio aplicado = soles / FAE)
@@ -131,6 +135,7 @@ pub async fn insert_ventas(pool: &SqlitePool, ventas: &[Venta]) -> Result<usize>
     }
     tx.commit().await?;
     info!("Inserted {} rows", n);
+    let _ = refresh_stats_cache(pool).await;
     Ok(n)
 }
 
@@ -144,7 +149,10 @@ pub async fn dedup_ventas(pool: &SqlitePool) -> Result<usize> {
     )
     .execute(pool)
     .await?;
-    Ok(r.rows_affected() as usize)
+    let affected = r.rows_affected() as usize;
+    info!("Dedup removed {} rows", affected);
+    let _ = refresh_stats_cache(pool).await;
+    Ok(affected)
 }
 
 pub async fn count_ventas(pool: &SqlitePool) -> Result<i64> {
@@ -214,4 +222,37 @@ pub async fn count_by_month(pool: &SqlitePool) -> Result<Vec<(String, i64)>> {
             .fetch_all(pool)
             .await?,
     )
+}
+
+/// Refresca la tabla stats_cache con los valores actuales del dashboard.
+/// Debe llamarse despues de cada insercion o borrado masivo.
+pub async fn refresh_stats_cache(pool: &SqlitePool) -> Result<()> {
+    let (total_records,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM ventas")
+        .fetch_one(pool).await?;
+    let (total_sales,): (f64,) = sqlx::query_as("SELECT COALESCE(SUM(soles), 0.0) FROM ventas")
+        .fetch_one(pool).await?;
+    let (total_clients,): (i64,) = sqlx::query_as("SELECT COUNT(DISTINCT id_cliente) FROM ventas")
+        .fetch_one(pool).await?;
+    let (total_skus,): (i64,) = sqlx::query_as("SELECT COUNT(DISTINCT original_sku) FROM ventas")
+        .fetch_one(pool).await?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let pairs = [
+        ("total_records", total_records as f64),
+        ("total_sales", total_sales),
+        ("total_clients", total_clients as f64),
+        ("total_skus", total_skus as f64),
+    ];
+    for (key, value) in &pairs {
+        sqlx::query(
+            "INSERT INTO stats_cache (key, value, updated_at) VALUES (?, ?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+        )
+        .bind(key)
+        .bind(value)
+        .bind(&now)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
 }

@@ -37,10 +37,23 @@ pub const CREATE_INDEXES_SQL: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_venta_tipo_op ON ventas(tipo_operacion);",
     "CREATE INDEX IF NOT EXISTS idx_venta_fact_ref ON ventas(factura_ref_serie, factura_ref_nro);",
     "CREATE INDEX IF NOT EXISTS idx_venta_fecha ON ventas(fecha_orig);",
+    "CREATE INDEX IF NOT EXISTS idx_venta_soles ON ventas(soles);",
+    "CREATE INDEX IF NOT EXISTS idx_venta_fecha_soles ON ventas(fecha_orig, soles);",
     "CREATE INDEX IF NOT EXISTS idx_retorno_cliente_sku ON ventas(id_cliente, id_articulo, fecha_orig);",
     "CREATE INDEX IF NOT EXISTS idx_retorno_folio ON ventas(folio_unico);",
     "CREATE INDEX IF NOT EXISTS idx_retorno_ref ON ventas(factura_ref_serie, factura_ref_nro);",
 ];
+
+/// Tabla de cache para dashboard: evita full-scan en BD grande (791 MB / 1.1M filas).
+/// Se refresca tras cada insercion/borrado via refresh_stats_cache().
+pub const CREATE_STATS_CACHE_SQL: &str = "
+CREATE TABLE IF NOT EXISTS stats_cache (
+    key TEXT PRIMARY KEY,
+    value REAL NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_stats_key ON stats_cache(key);
+";
 
 /// Vistas listas para consumir por CRM / dashboard / plataforma de devoluciones.
 /// Son VIEWS virtuales (no ocupan almacenamiento extra; se calculan al consultar).
