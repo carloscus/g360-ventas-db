@@ -28,13 +28,15 @@ pub async fn init_pool() -> Result<SqlitePool> {
     let db_str = db.to_string_lossy().replace("\\", "/");
     let url = format!("sqlite://{}?mode=rwc", db_str);
     tracing::info!("Connecting to DB: {}", url);
-    // WAL + busy_timeout: lecturas del dashboard no bloquean con escrituras de captura
+    // WAL + busy_timeout + pool size: lecturas del dashboard no bloquean con escrituras de captura
     let opts = sqlx::sqlite::SqliteConnectOptions::new()
         .filename(&db)
         .create_if_missing(true)
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
-        .busy_timeout(std::time::Duration::from_secs(5));
-    let pool = SqlitePool::connect_with(opts)
+        .busy_timeout(std::time::Duration::from_secs(30));
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(20)
+        .connect_with(opts)
         .await
         .context("DB connect failed")?;
     sqlx::query(CREATE_TABLE_SQL).execute(&pool).await?;
