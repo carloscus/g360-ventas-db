@@ -140,11 +140,14 @@ pub async fn insert_ventas(pool: &SqlitePool, ventas: &[Venta]) -> Result<usize>
 }
 
 pub async fn dedup_ventas(pool: &SqlitePool) -> Result<usize> {
+    // IMPORTANTE: folio_unico = tpo_doc/serie_doc/nro_doc (POR DOCUMENTO).
+    // Un documento puede tener varias lineas (distintos SKU). NO agrupar por
+    // folio_unico solo: eso colapsaria facturas multi-linea a 1 fila (perdida real).
+    // Dedup por linea completa: (doc, sku, cliente, fecha, cantidad, monto).
     let r = sqlx::query(
         "DELETE FROM ventas WHERE id NOT IN (
-            SELECT MAX(id) FROM ventas WHERE folio_unico != '' GROUP BY folio_unico
-            UNION ALL
-            SELECT MAX(id) FROM ventas WHERE folio_unico = '' GROUP BY id_articulo, id_cliente, tpo_doc, serie_doc, nro_doc, fecha_orig, soles
+            SELECT MAX(id) FROM ventas
+            GROUP BY folio_unico, id_articulo, id_cliente, tpo_doc, serie_doc, nro_doc, fecha_orig, cantidad, soles
         )",
     )
     .execute(pool)
