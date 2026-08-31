@@ -335,9 +335,14 @@ async fn upload_all() -> Result<String, String> {
 
     match g360_db_ventas::processor::uploader::upload_all(&pool, retention, last_sync.as_deref(), &progress_cb).await {
         Ok((up, cleaned)) => {
-            let mut cfg2 = g360_db_ventas::config::load_config();
-            cfg2.last_supabase_sync = Some(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
-            let _ = g360_db_ventas::config::save_config(&cfg2);
+            // Solo avanzar el marcador si realmente se subieron filas.
+            // Evita el caso donde se marca last_supabase_sync sin subir nada
+            // (bloquea futuros syncs incrementales con "nada nuevo").
+            if up > 0 {
+                let mut cfg2 = g360_db_ventas::config::load_config();
+                cfg2.last_supabase_sync = Some(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+                let _ = g360_db_ventas::config::save_config(&cfg2);
+            }
             let retention_msg = if cleaned > 0 { format!(" + {} antiguos limpiados", cleaned) } else { String::new() };
             set_state("idle", &format!("Sync OK: {} rows{}", up, retention_msg), 1.0);
             Ok(format!("Sync OK: {} rows (incremental, ventana: {} anos){}", up, retention, retention_msg))
