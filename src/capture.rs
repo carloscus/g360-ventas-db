@@ -145,9 +145,12 @@ async fn build_pending(
         if gap_days > 7 {
             info!("sync inteligente: {} dias pendientes -> modo mensual (optimizado)", gap_days);
             let ranges = gen_month_range(start_from.year(), start_from.month(), today.year(), today.month(), today);
+            let current_month = today.format("%Y-%m").to_string();
             for r in ranges {
                 let csv = raw.join(format!("ventas_{}.csv", r.label));
-                if !(csv.exists() && std::fs::metadata(&csv).map(|m| m.len() > 1000).unwrap_or(false)) {
+                let exists = csv.exists() && std::fs::metadata(&csv).map(|m| m.len() > 1000).unwrap_or(false);
+                // No saltar el mes actual: puede tener datos nuevos del dia
+                if r.label == current_month || !exists {
                     pending.push(r);
                 }
             }
@@ -179,9 +182,15 @@ async fn build_pending(
             return Ok(Vec::new());
         }
         let ranges = gen_month_range(s.year(), s.month(), e.year(), e.month(), e);
+        let current_month = today.format("%Y-%m").to_string();
         for r in ranges {
             let csv = raw.join(format!("ventas_{}.csv", r.label));
-            if csv.exists() && std::fs::metadata(&csv).map(|m| m.len() > 1000).unwrap_or(false) {
+            // No saltar el mes actual: aunque el CSV exista, puede tener datos nuevos
+            // del dia (p.ej. hoy 31/08 con docs recientes). Se re-descarga completo.
+            if r.label != current_month
+                && csv.exists()
+                && std::fs::metadata(&csv).map(|m| m.len() > 1000).unwrap_or(false)
+            {
                 continue;
             }
             pending.push(r);
