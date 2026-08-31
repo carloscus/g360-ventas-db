@@ -912,23 +912,51 @@ async fn reparse_raw() -> Result<String, String> {
     }
     files.sort();
     if files.is_empty() { return Err("No hay CSVs en raw/ para reprocesar".into()); }
-    let mut total = 0usize;
-    for (i, csv) in files.iter().enumerate() {
-        match g360_db_ventas::processor::parser::parse_export_csv_with_cross(csv, &pool).await {
-            Ok(ventas) if !ventas.is_empty() => {
-                total += g360_db_ventas::db::writer::insert_ventas(&pool, &ventas).await.map_err(|e| e.to_string())?;
+
+    // Ejecutar en background (como capture_range) para que el frontend pueda
+    // hacer polling y mostrar progreso en vivo via get_capture_status.
+    let shared: SharedProgress = CAPTURE_STATE.clone();
+    let shared_err = shared.clone();
+    tauri::async_runtime::spawn(async move {
+        {
+            let mut s = shared.lock().unwrap();
+            s.set_start("Reprocesando raw");
+            s.set_phase(CapturePhase::Downloading, "Reprocesando raw");
+            s.update_progress(0.0, "Reprocesando raw...");
+        }
+        let total_files = files.len();
+        let mut total = 0usize;
+        for (i, csv) in files.iter().enumerate() {
+            match g360_db_ventas::processor::parser::parse_export_csv_with_cross(csv, &pool).await {
+                Ok(ventas) if !ventas.is_empty() => {
+                    match g360_db_ventas::db::writer::insert_ventas(&pool, &ventas).await {
+                        Ok(n) => total += n,
+                        Err(e) => eprintln!("reparse insert {}: {}", csv.display(), e),
+                    }
+                }
+                Ok(_) => {},
+                Err(e) => eprintln!("reparse {}: {}", csv.display(), e),
             }
-            Ok(_) => {},
-            Err(e) => eprintln!("reparse {}: {}", csv.display(), e),
+            let pct = (i + 1) as f32 / total_files as f32;
+            {
+                let mut st = shared.lock().unwrap();
+                st.phase = CapturePhase::Downloading;
+                st.message = format!("Reprocesando mes {}/{}", i + 1, total_files);
+                st.progress = pct;
+            }
+            // Actualizar KPIs en vivo para que el GUI muestre progreso
+            if (i % 5 == 0) || i + 1 == total_files {
+                let _ = g360_db_ventas::db::writer::refresh_stats_cache(&pool).await;
+            }
         }
-        // Actualizar KPIs en cada mes para que el GUI muestre progreso en vivo
-        if (i % 5 == 0) || i + 1 == files.len() {
-            let _ = g360_db_ventas::db::writer::refresh_stats_cache(&pool).await;
-        }
-    }
-    let _ = g360_db_ventas::db::writer::dedup_ventas(&pool).await;
-    let _ = g360_db_ventas::db::writer::refresh_stats_cache(&pool).await;
-    Ok(format!("Re-parse completado: {} archivos, {} filas reinsertadas (sin intranet)", files.len(), total))
+        let _ = g360_db_ventas::db::writer::dedup_ventas(&pool).await;
+        let _ = g360_db_ventas::db::writer::refresh_stats_cache(&pool).await;
+        let mut st = shared_err.lock().unwrap();
+        st.set_phase(CapturePhase::Done, &format!("Re-parse completado: {} filas", total));
+        st.update_progress(1.0, &format!("Re-parse completado: {} filas", total));
+    });
+
+    Ok("Reprocesando raw...".to_string())
 }
 
 #[tauri::command]

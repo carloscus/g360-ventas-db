@@ -672,8 +672,8 @@ document.getElementById('dbclr').addEventListener('click',async()=>{
 // Re-parse raw sin intranet (cuando cambia allowed_lines)
 document.getElementById('reparse').addEventListener('click',async()=>{
   if(!confirm('Reprocesar todos los CSVs en raw/ con el filtro actual?\n\n- Lee los CSVs ya descargados\n- Re-aplica allowed_lines y NC/ND cross-month\n- Reemplaza en la BD (sin intranet)'))return;
-  show('reprocesando raw...');
-  try{const r=await invoke('reparse_raw');show(r.message||r);load();}catch(err){show('error: '+err,true)}
+  show('reprocesando raw...');stopPolling();
+  try{const r=await invoke('reparse_raw');show(r.message||r);startPolling();}catch(err){show('error: '+err,true);startPolling();}
 });
 
 // Preview de XLS arrastrado (valida sin insertar)
