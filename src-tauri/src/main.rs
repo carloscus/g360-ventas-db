@@ -913,7 +913,7 @@ async fn reparse_raw() -> Result<String, String> {
     files.sort();
     if files.is_empty() { return Err("No hay CSVs en raw/ para reprocesar".into()); }
     let mut total = 0usize;
-    for csv in &files {
+    for (i, csv) in files.iter().enumerate() {
         match g360_db_ventas::processor::parser::parse_export_csv_with_cross(csv, &pool).await {
             Ok(ventas) if !ventas.is_empty() => {
                 total += g360_db_ventas::db::writer::insert_ventas(&pool, &ventas).await.map_err(|e| e.to_string())?;
@@ -921,8 +921,13 @@ async fn reparse_raw() -> Result<String, String> {
             Ok(_) => {},
             Err(e) => eprintln!("reparse {}: {}", csv.display(), e),
         }
+        // Actualizar KPIs en cada mes para que el GUI muestre progreso en vivo
+        if (i % 5 == 0) || i + 1 == files.len() {
+            let _ = g360_db_ventas::db::writer::refresh_stats_cache(&pool).await;
+        }
     }
     let _ = g360_db_ventas::db::writer::dedup_ventas(&pool).await;
+    let _ = g360_db_ventas::db::writer::refresh_stats_cache(&pool).await;
     Ok(format!("Re-parse completado: {} archivos, {} filas reinsertadas (sin intranet)", files.len(), total))
 }
 
