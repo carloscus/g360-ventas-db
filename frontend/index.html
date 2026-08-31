@@ -413,7 +413,7 @@ async function load(){
      const sbEl=document.getElementById('sbStatus');
       if(cfg.supabase_configured){
         if(cfg.last_supabase_sync){
-          sbEl.textContent=cfg.last_supabase_sync.slice(0,16).replace('T',' ');
+          sbEl.textContent=utcToPeru(cfg.last_supabase_sync);
           sbEl.style.color='#6ee7b7';
         }else{
           sbEl.textContent='nunca sincronizado';
@@ -459,6 +459,16 @@ async function load(){
   document.getElementById('emptyState').style.display='flex';
   document.getElementById('monthsTable').style.display='none';
 }}
+
+// Convierte ISO (UTC) a hora Peru (UTC-5, sin DST): 'YYYY-MM-DD HH:MM'
+function utcToPeru(iso){
+  if(!iso) return '';
+  const d=new Date(iso);
+  if(isNaN(d.getTime())) return String(iso).slice(0,16).replace('T',' ');
+  const p=new Date(d.getTime()-5*3600*1000);
+  const pad=n=>String(n).padStart(2,'0');
+  return p.getUTCFullYear()+'-'+pad(p.getUTCMonth()+1)+'-'+pad(p.getUTCDate())+' '+pad(p.getUTCHours())+':'+pad(p.getUTCMinutes());
+}
  
 window.failedMap={};let prevFailedKey='';
 async function loadFailedDays(){
