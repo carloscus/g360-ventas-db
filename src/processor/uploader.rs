@@ -20,8 +20,10 @@ pub async fn upload_to_supabase(ventas: &[Venta], progress_cb: &ProgressCb) -> R
     }
     // NOTED: Antes se deduplicaba por folio_unico, pero eso colapsaba facturas multi-línea.
     // Ahora se envían TODAS las líneas para preservar la estructura completa de la factura.
+    // NO on_conflict: Supabase no permite múltiples filas con misma key en upsert batch.
+    // La deduplicación se maneja a nivel de aplicación (reparse + dedup_ventas).
     let endpoint = format!(
-        "{}/rest/v1/{}?on_conflict=folio_unico,id_articulo",
+        "{}/rest/v1/{}",
         url, SUPABASE_TABLE
     );
     let body = serde_json::to_string(&ventas)?;
