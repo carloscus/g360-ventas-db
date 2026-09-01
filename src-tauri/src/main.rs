@@ -264,6 +264,14 @@ async fn test_supabase(url: String, key: String) -> Result<String, String> {
     Ok(res)
 }
 
+#[tauri::command]
+async fn reset_sync_marker() -> Result<String, String> {
+    let mut cfg = g360_db_ventas::config::load_config();
+    cfg.last_supabase_sync = None;
+    g360_db_ventas::config::save_config(&cfg).map_err(|e| e.to_string())?;
+    Ok("Marcador de sync reseteado. La próxima subida será completa (Full Sync).".to_string())
+}
+
 /// Reset admin: backup de config actual, genera config limpio con credenciales vacías.
 /// Para intervención de tercero (admin/support) que necesita reconfigurar acceso.
 #[tauri::command]
@@ -1135,7 +1143,7 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_dashboard, get_health, get_settings, save_settings,
-            test_supabase, upload_all, admin_reset, save_service_role_key,
+            test_supabase, upload_all, admin_reset, reset_sync_marker, save_service_role_key,
             capture_range, sync_from_last,
             clear_cache, clear_db,
             get_capture_status,

@@ -193,6 +193,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
     <button id="importBtn">📥 Importar mes (arrastrar XLS)</button>
     <button id="sync">↻ Sync última fecha</button>
     <button id="uploadBtn">☁ Subir a Supabase</button>
+    <button id="resetSyncBtn" class="btn-ghost" title="Resetea el marcador incremental y re-sube todo a Supabase">🔄 Forzar Full Sync Supabase</button>
     <button id="manageMonths">📅 Gestionar meses</button>
     <button id="previewBtn">👁 Vista previa CSV</button>
     <button id="reparse" class="btn-ghost" title="Re-parsea CSVs en raw/ con allowed_lines actual (sin intranet)">⚡ Reprocesar raw</button>
@@ -673,6 +674,20 @@ document.getElementById('clr').addEventListener('click',async()=>{
 document.getElementById('uploadBtn').addEventListener('click',async()=>{
   show('subiendo a supabase...');stopPolling();
   try{const r=await invoke('upload_all');show(r.message);load();startPolling();}catch(err){show('error: '+err,true);startPolling();}
+});
+document.getElementById('resetSyncBtn').addEventListener('click',async()=>{
+  if(!confirm('¿Forzar re-subida completa (Full Sync) a Supabase?\n\nEsto re-subirá todos los registros de los últimos 4 años, reparando cualquier discrepancia.'))return;
+  show('reseteando marcador y subiendo...');stopPolling();
+  try{
+    await invoke('reset_sync_marker');
+    const r=await invoke('upload_all');
+    show(r.message||r);
+    load();
+    startPolling();
+  }catch(err){
+    show('error: '+err,true);
+    startPolling();
+  }
 });
 document.getElementById('dbclr').addEventListener('click',async()=>{
   if(!confirm('Reiniciar BD LOCAL?\n\n- Borra historial.db y archivos descargados (quedara vacia)\n- NO afecta a Supabase\n- Luego podra ejecutar una nueva captura con sus fechas'))return;
