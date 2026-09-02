@@ -132,9 +132,26 @@ pub async fn upload_all(
     }
 
     // Filtro incremental: solo registros desde last_supabase_sync
-    let base_where = match last_sync {
+    let sync_where = match last_sync {
         Some(s) if !s.is_empty() => format!("WHERE capturado_en > '{}'", s),
         _ => String::new(),
+    };
+
+    // Calcular cutoff de retención
+    let retention_cutoff_date = if retention_years > 0 {
+        Some((chrono::Utc::now() - chrono::Duration::days((retention_years as i64) * 365))
+            .format("%Y-%m-%d")
+            .to_string())
+    } else {
+        None
+    };
+
+    // Combinar filtros: sync + retención
+    let base_where = match (sync_where.as_str(), &retention_cutoff_date) {
+        ("", None) => String::new(), // Sin filtros
+        ("", Some(cutoff)) => format!("WHERE mes_ref >= '{}'", cutoff), // Solo retención
+        (where_clause, None) => where_clause.to_string(), // Solo sync
+        (where_clause, Some(cutoff)) => format!("{} AND mes_ref >= '{}'", where_clause, cutoff), // Ambos
     };
 
     let count: i64 = sqlx::query_scalar(&format!(
