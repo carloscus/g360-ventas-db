@@ -5,6 +5,7 @@ use sqlx::FromRow;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::env;
 
 use g360_db_ventas::capture_state::{CapturePhase, ProgressState, SharedProgress, now_secs};
 
@@ -68,8 +69,11 @@ pub struct AppSettings {
     pub generado_por: String,
     pub allowed_lines: String,
     pub auto_sync: bool,
-    pub data_retention_years: u32,
+    pub app_retention_years: u32,
+    pub supabase_retention_years: u32,
     pub last_supabase_sync: Option<String>,
+    pub auto_daily_capture: bool,
+    pub capture_times: Vec<String>,
     pub db_path: String,
 }
 
@@ -205,8 +209,11 @@ async fn get_settings() -> Result<AppSettings, String> {
         generado_por: cfg.generado_por,
         allowed_lines: cfg.allowed_lines.join(", "),
         auto_sync: cfg.auto_sync,
-        data_retention_years: cfg.data_retention_years,
+        app_retention_years: cfg.app_retention_years,
+        supabase_retention_years: cfg.supabase_retention_years,
         last_supabase_sync: cfg.last_supabase_sync.clone(),
+        auto_daily_capture: cfg.auto_daily_capture,
+        capture_times: cfg.capture_times.clone(),
         db_path,
     })
 }
@@ -220,7 +227,10 @@ async fn save_settings(
     generado_por: String,
     allowed_lines: String,
     auto_sync: bool,
-    data_retention_years: u32,
+    app_retention_years: u32,
+    supabase_retention_years: u32,
+    auto_daily_capture: bool,
+    capture_times: Vec<String>,
 ) -> Result<AppSettings, String> {
     let mut cfg = g360_db_ventas::config::load_config();
     cfg.supabase.url = supabase_url;
@@ -238,7 +248,20 @@ async fn save_settings(
         .filter(|s| !s.is_empty())
         .collect();
     cfg.auto_sync = auto_sync;
-    cfg.data_retention_years = data_retention_years;
+    cfg.app_retention_years = app_retention_years;
+    cfg.supabase_retention_years = supabase_retention_years;
+    cfg.auto_daily_capture = auto_daily_capture;
+    if !capture_times.is_empty() {
+        cfg.capture_times = capture_times;
+    }
+        .collect();
+    cfg.auto_sync = auto_sync;
+    cfg.app_retention_years = app_retention_years;
+    cfg.supabase_retention_years = supabase_retention_years;
+    cfg.auto_daily_capture = auto_daily_capture;
+    if !capture_times.is_empty() {
+        cfg.capture_times = capture_times;
+    }
     g360_db_ventas::config::save_config(&cfg).map_err(|e| e.to_string())?;
     let db_path = g360_db_ventas::config::db_path().to_string_lossy().to_string();
     Ok(AppSettings {
@@ -252,8 +275,11 @@ async fn save_settings(
         generado_por: cfg.generado_por,
         allowed_lines: cfg.allowed_lines.join(", "),
         auto_sync: cfg.auto_sync,
-        data_retention_years: cfg.data_retention_years,
+        app_retention_years: cfg.app_retention_years,
+        supabase_retention_years: cfg.supabase_retention_years,
         last_supabase_sync: cfg.last_supabase_sync.clone(),
+        auto_daily_capture: cfg.auto_daily_capture,
+        capture_times: cfg.capture_times.clone(),
         db_path,
     })
 }
@@ -286,7 +312,8 @@ async fn admin_reset() -> Result<String, String> {
     // Config limpio: credenciales vacías, conserva allowed_lines y retención
     let mut new_cfg = g360_db_ventas::config::AppConfig::default_app();
     new_cfg.allowed_lines = cfg.allowed_lines.clone();
-    new_cfg.data_retention_years = cfg.data_retention_years;
+    new_cfg.app_retention_years = cfg.app_retention_years;
+    new_cfg.supabase_retention_years = cfg.supabase_retention_years;
     new_cfg.auto_sync = cfg.auto_sync;
     new_cfg.last_supabase_sync = None; // forzar full sync
     // generado_por queda vacío — el admin lo rellena
@@ -326,7 +353,7 @@ async fn upload_all() -> Result<String, String> {
     }
 
     let last_sync = cfg.last_supabase_sync.clone();
-    let retention = cfg.data_retention_years;
+    let retention = cfg.supabase_retention_years;  // Usar retención configurada para Supabase
     let shared: SharedProgress = CAPTURE_STATE.clone();
 
     // Closure que actualiza el estado de progreso desde el callback del uploader
@@ -1153,10 +1180,194 @@ fn main() {
             // Auditoría e integridad
             verify_integrity, calculate_checksums, get_sync_history, get_checksum_history,
             // Protección de upload
-            upload_dry_run, upload_all_with_verify
+            upload_dry_run, upload_all_with_verify,
+            // Automatización diaria
+            auto_daily_pipeline, get_next_capture_time
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// ─── AUTO-SYNC PARA TASK SCHEDULER ────────────────────────────────────────
+
+/// Ejecuta el pipeline diario y sale. Usado por Task Scheduler.
+async fn run_auto_sync_and_exit() -> ! {
+    use chrono::{Local, TimeDelta};
+    
+    let cfg = g360_db_ventas::config::load_config();
+    
+    // Verificar configuración mínima
+    if !cfg.supabase.is_configured() {
+        eprintln!("ERROR: Supabase no configurado");
+        std::process::exit(1);
+    }
+    if cfg.intranet.user.is_empty() || cfg.intranet.pass.is_empty() {
+        eprintln!("ERROR: Credenciales de intranet no configuradas");
+        std::process::exit(1);
+    }
+    
+    println!("Iniciando sync automático...");
+    
+    let pool = match g360_db_ventas::db::writer::init_pool().await {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("ERROR: No se pudo conectar a la BD: {}", e);
+            std::process::exit(1);
+        }
+    };
+    
+    // Paso 1: Capturar día anterior
+    println!("Paso 1: Capturando datos del día anterior...");
+    let yesterday = Local::now().naive_local().date() - TimeDelta::days(1);
+    let yesterday_str = yesterday.to_string();
+    
+    let capture_result = g360_db_ventas::capture::run_batch_history(&yesterday_str, "", false, CAPTURE_STATE.clone(), None).await;
+    
+    match capture_result {
+        Ok(_) => {
+            println!("✓ Captura completada: {}", yesterday_str);
+            
+            // Paso 2: Verificar integridad
+            println!("Paso 2: Verificando integridad...");
+            if let Ok(issues) = g360_db_ventas::db::writer::verify_integrity(&pool).await {
+                for issue in &issues {
+                    if issue.contains("⚠") || issue.contains("ERROR") {
+                        eprintln!("  {}", issue);
+                    }
+                }
+            }
+            
+            // Paso 3: Upload con verificación
+            println!("Paso 3: Subiendo a Supabase...");
+            let dry_run = match g360_db_ventas::processor::uploader::dry_run_upload(
+                &pool, 
+                cfg.supabase_retention_years, 
+                cfg.last_supabase_sync.as_deref()
+            ).await {
+                Ok(dr) => dr,
+                Err(e) => {
+                    eprintln!("ERROR: No se pudo calcular dry-run: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            
+            if dry_run.rows_to_upload == 0 {
+                println!("No hay datos nuevos para subir.");
+                std::process::exit(0);
+            }
+            
+            println!("Subiendo {} registros...", dry_run.rows_to_upload);
+            
+            let shared: SharedProgress = CAPTURE_STATE.clone();
+            let progress_cb: g360_db_ventas::processor::uploader::ProgressCb = Some(Arc::new(move |batch, total, pct, msg| {
+                let mut s = shared.lock().unwrap();
+                s.phase = CapturePhase::Uploading;
+                s.message = msg.to_string();
+                s.progress = pct;
+                drop(s);
+            }));
+            
+            match g360_db_ventas::processor::uploader::upload_all(
+                &pool, 
+                cfg.supabase_retention_years, 
+                cfg.last_supabase_sync.as_deref(), 
+                &progress_cb
+            ).await {
+                Ok((up, cleaned)) => {
+                    println!("✓ Upload completado: {} filas subidas, {} limpiadas", up, cleaned);
+                    
+                    // Verificación post-upload
+                    let url = g360_db_ventas::config::get_supabase_url();
+                    let key = g360_db_ventas::config::get_supabase_service_key();
+                    
+                    if let Ok(verification) = g360_db_ventas::processor::uploader::verify_upload_result(&url, &key, up).await {
+                        if verification.matched {
+                            println!("✓ Verificación OK: {} filas confirmadas en Supabase", verification.actual_count);
+                            
+                            // Actualizar marker
+                            let mut cfg2 = g360_db_ventas::config::load_config();
+                            cfg2.last_supabase_sync = Some(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+                            let _ = g360_db_ventas::config::save_config(&cfg2);
+                            
+                            println!("✓ Marker actualizado");
+                        } else {
+                            eprintln!("⚠ Advertencia: Discrepancia verificada. Esperadas: {}, Encontradas: {}", 
+                                verification.expected_count, verification.actual_count);
+                        }
+                    }
+                    
+                    // Calcular checksums
+                    println!("Paso 4: Calculando checksums...");
+                    if let Ok(_) = g360_db_ventas::db::writer::calculate_monthly_checksums(&pool).await {
+                        println!("✓ Checksums calculados");
+                    }
+                    
+                    println!("\n=== SYNC AUTOMÁTICO COMPLETADO ===");
+                    std::process::exit(0);
+                }
+                Err(e) => {
+                    eprintln!("ERROR: Fallo en upload: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("ERROR: Fallo en captura: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+    
+    // Verificar si se ejecuta desde Task Scheduler
+    let is_task_scheduler = args.iter().any(|a| a == "--task-scheduler" || a == "--auto-sync");
+    
+    if is_task_scheduler {
+        // Ejecutar sync y salir
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(run_auto_sync_and_exit());
+    } else {
+        // Modo normal: ejecutar app Tauri
+        #[cfg(not(debug_assertions))]
+        {
+            use tracing_subscriber::{fmt::Layer, EnvFilter};
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            
+            let log_dir = g360_db_ventas::config::logs_dir();
+            let _ = std::fs::create_dir_all(&log_dir);
+            if let Ok(f) = OpenOptions::new().create(true).append(true).open(log_dir.join("app.log")) {
+                tracing_subscriber::fmt()
+                    .with_env_filter(EnvFilter::new("info"))
+                    .with_writer(std::sync::Mutex::new(f))
+                    .with_ansi(false)
+                    .init();
+            }
+        }
+        
+        tauri::Builder::default()
+            .invoke_handler(tauri::generate_handler![
+                get_dashboard, get_health, get_settings, save_settings,
+                test_supabase, upload_all, admin_reset, reset_sync_marker, save_service_role_key,
+                capture_range, sync_from_last,
+                clear_cache, clear_db,
+                get_capture_status,
+                list_months, delete_month, delete_months, get_completeness, get_failed_days, import_manual_day, import_manual_month,
+                preview_import, reparse_raw,
+                abort_capture, test_intranet, preview_csv,
+                // Auditoría e integridad
+                verify_integrity, calculate_checksums, get_sync_history, get_checksum_history,
+                // Protección de upload
+                upload_dry_run, upload_all_with_verify,
+                // Automatización diaria
+                auto_daily_pipeline, get_next_capture_time
+            ])
+            .run(tauri::generate_context!())
+            .expect("error while running tauri application");
+    }
 }
 
 // ─── COMANDOS DE AUDITORÍA E INTEGRIDAD ─────────────────────────────────────

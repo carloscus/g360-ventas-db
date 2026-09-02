@@ -130,12 +130,27 @@ pub struct AppConfig {
     /// Sincronizar automaticamente al abrir la app
     #[serde(default)]
     pub auto_sync: bool,
-    /// Anos de retencion de datos en Supabase (0 = ilimitado)
-    #[serde(default)]
-    pub data_retention_years: u32,
+    /// Años de retención para apps derivadas (datos activos)
+    #[serde(default = "default_app_retention")]
+    pub app_retention_years: u32,
+    /// Años de retención para Supabase (buffer NC/ND)
+    #[serde(default = "default_supabase_retention")]
+    pub supabase_retention_years: u32,
     /// Ultimo timestamp de sync a Supabase (ISO format, UTC). Para sync incremental.
     #[serde(default)]
     pub last_supabase_sync: Option<String>,
+    /// Captura automática diaria (false = manual)
+    #[serde(default)]
+    pub auto_daily_capture: bool,
+    /// Horarios de captura diaria (formato "HH:MM", timezone local)
+    #[serde(default = "default_capture_times")]
+    pub capture_times: Vec<String>,
+}
+
+fn default_app_retention() -> u32 { 3 }
+fn default_supabase_retention() -> u32 { 4 }
+fn default_capture_times() -> Vec<String> {
+    vec!["12:00".to_string(), "20:00".to_string()]
 }
 
 impl AppConfig {
@@ -146,8 +161,11 @@ impl AppConfig {
             generado_por: String::new(),
             allowed_lines: default_allowed_lines(),
             auto_sync: false,
-            data_retention_years: 4,
+            app_retention_years: 3,
+            supabase_retention_years: 4,
             last_supabase_sync: None,
+            auto_daily_capture: false,
+            capture_times: default_capture_times(),
         }
     }
 }
@@ -220,7 +238,7 @@ pub fn save_config(cfg: &AppConfig) -> anyhow::Result<()> {
     let generado = if cfg.generado_por.is_empty() { "sistema" } else { &cfg.generado_por };
     let _ = std::fs::OpenOptions::new().create(true).append(true).open(&audit_path)
         .and_then(|mut f| writeln!(f, "[{timestamp}] config saved by {generado} — allowed_lines={}, retention={}y, supabase={}",
-            cfg.allowed_lines.len(), cfg.data_retention_years, cfg.supabase.is_configured()));
+            cfg.allowed_lines.len(), cfg.supabase_retention_years, cfg.supabase.is_configured()));
     let s = serde_json::to_string_pretty(cfg)?;
     std::fs::write(&path, s)?;
     Ok(())
