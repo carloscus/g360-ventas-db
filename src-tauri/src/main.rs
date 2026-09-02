@@ -1160,39 +1160,75 @@ fn main() {
 // ─── COMANDOS DE AUDITORÍA E INTEGRIDAD ─────────────────────────────────────
 
 #[tauri::command]
-async fn verify_integrity() -> Result<Vec<String>, String> {
+async fn verify_integrity() -> Result<serde_json::Value, String> {
     let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
     g360_db_ventas::db::writer::ensure_audit_tables(&pool)
         .await
         .map_err(|e| e.to_string())?;
-    g360_db_ventas::db::writer::verify_integrity(&pool)
+    let issues = g360_db_ventas::db::writer::verify_integrity(&pool)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::to_value(issues).unwrap_or(serde_json::json!({"error": "serialization failed"})))
 }
 
 #[tauri::command]
-async fn calculate_checksums() -> Result<Vec<(String, String, i64, f64)>, String> {
+async fn calculate_checksums() -> Result<serde_json::Value, String> {
     let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
     g360_db_ventas::db::writer::ensure_audit_tables(&pool)
         .await
         .map_err(|e| e.to_string())?;
-    g360_db_ventas::db::writer::calculate_monthly_checksums(&pool)
+    let checksums = g360_db_ventas::db::writer::calculate_monthly_checksums(&pool)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    // Convert to JSON array of objects
+    let mut result = Vec::new();
+    for (mes, checksum, filas, soles) in checksums {
+        result.push(serde_json::json!({
+            "mes_ref": mes,
+            "checksum": checksum,
+            "total_filas": filas,
+            "total_soles": soles
+        }));
+    }
+    Ok(serde_json::to_value(result).unwrap_or(serde_json::json!({"error": "serialization failed"})))
 }
 
 #[tauri::command]
-async fn get_sync_history(limit: i64) -> Result<Vec<(i64, String, String, i64, i64, i64, String)>, String> {
+async fn get_sync_history(limit: i64) -> Result<serde_json::Value, String> {
     let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
-    g360_db_ventas::db::writer::get_sync_history(&pool, limit)
+    let history = g360_db_ventas::db::writer::get_sync_history(&pool, limit)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    let mut result = Vec::new();
+    for (id, tipo, estado, solicitadas, subidas, limpiadas, fecha) in history {
+        result.push(serde_json::json!({
+            "id": id,
+            "tipo": tipo,
+            "estado": estado,
+            "filas_solicitadas": solicitadas,
+            "filas_subidas": subidas,
+            "filas_limpiadas": limpiadas,
+            "started_at": fecha
+        }));
+    }
+    Ok(serde_json::to_value(result).unwrap_or(serde_json::json!({"error": "serialization failed"})))
 }
 
 #[tauri::command]
-async fn get_checksum_history() -> Result<Vec<(String, String, i64, f64, String)>, String> {
+async fn get_checksum_history() -> Result<serde_json::Value, String> {
     let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
-    g360_db_ventas::db::writer::get_checksum_history(&pool)
+    let history = g360_db_ventas::db::writer::get_checksum_history(&pool)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    let mut result = Vec::new();
+    for (mes, checksum, filas, soles, calculado_en) in history {
+        result.push(serde_json::json!({
+            "mes_ref": mes,
+            "checksum": checksum,
+            "total_filas": filas,
+            "total_soles": soles,
+            "calculado_en": calculado_en
+        }));
+    }
+    Ok(serde_json::to_value(result).unwrap_or(serde_json::json!({"error": "serialization failed"})))
 }
