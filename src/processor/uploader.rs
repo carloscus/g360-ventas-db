@@ -9,24 +9,31 @@ use tracing::info;
 /// (batch_actual, total_batches, porcentaje, mensaje)
 pub type ProgressCb = Option<Arc<dyn Fn(usize, usize, f32, &str) + Send + Sync>>;
 
-/// Sube un batch de ventas a Supabase con upsert por (folio_unico, id_articulo).
+/// Sube un batch de ventas a Supabase (sin on_conflict para evitar error 500 con multi-línea).
 /// Reintenta hasta 3 veces con backoff exponencial ante errores transitorios (5xx, timeout).
-/// NO deduplicar por folio_unico: una factura puede tener múltiples líneas (SKUs distintos).
+/// Deduplica por (folio_unico, id_articulo) para evitar duplicados en Supabase.
 pub async fn upload_to_supabase(ventas: &[Venta], progress_cb: &ProgressCb) -> Result<usize> {
     let url = get_supabase_url();
     let key = get_supabase_service_key();
     if url.contains("TU_SUPABASE") || key.contains("TU_ANON") {
         return Err(anyhow::anyhow!("Supabase credentials not configured"));
     }
-    // NOTED: Antes se deduplicaba por folio_unico, pero eso colapsaba facturas multi-línea.
-    // Ahora se envían TODAS las líneas para preservar la estructura completa de la factura.
+    // Deduplicar por (folio_unico, id_articulo): mantener la primera ocurrencia de cada línea
+    let mut seen: std::collections::HashMap<(String, String), ()> = std::collections::HashMap::new();
+    let deduped: Vec<Venta> = ventas.iter()
+        .filter(|v| seen.insert((v.folio_unico.clone(), v.id_articulo.clone()), ()).is_none())
+        .cloned()
+        .collect();
+    if deduped.len() < ventas.len() {
+        info!("Upload dedup: {} duplicados descartados en batch de {}", ventas.len() - deduped.len(), ventas.len());
+    }
     // NO on_conflict: Supabase no permite múltiples filas con misma key en upsert batch.
     // La deduplicación se maneja a nivel de aplicación (reparse + dedup_ventas).
     let endpoint = format!(
         "{}/rest/v1/{}",
         url, SUPABASE_TABLE
     );
-    let body = serde_json::to_string(&ventas)?;
+    let body = serde_json::to_string(&deduped)?;
     let client = reqwest::Client::new();
 
     let max_attempts = 3;
@@ -72,7 +79,7 @@ pub async fn upload_to_supabase(ventas: &[Venta], progress_cb: &ProgressCb) -> R
             if let Some(cb) = progress_cb {
                 cb(0, 0, 0.0, ""); // no-op batch done
             }
-            return Ok(ventas.len());
+            return Ok(deduped.len());
         }
         // Errores transitorios (5xx, rate-limit) -> reintentar; 4xx -> error inmediato
         if st.is_server_error() || st == reqwest::StatusCode::TOO_MANY_REQUESTS {
