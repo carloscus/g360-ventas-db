@@ -149,11 +149,12 @@ pub async fn upload_all(
         _ => String::new(),
     };
 
-    // Calcular cutoff de retención
+    // Calcular cutoff de retencion (mes alineado: mes_ref es 'YYYY-MM')
     let retention_cutoff_date = if retention_days > 0 {
-        Some((chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
+        let d = (chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
             .format("%Y-%m-%d")
-            .to_string())
+            .to_string();
+        Some(d[..7].to_string())
     } else {
         None
     };
@@ -353,13 +354,15 @@ pub async fn cleanup_supabase_retention(
     let cutoff = (chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
         .format("%Y-%m-%d")
         .to_string();
+    // mes alineado: borrar por mes_ref evita borrar dias sueltos del mes-corte
+    let cutoff_mes = cutoff[..7].to_string();
     let client = reqwest::Client::new();
     let base_url = format!("{}/rest/v1/{}", url, SUPABASE_TABLE);
 
     // Contar cuantos IDs hay fuera de ventana
     let count_endpoint = format!(
-        "{}?fecha_orig=lt.{}&select=id&limit=1",
-        base_url, cutoff
+        "{}?mes_ref=lt.{}&select=id&limit=1",
+        base_url, cutoff_mes
     );
     let count_resp = client
         .get(&count_endpoint)
@@ -395,62 +398,38 @@ pub async fn cleanup_supabase_retention(
         total_old, cutoff
     );
 
-    // Obtener IDs y borrar en batches de 500
+    // DELETE directo por mes_ref (loop hasta vaciar; PostgREST borra todo el rango por request)
     let mut deleted = 0usize;
-    let bs = 500;
-    let mut offset = 0usize;
 
     loop {
-        let id_endpoint = format!(
-            "{}?fecha_orig=lt.{}&select=id&limit={}&offset={}",
-            base_url, cutoff, bs, offset
-        );
         let resp = client
-            .get(&id_endpoint)
+            .delete(&base_url)
             .header("apikey", &key)
             .header("Authorization", format!("Bearer {}", key))
-            .header("Prefer", "return=minimal")
+            .header("Prefer", "return=representation")
+            .query(&[("mes_ref", format!("lt.{}", cutoff_mes).as_str()), ("select", "id")])
             .send()
             .await
-            .context("Supabase fetch IDs failed")?;
-        if !resp.status().is_success() {
-            break;
-        }
-        let ids: Vec<String> = match resp.json().await {
-            Ok(v) => v,
-            Err(_) => break,
-        };
-        if ids.is_empty() {
-            break;
-        }
-        offset += ids.len();
-        deleted += ids.len();
+            .context("Supabase retention delete failed")?;
 
-        // Borrar por ID en batch
-        let id_list: String = ids.iter().map(|i| i.as_str()).collect::<Vec<_>>().join(",");
-        let delete_by_id = format!("{}?id=eq.({})", base_url, id_list);
-        if let Ok(r) = client
-            .delete(&delete_by_id)
-            .header("apikey", &key)
-            .header("Authorization", format!("Bearer {}", key))
-            .header("Prefer", "return=minimal")
-            .send()
-            .await
-        {
-            if !r.status().is_success() {
-                info!("Supabase retention batch delete failed at offset {}", offset - ids.len());
-            }
+        if !resp.status().is_success() {
+            let txt = resp.text().await.unwrap_or_default();
+            info!("Supabase retention delete fallo: {}", txt.chars().take(120).collect::<String>());
+            break;
         }
+        let rows: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!([]));
+        let n = rows.as_array().map(|a| a.len()).unwrap_or(0);
+        deleted += n;
 
         if let Some(cb) = progress_cb {
-            let pct = 0.95 + (offset as f64 / total_old as f64) * 0.05;
-            cb(0, 0, pct as f32, &format!(
+            let frac = if total_old > 0 { (deleted as f64 / total_old as f64).min(1.0) } else { 1.0 };
+            cb(0, 0, (0.95 + frac * 0.05) as f32, &format!(
                 "Retencion: {}/{} limpiados",
                 deleted, total_old
             ));
         }
 
-        if ids.len() < bs {
+        if n == 0 {
             break;
         }
     }
