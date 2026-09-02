@@ -294,7 +294,7 @@ fn parse_export_csv_inner(path: &Path) -> Result<ParseOutput> {
             dolares,
             precio_unitario,
             anho: g(c_anho).parse().unwrap_or(0),
-            mes: 0,
+            mes: label.get(5..7).and_then(|s| s.parse::<i32>().ok()).unwrap_or(0),
             fecha_orig: parse_date(&g(c_fo)),
             fecha_ref: {
                 let s = g(c_fr);
@@ -487,8 +487,8 @@ pub fn parse_simple_csv(path: &Path) -> Result<Vec<Venta>> {
             soles: parse_f64_ctx(&g(soles), "SOLES"),
             dolares: parse_f64_ctx(&g(dolares), "DOLARES"),
             precio_unitario: 0.0,
-            anho: 0,
-            mes: 0,
+            anho: label.get(0..4).and_then(|s| s.parse::<i32>().ok()).unwrap_or(0),
+            mes: label.get(5..7).and_then(|s| s.parse::<i32>().ok()).unwrap_or(0),
             fecha_orig: chrono::NaiveDate::default(),
             fecha_ref: None,
             fecha_venc: None,

@@ -1233,6 +1233,7 @@ async fn run_auto_sync_and_exit() -> ! {
                 drop(s);
             }));
             
+            let capture_start_utc = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
             match g360_db_ventas::processor::uploader::upload_all(
                 &pool, 
                 cfg.supabase_retention_days_effective(), 
@@ -1246,7 +1247,7 @@ async fn run_auto_sync_and_exit() -> ! {
                     let url = g360_db_ventas::config::get_supabase_url();
                     let key = g360_db_ventas::config::get_supabase_service_key();
                     
-                    if let Ok(verification) = g360_db_ventas::processor::uploader::verify_upload_result(&url, &key, up).await {
+                    if let Ok(verification) = g360_db_ventas::processor::uploader::verify_upload_result(&url, &key, up, Some(&capture_start_utc)).await {
                         if verification.matched {
                             println!("✓ Verificación OK: {} filas confirmadas en Supabase", verification.actual_count);
                             
@@ -1472,6 +1473,7 @@ async fn upload_all_with_verify() -> Result<serde_json::Value, String> {
 
     set_state("uploading", &format!("Subiendo {} registros a Supabase...", rows_to_upload), 0.05);
 
+    let capture_start_utc = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let shared: SharedProgress = CAPTURE_STATE.clone();
     let progress_cb: g360_db_ventas::processor::uploader::ProgressCb = Some(Arc::new(move |_batch, _total, pct, msg| {
         let mut s = shared.lock().unwrap();
@@ -1489,7 +1491,7 @@ async fn upload_all_with_verify() -> Result<serde_json::Value, String> {
             let url = g360_db_ventas::config::get_supabase_url();
             let key = g360_db_ventas::config::get_supabase_service_key();
 
-            let verification = match g360_db_ventas::processor::uploader::verify_upload_result(&url, &key, up).await {
+            let verification = match g360_db_ventas::processor::uploader::verify_upload_result(&url, &key, up, Some(&capture_start_utc)).await {
                 Ok(v) => v,
                 Err(e) => {
                     eprintln!("Post-upload verification failed: {}", e);
@@ -1603,12 +1605,13 @@ async fn auto_daily_pipeline() -> Result<serde_json::Value, String> {
                 drop(s);
             }));
 
+            let capture_start_utc = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
             match g360_db_ventas::processor::uploader::upload_all(&pool, cfg.supabase_retention_days_effective(), cfg.last_supabase_sync.as_deref(), &progress_cb).await {
                 Ok((up, cleaned)) => {
                     let url = g360_db_ventas::config::get_supabase_url();
                     let key = g360_db_ventas::config::get_supabase_service_key();
 
-                    let verification = g360_db_ventas::processor::uploader::verify_upload_result(&url, &key, up)
+                    let verification = g360_db_ventas::processor::uploader::verify_upload_result(&url, &key, up, Some(&capture_start_utc))
                         .await
                         .unwrap_or(g360_db_ventas::processor::uploader::VerificationResult {
                             expected_count: up,

@@ -499,14 +499,18 @@ pub async fn validate_upload_data(
     })
 }
 
-/// Verifica post-upload: compara conteo enviado vs recibido en Supabase
+/// Verifica post-upload: compara filas enviadas vs filas recibidas en Supabase.
+/// `since_utc` filtra por capturado_en >= timestamp de inicio del upload (las filas
+/// de esta corrida); sin él compararía contra el total de la tabla (siempre dispara
+/// falso negativo en sync incremental).
 pub async fn verify_upload_result(
     supabase_url: &str,
     supabase_key: &str,
     expected_count: usize,
+    since_utc: Option<&str>,
 ) -> Result<VerificationResult> {
     use crate::config::get_supabase_service_key;
-    
+
     let key = if supabase_key.is_empty() {
         get_supabase_service_key()
     } else {
@@ -514,8 +518,13 @@ pub async fn verify_upload_result(
     };
 
     let client = reqwest::Client::new();
-    let endpoint = format!("{}/rest/v1/{}", supabase_url, SUPABASE_TABLE);
-    
+    let mut endpoint = format!("{}/rest/v1/{}", supabase_url, SUPABASE_TABLE);
+    if let Some(since) = since_utc {
+        // capturado_en es timestamptz con default now() al insertar: las filas de
+        // esta corrida tienen capturado_en >= inicio del upload
+        endpoint = format!("{}?capturado_en=gte.{}", endpoint, since);
+    }
+
     // Get current count from Supabase
     let resp = client
         .get(&endpoint)
@@ -526,20 +535,20 @@ pub async fn verify_upload_result(
         .send()
         .await
         .context("Failed to verify upload")?;
-    
+
     let content_range = resp.headers()
         .get("content-range")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("0/0");
-    
+
     let actual_count: usize = content_range
         .split('/')
         .nth(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    
+
     let matched = actual_count == expected_count;
-    
+
     Ok(VerificationResult {
         expected_count,
         actual_count,
