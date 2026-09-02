@@ -198,6 +198,9 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
     <button id="previewBtn">👁 Vista previa CSV</button>
     <button id="reparse" class="btn-ghost" title="Re-parsea CSVs en raw/ con allowed_lines actual (sin intranet)">⚡ Reprocesar raw</button>
     <div class="sep"></div>
+    <button id="verifyBtn" class="btn-ghost" title="Verifica integridad de la BD (duplicados, folios huérfanos)">🔍 Verificar Integridad</button>
+    <button id="checksumBtn" class="btn-ghost" title="Genera checksums mensuales para detección de cambios">🔐 Calcular Checksums</button>
+    <div class="sep"></div>
     <button id="clr">Limpiar caché XLS</button>
     <button id="dbclr" class="danger">Recrear BD local (borra todo)</button>
   </div>
@@ -693,6 +696,29 @@ document.getElementById('dbclr').addEventListener('click',async()=>{
   if(!confirm('Reiniciar BD LOCAL?\n\n- Borra historial.db y archivos descargados (quedara vacia)\n- NO afecta a Supabase\n- Luego podra ejecutar una nueva captura con sus fechas'))return;
   show('reiniciando bd local...');
   try{const r=await invoke('clear_db');show(r.message);load();}catch(err){show('error: '+err,true)}
+});
+document.getElementById('verifyBtn').addEventListener('click',async()=>{
+  show('verificando integridad...');
+  try{
+    const r=await invoke('verify_integrity');
+    const issues = Array.isArray(r) ? r : (r.issues || []);
+    if(issues.length > 0 && !(issues.length === 1 && issues[0].includes('✅'))) {
+      show('⚠️ Inconsistencias encontradas:\n' + issues.join('\n'), true);
+    } else {
+      show('✅ Integridad OK: ' + (issues[0] || 'Sin problemas'));
+    }
+  }catch(err){show('error: '+err,true)}
+});
+document.getElementById('checksumBtn').addEventListener('click',async()=>{
+  show('calculando checksums...');
+  try{
+    const r=await invoke('calculate_checksums');
+    const count = Array.isArray(r) ? r.length : 0;
+    show(`✅ Checksums calculados: ${count} meses actualizados`);
+    // Also show history
+    const hist = await invoke('get_checksum_history');
+    console.log('Checksum history:', hist);
+  }catch(err){show('error: '+err,true)}
 });
 // Re-parse raw sin intranet (cuando cambia allowed_lines)
 document.getElementById('reparse').addEventListener('click',async()=>{
