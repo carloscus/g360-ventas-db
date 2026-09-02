@@ -111,6 +111,26 @@ pub async fn upload_all(
 ) -> Result<(usize, usize)> {
     let bs = 500;
 
+    // VALIDACIÓN: verificar duplicados locales antes de subir
+    let dup_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM (
+            SELECT folio_unico, id_articulo, COUNT(*) as cnt
+            FROM ventas
+            GROUP BY folio_unico, id_articulo
+            HAVING COUNT(*) > 1
+        )"
+    )
+    .fetch_one(pool)
+    .await
+    .context("Duplicate check failed")?;
+
+    if dup_count > 0 {
+        return Err(anyhow::anyhow!(
+            "Hay {} pares (folio,SKU) duplicados en BD local. Ejecuta 'Reprocesar raw' primero para deduplicar.",
+            dup_count
+        ));
+    }
+
     // Filtro incremental: solo registros desde last_supabase_sync
     let base_where = match last_sync {
         Some(s) if !s.is_empty() => format!("WHERE capturado_en > '{}'", s),
