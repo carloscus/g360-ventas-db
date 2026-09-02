@@ -1149,8 +1149,50 @@ fn main() {
             get_capture_status,
             list_months, delete_month, delete_months, get_completeness, get_failed_days, import_manual_day, import_manual_month,
             preview_import, reparse_raw,
-            abort_capture, test_intranet, preview_csv
+            abort_capture, test_intranet, preview_csv,
+            // Auditoría e integridad
+            verify_integrity, calculate_checksums, get_sync_history, get_checksum_history
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// ─── COMANDOS DE AUDITORÍA E INTEGRIDAD ─────────────────────────────────────
+
+#[tauri::command]
+async fn verify_integrity() -> Result<Vec<String>, String> {
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    g360_db_ventas::db::writer::ensure_audit_tables(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    g360_db_ventas::db::writer::verify_integrity(&pool)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn calculate_checksums() -> Result<Vec<(String, String, i64, f64)>, String> {
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    g360_db_ventas::db::writer::ensure_audit_tables(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    g360_db_ventas::db::writer::calculate_monthly_checksums(&pool)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn get_sync_history(limit: i64) -> Result<Vec<(i64, String, String, i64, i64, i64, String)>, String> {
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    g360_db_ventas::db::writer::get_sync_history(&pool, limit)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn get_checksum_history() -> Result<Vec<(String, String, i64, f64, String)>, String> {
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    g360_db_ventas::db::writer::get_checksum_history(&pool)
+        .await
+        .map_err(|e| e.to_string())?
 }

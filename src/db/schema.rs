@@ -25,6 +25,51 @@ pub const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS ventas (
     folio_unico TEXT
 )";
 
+// Tablas de auditoría e integridad
+pub const CREATE_AUDIT_TABLES_SQL: &str = "
+-- Log de sincronizaciones
+CREATE TABLE IF NOT EXISTS sync_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tipo TEXT NOT NULL DEFAULT 'upload',
+    estado TEXT NOT NULL DEFAULT 'pending',
+    filas_solicitadas INTEGER DEFAULT 0,
+    filas_subidas INTEGER DEFAULT 0,
+    filas_limpiadas INTEGER DEFAULT 0,
+    duracion_segundos REAL,
+    error_message TEXT,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    finished_at TEXT
+);
+
+-- Checksums mensuales para detectar cambios
+CREATE TABLE IF NOT EXISTS mes_checksums (
+    mes_ref TEXT NOT NULL,
+    checksum TEXT NOT NULL,
+    total_filas INTEGER NOT NULL,
+    total_soles REAL NOT NULL,
+    calculado_en TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (mes_ref)
+);
+
+-- Auditoría de cambios
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tabla TEXT NOT NULL,
+    operacion TEXT NOT NULL,
+    folio_unico TEXT,
+    id_articulo TEXT,
+    filas_afectadas INTEGER DEFAULT 1,
+    detalle TEXT,
+    creado_en TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Indices
+CREATE INDEX IF NOT EXISTS idx_sync_log_fecha ON sync_log(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sync_log_tipo ON sync_log(tipo);
+CREATE INDEX IF NOT EXISTS idx_audit_log_folio ON audit_log(folio_unico);
+CREATE INDEX IF NOT EXISTS idx_audit_log_fecha ON audit_log(creado_en DESC);
+";
+
 pub const CREATE_INDEXES_SQL: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_venta_mes ON ventas(mes_ref);",
     "CREATE INDEX IF NOT EXISTS idx_venta_cliente ON ventas(id_cliente);",

@@ -1,7 +1,7 @@
 // Comentarios en espanol - fechas internas yyyy-mm-dd, display dd/mm/yyyy
 use crate::config::db_path;
 use crate::models::Venta;
-use crate::db::schema::{CREATE_INDEXES_SQL, CREATE_TABLE_SQL, CREATE_VIEWS_SQL, CREATE_STATS_CACHE_SQL};
+use crate::db::schema::{CREATE_INDEXES_SQL, CREATE_TABLE_SQL, CREATE_VIEWS_SQL, CREATE_STATS_CACHE_SQL, CREATE_AUDIT_TABLES_SQL};
 use anyhow::{Context, Result};
 use sqlx::{query, SqlitePool};
 use std::sync::Mutex;
@@ -257,4 +257,154 @@ pub async fn refresh_stats_cache(pool: &SqlitePool) -> Result<()> {
         .await?;
     }
     Ok(())
+}
+
+// ─── AUDITORÍA E INTEGRIDAD ─────────────────────────────────────────────────
+
+/// Crea las tablas de auditoría si no existen
+pub async fn ensure_audit_tables(pool: &SqlitePool) -> Result<()> {
+    query(CREATE_AUDIT_TABLES_SQL)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Registra una entrada en el log de sincronización
+pub async fn log_sync(
+    pool: &SqlitePool,
+    tipo: &str,
+    estado: &str,
+    filas_solicitadas: i64,
+    filas_subidas: i64,
+    filas_limpiadas: i64,
+    duracion_segundos: f64,
+    error_message: Option<&str>,
+) -> Result<i64> {
+    let row_id = sqlx::query_scalar(
+        r#"INSERT INTO sync_log (tipo, estado, filas_solicitadas, filas_subidas, filas_limpiadas, duracion_segundos, error_message, started_at, finished_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now')) RETURNING id"#
+    )
+    .bind(tipo)
+    .bind(estado)
+    .bind(filas_solicitadas)
+    .bind(filas_subidas)
+    .bind(filas_limpiadas)
+    .bind(duracion_segundos)
+    .bind(error_message)
+    .fetch_one(pool)
+    .await?;
+    Ok(row_id)
+}
+
+/// Genera checksums mensuales para detectar cambios en los datos
+pub async fn calculate_monthly_checksums(pool: &SqlitePool) -> Result<Vec<(String, String, i64, f64)>> {
+    let results = sqlx::query_as(
+        r#"INSERT INTO mes_checksums (mes_ref, checksum, total_filas, total_soles, calculado_en)
+           SELECT 
+               mes_ref,
+               printf('%08x-%08x-%08x', 
+                   COUNT(*),
+                   CAST(ROUND(SUM(soles) * 100) AS INTEGER) & 0xFFFFFFFF,
+                   CAST(ROUND(SUM(COALESCE(dolares, 0) * 100), 0) AS INTEGER) & 0xFFFFFFFF
+               ) as checksum,
+               COUNT(*) as total_filas,
+               ROUND(SUM(soles), 2) as total_soles,
+               datetime('now')
+           FROM ventas
+           GROUP BY mes_ref
+           ON CONFLICT(mes_ref) DO UPDATE SET
+               checksum = excluded.checksum,
+               total_filas = excluded.total_filas,
+               total_soles = excluded.total_soles,
+               calculado_en = excluded.calculado_en
+           RETURNING mes_ref, checksum, total_filas, total_soles"#
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(results)
+}
+
+/// Verifica la integridad de la base de datos y retorna inconsistencias
+pub async fn verify_integrity(pool: &SqlitePool) -> Result<Vec<String>> {
+    let mut issues = Vec::new();
+
+    // 1. Verificar duplicados por (folio_unico, id_articulo)
+    let dup_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM (
+            SELECT folio_unico, id_articulo, COUNT(*) as cnt
+            FROM ventas
+            GROUP BY folio_unico, id_articulo
+            HAVING COUNT(*) > 1
+        )"
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if dup_count > 0 {
+        issues.push(format!("⚠️  Encontrados {} pares (folio+SKU) duplicados", dup_count));
+    }
+
+    // 2. Verificar facturas sin líneas
+    let empty_invoices: i64 = sqlx::query_scalar(
+        "SELECT COUNT(DISTINCT folio_unico) FROM ventas WHERE folio_unico IS NULL OR folio_unico = ''"
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if empty_invoices > 0 {
+        issues.push(format!("⚠️  {} registros sin folio_unico válido", empty_invoices));
+    }
+
+    // 3. Verificar meses sin datos
+    let now_str = chrono::Utc::now().format("%Y").to_string();
+    let current_year: i64 = now_str.parse().unwrap_or(2026);
+    let expected_months = (current_year - 2018) * 12 + 9; // Desde 2018-01 hasta el mes actual
+    let actual_months: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT mes_ref) FROM ventas")
+        .fetch_one(pool)
+        .await?;
+
+    if actual_months < expected_months {
+        issues.push(format!("ℹ️  {} meses con datos (esperado ~{} desde 2018)", actual_months, expected_months));
+    }
+
+    // 4. Comparar checksums vs estado actual
+    let checksum_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mes_checksums")
+        .fetch_one(pool)
+        .await?;
+
+    if checksum_count == 0 {
+        issues.push("ℹ️  No hay checksums calculados. Ejecuta 'calcular_checksums' para establecer baseline".to_string());
+    }
+
+    if issues.is_empty() {
+        issues.push("✅ Base de datos intacta. No se encontraron inconsistencias.".to_string());
+    }
+
+    Ok(issues)
+}
+
+/// Retorna el historial de sincronizaciones
+pub async fn get_sync_history(pool: &SqlitePool, limit: i64) -> Result<Vec<(i64, String, String, i64, i64, i64, String)>> {
+    let rows = sqlx::query_as(
+        r#"SELECT id, tipo, estado, filas_solicitadas, filas_subidas, filas_limpiadas, started_at
+           FROM sync_log
+           ORDER BY started_at DESC
+           LIMIT ?"#
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// Retorna el historial de checksums mensuales
+pub async fn get_checksum_history(pool: &SqlitePool) -> Result<Vec<(String, String, i64, f64, String)>> {
+    let rows = sqlx::query_as(
+        r#"SELECT mes_ref, checksum, total_filas, total_soles, calculado_en
+           FROM mes_checksums
+           ORDER BY mes_ref DESC"#
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
 }
