@@ -1155,39 +1155,6 @@ async fn save_service_role_key(service_role_key: String) -> Result<String, Strin
     ))
 }
 
-fn main() {
-    g360_db_ventas::config::load_dotenv();
-    // Logging a archivo: sin esto los errores de captura son invisibles en release
-    let log_dir = g360_db_ventas::config::logs_dir();
-    let _ = std::fs::create_dir_all(&log_dir);
-    if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(log_dir.join("app.log")) {
-        tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::new("info"))
-            .with_writer(std::sync::Mutex::new(f))
-            .with_ansi(false)
-            .init();
-    }
-    tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![
-            get_dashboard, get_health, get_settings, save_settings,
-            test_supabase, upload_all, admin_reset, reset_sync_marker, save_service_role_key,
-            capture_range, sync_from_last,
-            clear_cache, clear_db,
-            get_capture_status,
-            list_months, delete_month, delete_months, get_completeness, get_failed_days, import_manual_day, import_manual_month,
-            preview_import, reparse_raw,
-            abort_capture, test_intranet, preview_csv,
-            // Auditoría e integridad
-            verify_integrity, calculate_checksums, get_sync_history, get_checksum_history,
-            // Protección de upload
-            upload_dry_run, upload_all_with_verify,
-            // Automatización diaria
-            auto_daily_pipeline, get_next_capture_time
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
-}
-
 // ─── AUTO-SYNC PARA TASK SCHEDULER ────────────────────────────────────────
 
 /// Ejecuta el pipeline diario y sale. Usado por Task Scheduler.
