@@ -202,8 +202,21 @@ G360_INTRANET_PASS=password_demo
 
 ### 3. Sincronizar con Supabase
 
-- Click **"sinc con supabase"**.
-- Los registros se suben en batches de 500 con `onConflict=folio_unico`.
+- Click **"sinc con supabase"** (sync incremental por `capturado_en`).
+- O **"⋯ más acciones" → "🔄 Forzar Full Sync Supabase"** (resetea el marcador y re-sube la ventana completa).
+- Los registros se suben en batches de 500 con deduplicación client-side por `(folio_unico, id_articulo)` — sin `on_conflict` en Supabase (permite facturas multi-línea).
+
+### 4. Automatización diaria (Task Scheduler)
+
+La app soporta modo headless para el Programador de Tareas de Windows:
+
+```powershell
+$Action = New-ScheduledTaskAction -Execute "C:\...\g360-db-ventas-tauri.exe" -Argument "--task-scheduler"
+$Trigger = New-ScheduledTaskTrigger -Daily -At "15:00"
+Register-ScheduledTask -TaskName "G360 Ventas Sync" -Action $Action -Trigger $Trigger -Force
+```
+
+Con `--task-scheduler` la app ejecuta el pipeline completo (captura día anterior → parseo → upload con verificación → checksums) y cierra automáticamente.
 
 ---
 
@@ -258,9 +271,15 @@ Almacenado en `%APPDATA%\g360-db-ventas\data\config.json`:
   "generado_por": "Juan Perez",
   "allowed_lines": ["01", "02", "09", "11", "14"],
   "auto_sync": true,
-  "data_retention_years": 5
+  "app_retention_years": 3,
+  "supabase_retention_years": 4,
+  "auto_daily_capture": false,
+  "capture_times": ["12:00", "20:00"],
+  "last_supabase_sync": "2026-09-01T21:54:56Z"
 }
 ```
+
+> **Retenciones separadas**: `app_retention_years` (3) define la ventana activa para apps derivadas; `supabase_retention_years` (4) agrega un año de buffer para NC/ND cross-month que referencian facturas antiguas. La BD local conserva el historial completo.
 
 ### Modelo de seguridad
 
@@ -280,11 +299,35 @@ Almacenado en `%APPDATA%\g360-db-ventas\data\config.json`:
 
 | Escenario | Comportamiento |
 |-----------|----------------|
-| **Local** | mantiene los últimos N años en SQLite (`data_retention_years`) |
-| **Supabase** | recibe todo el historial capturado |
+| **Local** | historial completo (sin límite de años) |
+| **Supabase** | ventana de `supabase_retention_years` (4 años), filtrada **en el SELECT** antes de subir |
+| **Apps derivadas** | ventana activa de `app_retention_years` (3 años) |
 | **Líneas no permitidas** | se filtran en el parse (`is_allowed_line`) |
 
-> Al capturar, los meses fuera del rango de retención se pueden eliminar desde el botón **📅 meses** (multiselección + confirmación).
+> El filtro de retención se aplica en el `WHERE mes_ref >= cutoff` del uploader — los datos antiguos nunca salen de la BD local hacia Supabase. Los meses fuera de rango también se pueden eliminar manualmente desde **📅 meses** (multiselección + confirmación).
+
+---
+
+## Auditoría e integridad
+
+La app incluye un sistema de verificación de datos accesible desde **⋯ más acciones**:
+
+| Botón / Comando | Función |
+|-----------------|---------|
+| **🔍 Verificar Integridad** (`verify_integrity`) | detecta duplicados por `(folio_unico, id_articulo)`, folios huérfanos y meses faltantes |
+| **🔐 Calcular Checksums** (`calculate_checksums`) | hash mensual por `(filas, soles, dolares)` — detecta cambios no autorizados |
+| **upload_dry_run** | preview de lo que se subiría (filas, totales, tamaño estimado) sin subir nada |
+| **upload_all_with_verify** | upload con verificación post-upload: el marcador de sync solo avanza si el conteo coincide |
+
+**Tablas de auditoría** (SQLite local):
+
+| Tabla | Contenido |
+|-------|-----------|
+| `sync_log` | cada sync: tipo, estado, filas solicitadas/subidas/limpiadas, duración, errores |
+| `mes_checksums` | hash por mes con timestamp — baseline para detectar corrupción |
+| `audit_log` | trazabilidad de operaciones DML |
+
+**Validación pre-upload**: el uploader bloquea el sync si detecta duplicados `(folio, SKU)` en la BD local o filas con folio/SKU nulos o cantidades negativas.
 
 ---
 
@@ -376,11 +419,15 @@ frontend/
 | **Lock exclusivo** | handle `share_mode=0` durante captura | Capturas simultáneas |
 | **RAII guard** | `LockGuard` libera el lock al salir de scope | Lock huérfano |
 | **Abort flag** | `AtomicBool` detiene el loop | Captura infinita |
-| **Dedup** | elimina duplicados por `folio_unico` | Registros repetidos |
+| **Dedup por línea** | elimina duplicados por `(folio_unico, id_articulo)` | Registros repetidos (preserva facturas multi-línea) |
+| **Dedup client-side upload** | filtro por `(folio_unico, id_articulo)` en cada batch | Duplicados en Supabase |
 | **WAL mode** | lectura/escritura concurrente | Bloques de UI |
 | **Smart retry** | 3 intentos + split 2/4/10 partes + día-a-día | Descargas fallidas |
 | **Batch upload** | 500 registros por request | OOM / límite de Supabase |
 | **parse_f64 contexto** | `is_quantity` distingue cantidades de montos | Corrupción de montos |
+| **Filtro retención en SELECT** | `WHERE mes_ref >= cutoff` antes de subir | Exceso de cuota Supabase |
+| **Validación pre-upload** | bloquea sync con duplicados/nulos/negativos | Subir data corrupta |
+| **Verificación post-upload** | compara conteo enviado vs recibido; marker solo avanza si coincide | Syncs incrementales rotos |
 
 ---
 

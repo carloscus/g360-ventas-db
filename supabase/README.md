@@ -43,7 +43,7 @@ SUPABASE_ANON_KEY=eyJ...         # solo lectura
 SUPABASE_SERVICE_ROLE_KEY=eyJ... # solo backend Rust (bypass RLS)
 ```
 
-Tabla: `ventas` (42 cols + id). Upsert por `folio_unico` (`onConflict=folio_unico`).
+Tabla: `ventas` (42 cols + id). **Sin constraint única** — la deduplicación se maneja client-side por `(folio_unico, id_articulo)` en cada batch (permite facturas multi-línea). El uploader aplica retención filtrando `WHERE mes_ref >= cutoff` en el SELECT (4 años por defecto).
 
 ## Monitoreo capacidad (500 MB plan)
 
@@ -52,7 +52,7 @@ select * from ventas_storage_stats;
 -- total_rows | total_size | table_size | indexes_size | pct_of_500mb
 ```
 
-Si `pct_of_500mb > 80`, considerar retención (`data_retention_years` en config) o archivar meses vía UI 📅 meses.
+Si `pct_of_500mb > 80`, ajustar retención (`supabase_retention_years` en config, default 4) o archivar meses vía UI 📅 meses.
 
 ## Vistas disponibles
 
@@ -69,7 +69,7 @@ Todas son SELECT-only accesibles desde la anon key.
 
 ## Verificación upload
 
-Desde la app: botón **☁ Subir a Supabase** → sube en batches de 500 usando service role key.
+Desde la app: botón **☁ Subir a Supabase** (incremental) o **🔄 Forzar Full Sync** (resetea marcador + re-sube ventana completa). Ambos suben en batches de 500 con service role key y deduplicación por `(folio_unico, id_articulo)`.
 
 Desde CLI:
 

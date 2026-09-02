@@ -71,6 +71,7 @@ pub struct AppSettings {
     pub auto_sync: bool,
     pub app_retention_years: u32,
     pub supabase_retention_years: u32,
+    pub supabase_retention_days: u32,
     pub last_supabase_sync: Option<String>,
     pub auto_daily_capture: bool,
     pub capture_times: Vec<String>,
@@ -196,6 +197,7 @@ async fn get_health() -> Result<HealthStats, String> {
 async fn get_settings() -> Result<AppSettings, String> {
     let cfg = g360_db_ventas::config::load_config();
     let db_path = g360_db_ventas::config::db_path().to_string_lossy().to_string();
+    let sb_retention_days_eff = cfg.supabase_retention_days_effective();
     Ok(AppSettings {
         supabase_url: cfg.supabase.url.clone(),
         supabase_key: cfg.supabase.key.clone(),
@@ -210,7 +212,8 @@ async fn get_settings() -> Result<AppSettings, String> {
         allowed_lines: cfg.allowed_lines.join(", "),
         auto_sync: cfg.auto_sync,
         app_retention_years: cfg.app_retention_years,
-        supabase_retention_years: cfg.supabase_retention_years,
+        supabase_retention_years: sb_retention_days_eff,
+        supabase_retention_days: cfg.supabase_retention_days,
         last_supabase_sync: cfg.last_supabase_sync.clone(),
         auto_daily_capture: cfg.auto_daily_capture,
         capture_times: cfg.capture_times.clone(),
@@ -229,6 +232,7 @@ async fn save_settings(
     auto_sync: bool,
     app_retention_years: u32,
     supabase_retention_years: u32,
+    supabase_retention_days: u32,
     auto_daily_capture: bool,
     capture_times: Vec<String>,
 ) -> Result<AppSettings, String> {
@@ -250,12 +254,14 @@ async fn save_settings(
      cfg.auto_sync = auto_sync;
      cfg.app_retention_years = app_retention_years;
      cfg.supabase_retention_years = supabase_retention_years;
+     cfg.supabase_retention_days = supabase_retention_days;
      cfg.auto_daily_capture = auto_daily_capture;
      if !capture_times.is_empty() {
          cfg.capture_times = capture_times;
      }
      g360_db_ventas::config::save_config(&cfg).map_err(|e| e.to_string())?;
     let db_path = g360_db_ventas::config::db_path().to_string_lossy().to_string();
+    let sb_retention_days_eff = cfg.supabase_retention_days_effective();
     Ok(AppSettings {
         supabase_url: cfg.supabase.url.clone(),
         supabase_key: String::new(),
@@ -268,7 +274,8 @@ async fn save_settings(
         allowed_lines: cfg.allowed_lines.join(", "),
         auto_sync: cfg.auto_sync,
         app_retention_years: cfg.app_retention_years,
-        supabase_retention_years: cfg.supabase_retention_years,
+        supabase_retention_years: sb_retention_days_eff,
+        supabase_retention_days: cfg.supabase_retention_days,
         last_supabase_sync: cfg.last_supabase_sync.clone(),
         auto_daily_capture: cfg.auto_daily_capture,
         capture_times: cfg.capture_times.clone(),
@@ -345,7 +352,7 @@ async fn upload_all() -> Result<String, String> {
     }
 
     let last_sync = cfg.last_supabase_sync.clone();
-    let retention = cfg.supabase_retention_years;  // Usar retención configurada para Supabase
+    let retention = cfg.supabase_retention_days_effective(); // Usar retención configurada para Supabase
     let shared: SharedProgress = CAPTURE_STATE.clone();
 
     // Closure que actualiza el estado de progreso desde el callback del uploader
@@ -1200,7 +1207,7 @@ async fn run_auto_sync_and_exit() -> ! {
             println!("Paso 3: Subiendo a Supabase...");
             let dry_run = match g360_db_ventas::processor::uploader::dry_run_upload(
                 &pool, 
-                cfg.supabase_retention_years, 
+                cfg.supabase_retention_days_effective(), 
                 cfg.last_supabase_sync.as_deref()
             ).await {
                 Ok(dr) => dr,
@@ -1228,7 +1235,7 @@ async fn run_auto_sync_and_exit() -> ! {
             
             match g360_db_ventas::processor::uploader::upload_all(
                 &pool, 
-                cfg.supabase_retention_years, 
+                cfg.supabase_retention_days_effective(), 
                 cfg.last_supabase_sync.as_deref(), 
                 &progress_cb
             ).await {
@@ -1403,4 +1410,275 @@ async fn get_checksum_history() -> Result<serde_json::Value, String> {
         }));
     }
     Ok(serde_json::to_value(result).unwrap_or(serde_json::json!({"error": "serialization failed"})))
+}
+
+// ─── COMANDOS DE PROTECCIÓN PARA UPLOAD ─────────────────────────────────────
+
+/// Dry-run: muestra qué se subiría sin hacer upload real
+#[tauri::command]
+async fn upload_dry_run() -> Result<serde_json::Value, String> {
+    let cfg = g360_db_ventas::config::load_config();
+    if !cfg.supabase.is_configured() {
+        return Err("Supabase no configurado".to_string());
+    }
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    let retention = cfg.supabase_retention_days_effective();
+    let last_sync = cfg.last_supabase_sync.clone();
+
+    let dry_run = g360_db_ventas::processor::uploader::dry_run_upload(&pool, retention, last_sync.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(serde_json::json!({
+        "rows_to_upload": dry_run.rows_to_upload,
+        "total_batches": dry_run.total_batches,
+        "total_cantidad": dry_run.total_cantidad,
+        "total_soles": dry_run.total_soles,
+        "total_dolares": dry_run.total_dolares,
+        "unique_invoices": dry_run.unique_invoices,
+        "date_range": format!("{:?} a {:?}", dry_run.date_range_start, dry_run.date_range_end),
+        "estimated_size_mb": (dry_run.rows_to_upload as f64 * 0.7).round() / 1000.0,
+        "within_limit": (dry_run.rows_to_upload as f64 * 0.7) < 500_000_000.0
+    }))
+}
+
+/// Ejecuta el upload con verificación post-upload
+#[tauri::command]
+async fn upload_all_with_verify() -> Result<serde_json::Value, String> {
+    let cfg = g360_db_ventas::config::load_config();
+    if !cfg.supabase.is_configured() {
+        return Err("Supabase no configurado".to_string());
+    }
+
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    let retention = cfg.supabase_retention_days_effective();
+    let last_sync = cfg.last_supabase_sync.clone();
+
+    // Dry-run primero
+    let dry_run = g360_db_ventas::processor::uploader::dry_run_upload(&pool, retention, last_sync.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let rows_to_upload = dry_run.rows_to_upload;
+
+    if rows_to_upload == 0 {
+        return Ok(serde_json::json!({
+            "status": "idle",
+            "message": "Nada nuevo para subir (sync incremental)",
+            "rows_to_upload": 0,
+            "verified": false
+        }));
+    }
+
+    set_state("uploading", &format!("Subiendo {} registros a Supabase...", rows_to_upload), 0.05);
+
+    let shared: SharedProgress = CAPTURE_STATE.clone();
+    let progress_cb: g360_db_ventas::processor::uploader::ProgressCb = Some(Arc::new(move |_batch, _total, pct, msg| {
+        let mut s = shared.lock().unwrap();
+        s.phase = CapturePhase::Uploading;
+        s.message = msg.to_string();
+        s.progress = pct;
+        s.started_at = s.started_at.or_else(|| Some(now_secs()));
+        s.finished_at = None;
+        drop(s);
+    }));
+
+    match g360_db_ventas::processor::uploader::upload_all(&pool, retention, last_sync.as_deref(), &progress_cb).await {
+        Ok((up, cleaned)) => {
+            // Verificación post-upload
+            let url = g360_db_ventas::config::get_supabase_url();
+            let key = g360_db_ventas::config::get_supabase_service_key();
+
+            let verification = match g360_db_ventas::processor::uploader::verify_upload_result(&url, &key, up).await {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Post-upload verification failed: {}", e);
+                    g360_db_ventas::processor::uploader::VerificationResult {
+                        expected_count: up,
+                        actual_count: 0,
+                        matched: false,
+                        discrepancy: up,
+                    }
+                }
+            };
+
+            // Actualizar marcador solo si verificación pasó
+            if up > 0 && verification.matched {
+                let mut cfg2 = g360_db_ventas::config::load_config();
+                cfg2.last_supabase_sync = Some(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+                let _ = g360_db_ventas::config::save_config(&cfg2);
+            }
+
+            let retention_msg = if cleaned > 0 { format!(" + {} antiguos limpiados", cleaned) } else { String::new() };
+            let verify_msg = if verification.matched {
+                format!(" verificado: {} filas confirmadas", verification.actual_count)
+            } else {
+                format!(" verificación: esperadas {}, encontradas {}", verification.expected_count, verification.actual_count)
+            };
+
+            set_state("idle", &format!("Sync OK: {} rows{}", up, retention_msg), 1.0);
+
+            Ok(serde_json::json!({
+                "status": "ok",
+                "message": format!("Sync OK: {} rows{}{}", up, retention_msg, verify_msg),
+                "rows_uploaded": up,
+                "rows_cleaned": cleaned,
+                "verification": {
+                    "expected_count": verification.expected_count,
+                    "actual_count": verification.actual_count,
+                    "matched": verification.matched,
+                    "discrepancy": verification.discrepancy
+                },
+                "marker_updated": up > 0 && verification.matched
+            }))
+        }
+        Err(e) => {
+            set_state("idle", &format!("Error sync: {}", e), 0.0);
+            Err(format!("Error en upload: {}", e))
+        }
+    }
+}
+
+// ─── AUTOMATIZACIÓN DIARIA ───────────────────────────────────────────────
+
+/// Pipeline diario automático: captura + parseo + validación + sync
+#[tauri::command]
+async fn auto_daily_pipeline() -> Result<serde_json::Value, String> {
+    let cfg = g360_db_ventas::config::load_config();
+
+    if !cfg.supabase.is_configured() {
+        return Err("Supabase no configurado".to_string());
+    }
+    if cfg.intranet.user.is_empty() || cfg.intranet.pass.is_empty() {
+        return Err("Credenciales de intranet no configuradas".to_string());
+    }
+
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+
+    // Paso 1: Capturar día anterior
+    set_state("syncing", "Capturando datos del día anterior...", 0.1);
+
+    let yesterday = chrono::Utc::now().date_naive() - chrono::Duration::days(1);
+    let yesterday_str = yesterday.format("%Y-%m-%d").to_string();
+
+    let capture_result = g360_db_ventas::capture::run_batch_history(&yesterday_str, "", false, CAPTURE_STATE.clone(), None).await;
+
+    match capture_result {
+        Ok(_) => {
+            eprintln!("Captura diaria completada: {}", yesterday_str);
+
+            // Paso 2: Verificar integridad
+            set_state("syncing", "Verificando integridad...", 0.5);
+            let integrity = g360_db_ventas::db::writer::verify_integrity(&pool).await.unwrap_or_default();
+
+            // Paso 3: Calcular checksums
+            set_state("syncing", "Calculando checksums...", 0.7);
+            let _ = g360_db_ventas::db::writer::calculate_monthly_checksums(&pool).await;
+
+            // Paso 4: Dry-run upload
+            set_state("uploading", "Verificando datos para subir...", 0.8);
+            let dry_run = g360_db_ventas::processor::uploader::dry_run_upload(&pool, cfg.supabase_retention_days_effective(), cfg.last_supabase_sync.as_deref())
+                .await
+                .map_err(|e| e.to_string())?;
+
+            if dry_run.rows_to_upload == 0 {
+                set_state("idle", "No hay datos nuevos para subir", 1.0);
+                return Ok(serde_json::json!({
+                    "status": "idle",
+                    "message": "No hay datos nuevos para subir",
+                    "captured_date": yesterday_str,
+                    "rows_to_upload": 0
+                }));
+            }
+
+            // Paso 5: Upload con verificación
+            set_state("uploading", &format!("Subiendo {} registros...", dry_run.rows_to_upload), 0.85);
+
+            let shared: SharedProgress = CAPTURE_STATE.clone();
+            let progress_cb: g360_db_ventas::processor::uploader::ProgressCb = Some(Arc::new(move |_batch, _total, pct, msg| {
+                let mut s = shared.lock().unwrap();
+                s.phase = CapturePhase::Uploading;
+                s.message = msg.to_string();
+                s.progress = pct;
+                drop(s);
+            }));
+
+            match g360_db_ventas::processor::uploader::upload_all(&pool, cfg.supabase_retention_days_effective(), cfg.last_supabase_sync.as_deref(), &progress_cb).await {
+                Ok((up, cleaned)) => {
+                    let url = g360_db_ventas::config::get_supabase_url();
+                    let key = g360_db_ventas::config::get_supabase_service_key();
+
+                    let verification = g360_db_ventas::processor::uploader::verify_upload_result(&url, &key, up)
+                        .await
+                        .unwrap_or(g360_db_ventas::processor::uploader::VerificationResult {
+                            expected_count: up,
+                            actual_count: 0,
+                            matched: false,
+                            discrepancy: up,
+                        });
+
+                    if up > 0 && verification.matched {
+                        let mut cfg2 = g360_db_ventas::config::load_config();
+                        cfg2.last_supabase_sync = Some(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+                        let _ = g360_db_ventas::config::save_config(&cfg2);
+                    }
+
+                    set_state("idle", &format!("Pipeline diario completado: {} filas subidas", up), 1.0);
+
+                    Ok(serde_json::json!({
+                        "status": "ok",
+                        "message": format!("Pipeline completado: {} capturado, {} filas subidas", yesterday_str, up),
+                        "captured_date": yesterday_str,
+                        "rows_uploaded": up,
+                        "rows_cleaned": cleaned,
+                        "marker_updated": up > 0 && verification.matched,
+                        "integrity_issues": integrity.len()
+                    }))
+                }
+                Err(e) => {
+                    set_state("idle", &format!("Error en upload: {}", e), 0.0);
+                    Err(format!("Error en upload: {}", e))
+                }
+            }
+        }
+        Err(e) => {
+            set_state("idle", &format!("Error en captura: {}", e), 0.0);
+            Err(format!("Error en captura: {}", e))
+        }
+    }
+}
+
+/// Obtiene el próximo horario de ejecución programada
+#[tauri::command]
+async fn get_next_capture_time() -> Result<serde_json::Value, String> {
+    let cfg = g360_db_ventas::config::load_config();
+    let now = chrono::Local::now();
+
+    let mut next_times = Vec::new();
+    for time_str in &cfg.capture_times {
+        let parts: Vec<&str> = time_str.split(':').collect();
+        if parts.len() == 2 {
+            if let (Ok(hour), Ok(min)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
+                let now_naive = now.naive_local();
+                let mut next = now_naive.date().and_hms_opt(hour, min, 0).unwrap_or(now_naive);
+                if next <= now_naive {
+                    next += chrono::Duration::days(1);
+                }
+                let hours_until = (next - now_naive).num_seconds() / 3600;
+                next_times.push(serde_json::json!({
+                    "time": time_str,
+                    "next_execution": next.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                    "hours_until": hours_until
+                }));
+            }
+        }
+    }
+
+    Ok(serde_json::json!({
+        "auto_daily_capture": cfg.auto_daily_capture,
+        "capture_times": cfg.capture_times,
+        "next_executions": next_times,
+        "app_retention_years": cfg.app_retention_years,
+        "supabase_retention_years": cfg.supabase_retention_years
+    }))
 }

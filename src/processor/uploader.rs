@@ -105,7 +105,7 @@ pub async fn upload_to_supabase(ventas: &[Venta], progress_cb: &ProgressCb) -> R
 /// Retorna tupla: (rows_subidos, rows_limpiados_por_retencion).
 pub async fn upload_all(
     pool: &sqlx::SqlitePool,
-    retention_years: u32,
+    retention_days: u32,
     last_sync: Option<&str>,
     progress_cb: &ProgressCb,
 ) -> Result<(usize, usize)> {
@@ -138,8 +138,8 @@ pub async fn upload_all(
     };
 
     // Calcular cutoff de retención
-    let retention_cutoff_date = if retention_years > 0 {
-        Some((chrono::Utc::now() - chrono::Duration::days((retention_years as i64) * 365))
+    let retention_cutoff_date = if retention_days > 0 {
+        Some((chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
             .format("%Y-%m-%d")
             .to_string())
     } else {
@@ -258,7 +258,7 @@ pub async fn upload_all(
     }
 
     // Retencion: eliminar registros fuera de ventana
-    let cleaned = cleanup_supabase_retention(retention_years, progress_cb).await.unwrap_or(0);
+    let cleaned = cleanup_supabase_retention(retention_days, progress_cb).await.unwrap_or(0);
 
     info!(
         "Upload done: {} rows in {:.1}s, {} retention-cleaned",
@@ -273,10 +273,10 @@ pub async fn upload_all(
 /// Usa DELETE por ID en batches de 500 para mayor fiabilidad (el DELETE con filtro de rango
 /// de Supabase puede borrar todos los registros de una sola vez sin control de cantidad).
 pub async fn cleanup_supabase_retention(
-    retention_years: u32,
+    retention_days: u32,
     progress_cb: &ProgressCb,
 ) -> Result<usize> {
-    if retention_years == 0 {
+    if retention_days == 0 {
         return Ok(0); // retencion ilimitada
     }
     let url = get_supabase_url();
@@ -284,7 +284,7 @@ pub async fn cleanup_supabase_retention(
     if url.contains("TU_SUPABASE") || key.contains("TU_ANON") {
         return Ok(0);
     }
-    let cutoff = (chrono::Utc::now() - chrono::Duration::days((retention_years as i64) * 365))
+    let cutoff = (chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
         .format("%Y-%m-%d")
         .to_string();
     let client = reqwest::Client::new();
@@ -441,12 +441,12 @@ pub struct ValidationReport {
 /// Valida la calidad de los datos ANTES de subir
 pub async fn validate_upload_data(
     pool: &sqlx::SqlitePool,
-    retention_years: u32,
+    retention_days: u32,
     last_sync: Option<&str>,
 ) -> Result<ValidationReport> {
     // Calcular cutoff de retención
-    let cutoff = if retention_years > 0 {
-        Some((chrono::Utc::now() - chrono::Duration::days((retention_years as i64) * 365))
+    let cutoff = if retention_days > 0 {
+        Some((chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
             .format("%Y-%m-%d")
             .to_string())
     } else {
@@ -559,14 +559,14 @@ pub struct VerificationResult {
 /// Dry-run: calcula cuántas filas se subirían sin hacer upload real
 pub async fn dry_run_upload(
     pool: &sqlx::SqlitePool,
-    retention_years: u32,
+    retention_days: u32,
     last_sync: Option<&str>,
 ) -> Result<DryRunResult> {
     let bs = 500;
     
     // Calcular filtro de retención
-    let retention_cutoff = if retention_years > 0 {
-        Some((chrono::Utc::now() - chrono::Duration::days((retention_years as i64) * 365))
+    let retention_cutoff = if retention_days > 0 {
+        Some((chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
             .format("%Y-%m-%d")
             .to_string())
     } else {

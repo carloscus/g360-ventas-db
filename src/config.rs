@@ -133,9 +133,12 @@ pub struct AppConfig {
     /// Años de retención para apps derivadas (datos activos)
     #[serde(default = "default_app_retention")]
     pub app_retention_years: u32,
-    /// Años de retención para Supabase (buffer NC/ND)
+    /// Años de retención para Supabase (buffer NC/ND) — legacy, usado si days=0
     #[serde(default = "default_supabase_retention")]
     pub supabase_retention_years: u32,
+    /// Retención Supabase en días (precisión sub-anual, ej: 1277 = 3.5 años). 0 = usar years.
+    #[serde(default)]
+    pub supabase_retention_days: u32,
     /// Ultimo timestamp de sync a Supabase (ISO format, UTC). Para sync incremental.
     #[serde(default)]
     pub last_supabase_sync: Option<String>,
@@ -154,6 +157,18 @@ fn default_capture_times() -> Vec<String> {
 }
 
 impl AppConfig {
+    /// Retención efectiva de Supabase en días (0 = ilimitada).
+    /// Prioriza `supabase_retention_days` (precisión sub-anual); si es 0, usa years * 365.
+    pub fn supabase_retention_days_effective(&self) -> u32 {
+        if self.supabase_retention_days > 0 {
+            self.supabase_retention_days
+        } else {
+            self.supabase_retention_years * 365
+        }
+    }
+}
+
+impl AppConfig {
     pub fn default_app() -> Self {
         Self {
             supabase: SupabaseConfig::empty(),
@@ -163,6 +178,7 @@ impl AppConfig {
             auto_sync: false,
             app_retention_years: 3,
             supabase_retention_years: 4,
+            supabase_retention_days: 0,
             last_supabase_sync: None,
             auto_daily_capture: false,
             capture_times: default_capture_times(),

@@ -290,8 +290,12 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
   <label><input type="checkbox" id="cfgAutoSync" style="margin-right:6px"> Auto-sync al abrir app</label>
 </div>
 <div class="field">
-  <label>Retencion de datos (anos)</label>
-  <input type="number" id="cfgRetention" min="0" max="10" value="5" placeholder="5 = ilimitado si 0">
+  <label>Retencion Supabase (dias, buffer NC/ND — 1277 = 3.5 años)</label>
+  <input type="number" id="cfgRetentionSupa" min="0" max="3650" value="1277">
+</div>
+<div class="field">
+  <label>Retencion apps derivadas (anos)</label>
+  <input type="number" id="cfgRetentionApp" min="0" max="10" value="3">
 </div>
 
 <div class="modal-actions">
@@ -620,7 +624,8 @@ document.getElementById('cfgBtn').addEventListener('click',async()=>{
   document.getElementById('cfgGenPor').value=cfg.generado_por||'';
   document.getElementById('cfgLines').value=cfg.allowed_lines||'';
   document.getElementById('cfgAutoSync').checked=cfg.auto_sync||false;
-  document.getElementById('cfgRetention').value=cfg.data_retention_years||5;
+  document.getElementById('cfgRetentionSupa').value=cfg.supabase_retention_days||1277;
+  document.getElementById('cfgRetentionApp').value=cfg.app_retention_years||3;
   document.getElementById('modalOverlay').classList.add('open');
   document.getElementById('cfgTestResult').className='test-result';
   document.getElementById('cfgTestResult').textContent='';
@@ -636,10 +641,11 @@ document.getElementById('cfgSave').addEventListener('click',async()=>{
   const gp=document.getElementById('cfgGenPor').value.trim();
   const al=document.getElementById('cfgLines').value.trim();
   const as=document.getElementById('cfgAutoSync').checked;
-  const ret=parseInt(document.getElementById('cfgRetention').value)||5;
+  const retSupa=parseInt(document.getElementById('cfgRetentionSupa').value)||1277;
+  const retApp=parseInt(document.getElementById('cfgRetentionApp').value)||3;
   try{
     if(svcKey){await invoke('save_service_role_key',{serviceRoleKey:svcKey});}
-    await invoke('save_settings',{supabaseUrl:url,supabaseKey:key,intranetUser:iu,intranetPass:ip,generadoPor:gp,allowedLines:al,autoSync:as,dataRetentionYears:ret});
+    await invoke('save_settings',{supabaseUrl:url,supabaseKey:key,intranetUser:iu,intranetPass:ip,generadoPor:gp,allowedLines:al,autoSync:as,appRetentionYears:retApp,supabaseRetentionYears:0,supabaseRetentionDays:retSupa,autoDailyCapture:false,captureTimes:['12:00','20:00']});
     show('Configuracion guardada');document.getElementById('modalOverlay').classList.remove('open');
   }catch(e){show('Error al guardar: '+e,true)}
 });
