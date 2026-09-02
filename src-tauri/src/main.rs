@@ -247,22 +247,14 @@ async fn save_settings(
         .map(|s| s.trim().to_uppercase())
         .filter(|s| !s.is_empty())
         .collect();
-    cfg.auto_sync = auto_sync;
-    cfg.app_retention_years = app_retention_years;
-    cfg.supabase_retention_years = supabase_retention_years;
-    cfg.auto_daily_capture = auto_daily_capture;
-    if !capture_times.is_empty() {
-        cfg.capture_times = capture_times;
-    }
-        .collect();
-    cfg.auto_sync = auto_sync;
-    cfg.app_retention_years = app_retention_years;
-    cfg.supabase_retention_years = supabase_retention_years;
-    cfg.auto_daily_capture = auto_daily_capture;
-    if !capture_times.is_empty() {
-        cfg.capture_times = capture_times;
-    }
-    g360_db_ventas::config::save_config(&cfg).map_err(|e| e.to_string())?;
+     cfg.auto_sync = auto_sync;
+     cfg.app_retention_years = app_retention_years;
+     cfg.supabase_retention_years = supabase_retention_years;
+     cfg.auto_daily_capture = auto_daily_capture;
+     if !capture_times.is_empty() {
+         cfg.capture_times = capture_times;
+     }
+     g360_db_ventas::config::save_config(&cfg).map_err(|e| e.to_string())?;
     let db_path = g360_db_ventas::config::db_path().to_string_lossy().to_string();
     Ok(AppSettings {
         supabase_url: cfg.supabase.url.clone(),
