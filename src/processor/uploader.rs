@@ -131,6 +131,18 @@ pub async fn upload_all(
         ));
     }
 
+    // Full-sync (sin last_sync): purgar ventana completa en Supabase ANTES de re-subir,
+    // si no habría duplicados (no hay constraint única desde 20250901000000_fix_folio_unique.sql).
+    if last_sync.is_none() || last_sync == Some("") {
+        if let Some(cb) = progress_cb {
+            cb(0, 0, 0.02, "Full sync: purgando ventana en Supabase...");
+        }
+        match purge_supabase_window(retention_days).await {
+            Ok(purged) => info!("Full sync: {} filas purgadas en ventana de retencion", purged),
+            Err(e) => return Err(anyhow::anyhow!("Full sync: fallo purge de ventana: {}", e)),
+        }
+    }
+
     // Filtro incremental: solo registros desde last_supabase_sync
     let sync_where = match last_sync {
         Some(s) if !s.is_empty() => format!("WHERE capturado_en > '{}'", s),
@@ -267,6 +279,60 @@ pub async fn upload_all(
         cleaned
     );
     Ok((up, cleaned))
+}
+
+/// Elimina de Supabase los registros DENTRO de la ventana de retención (full sync).
+/// Borra por rangos de mes_ref (menos filas por request que por id, evita timeouts).
+/// Solo se llama desde full-sync (last_sync=None) antes de re-subir la ventana.
+pub async fn purge_supabase_window(retention_days: u32) -> Result<usize> {
+    if retention_days == 0 {
+        return Ok(0);
+    }
+    let url = get_supabase_url();
+    let key = get_supabase_service_key();
+    if url.contains("TU_SUPABASE") || key.contains("TU_ANON") {
+        return Ok(0);
+    }
+    let cutoff_date = (chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
+        .format("%Y-%m-%d")
+        .to_string();
+    // cutoff sobre mes_ref: '2023-03-05' -> meses >= '2023-03'
+    let cutoff_mes = &cutoff_date[..7];
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(300))
+        .build()?;
+    let base_url = format!("{}/rest/v1/{}", url, SUPABASE_TABLE);
+    let mut purged = 0usize;
+
+    // DELETE en loop: cada request borra hasta ~50K filas (límite PostgREST),
+    // repetir hasta que no quede nada en la ventana.
+    loop {
+        let resp = client
+            .delete(&base_url)
+            .header("apikey", &key)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("Prefer", "return=representation")
+            .query(&[("mes_ref", format!("gte.{}", cutoff_mes).as_str()), ("select", "id")])
+            .send()
+            .await
+            .context("Supabase purge request failed")?;
+
+        let st = resp.status();
+        if !st.is_success() {
+            let txt = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Supabase purge {}: {}", st, txt.chars().take(150).collect::<String>()));
+        }
+        let rows: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!([]));
+        let n = rows.as_array().map(|a| a.len()).unwrap_or(0);
+        purged += n;
+        info!("Purge batch: {} filas (acumulado {})", n, purged);
+        if n == 0 {
+            break;
+        }
+    }
+
+    Ok(purged)
 }
 
 /// Elimina de Supabase los registros fuera de la ventana de retencion.
