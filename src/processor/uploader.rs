@@ -426,3 +426,209 @@ pub async fn test_supabase_connection(url: &str, key: &str) -> Result<String> {
         ))
     }
 }
+
+// ─── CAPAS DE PROTECCIÓN PARA UPLOAD ────────────────────────────────────────
+
+/// Estructura de resultados para validación pre-upload
+#[derive(Debug, Clone)]
+pub struct ValidationReport {
+    pub total_rows: usize,
+    pub valid_rows: usize,
+    pub invalid_rows: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+/// Valida la calidad de los datos ANTES de subir
+pub async fn validate_upload_data(
+    pool: &sqlx::SqlitePool,
+    retention_years: u32,
+    last_sync: Option<&str>,
+) -> Result<ValidationReport> {
+    // Calcular cutoff de retención
+    let cutoff = if retention_years > 0 {
+        Some((chrono::Utc::now() - chrono::Duration::days((retention_years as i64) * 365))
+            .format("%Y-%m-%d")
+            .to_string())
+    } else {
+        None
+    };
+    
+    // Filtro incremental
+    let sync_filter = match last_sync {
+        Some(s) if !s.is_empty() => Some(s.to_string()),
+        _ => None,
+    };
+    
+    // Contar filas que se subirían
+    let count_query = if let Some(ref c) = cutoff {
+        if let Some(ref s) = sync_filter {
+            format!("SELECT COUNT(*) FROM ventas WHERE mes_ref >= '{}' AND capturado_en > '{}'", c, s)
+        } else {
+            format!("SELECT COUNT(*) FROM ventas WHERE mes_ref >= '{}'", c)
+        }
+    } else if let Some(ref s) = sync_filter {
+        format!("SELECT COUNT(*) FROM ventas WHERE capturado_en > '{}'", s)
+    } else {
+        "SELECT COUNT(*) FROM ventas".to_string()
+    };
+    
+    let total: i64 = sqlx::query_scalar(&count_query)
+        .fetch_one(pool)
+        .await?;
+    
+    // Validar que no haya nulos en campos críticos
+    let null_checks = vec![
+        ("sin_folio", "SELECT COUNT(*) FROM ventas WHERE folio_unico IS NULL OR folio_unico = ''"),
+        ("sin_sku", "SELECT COUNT(*) FROM ventas WHERE id_articulo IS NULL OR id_articulo = ''"),
+        ("cant_neg", "SELECT COUNT(*) FROM ventas WHERE cantidad < 0"),
+    ];
+    
+    let mut invalid_rows = Vec::new();
+    for (name, query) in null_checks {
+        let cnt: i64 = sqlx::query_scalar(query).fetch_one(pool).await.unwrap_or(0);
+        if cnt > 0 {
+            invalid_rows.push(format!("{}: {} registros", name, cnt));
+        }
+    }
+    
+    Ok(ValidationReport {
+        total_rows: total as usize,
+        valid_rows: total as usize,
+        invalid_rows,
+        warnings: Vec::new(),
+    })
+}
+
+/// Verifica post-upload: compara conteo enviado vs recibido en Supabase
+pub async fn verify_upload_result(
+    supabase_url: &str,
+    supabase_key: &str,
+    expected_count: usize,
+) -> Result<VerificationResult> {
+    use crate::config::get_supabase_service_key;
+    
+    let key = if supabase_key.is_empty() {
+        get_supabase_service_key()
+    } else {
+        supabase_key.to_string()
+    };
+
+    let client = reqwest::Client::new();
+    let endpoint = format!("{}/rest/v1/{}", supabase_url, SUPABASE_TABLE);
+    
+    // Get current count from Supabase
+    let resp = client
+        .get(&endpoint)
+        .header("apikey", &key)
+        .header("Authorization", format!("Bearer {}", key))
+        .header("Prefer", "count=exact")
+        .header("Range", "0-0")
+        .send()
+        .await
+        .context("Failed to verify upload")?;
+    
+    let content_range = resp.headers()
+        .get("content-range")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("0/0");
+    
+    let actual_count: usize = content_range
+        .split('/')
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    
+    let matched = actual_count == expected_count;
+    
+    Ok(VerificationResult {
+        expected_count,
+        actual_count,
+        matched,
+        discrepancy: if matched { 0 } else { expected_count.abs_diff(actual_count) },
+    })
+}
+
+#[derive(Debug, Clone)]
+pub struct VerificationResult {
+    pub expected_count: usize,
+    pub actual_count: usize,
+    pub matched: bool,
+    pub discrepancy: usize,
+}
+
+/// Dry-run: calcula cuántas filas se subirían sin hacer upload real
+pub async fn dry_run_upload(
+    pool: &sqlx::SqlitePool,
+    retention_years: u32,
+    last_sync: Option<&str>,
+) -> Result<DryRunResult> {
+    let bs = 500;
+    
+    // Calcular filtro de retención
+    let retention_cutoff = if retention_years > 0 {
+        Some((chrono::Utc::now() - chrono::Duration::days((retention_years as i64) * 365))
+            .format("%Y-%m-%d")
+            .to_string())
+    } else {
+        None
+    };
+    
+    // Construir WHERE clause
+    let sync_where = match last_sync {
+        Some(s) if !s.is_empty() => Some(format!("WHERE capturado_en > '{}'", s)),
+        _ => None,
+    };
+    
+    let base_where = match (&sync_where, &retention_cutoff) {
+        (None, None) => String::new(),
+        (None, Some(cutoff)) => format!("WHERE mes_ref >= '{}'", cutoff),
+        (Some(w), None) => w.clone(),
+        (Some(w), Some(cutoff)) => format!("{} AND mes_ref >= '{}'", w, cutoff),
+    };
+    
+    // Contar filas a subir
+    let count_query = format!(
+        "SELECT COUNT(*) FROM ventas {}",
+        if base_where.is_empty() { "".to_string() } else { format!(" {}", base_where) }
+    );
+    
+    let count: i64 = sqlx::query_scalar(&count_query)
+        .fetch_one(pool)
+        .await
+        .context("Count query failed")?;
+    
+    let total_batches = ((count as f64) / (bs as f64)).ceil() as usize;
+    
+    // Calcular estadísticas del lote
+    let stats_query = format!(
+        "SELECT SUM(cantidad), SUM(soles), SUM(COALESCE(dolares, 0)), COUNT(DISTINCT folio_unico), MIN(mes_ref), MAX(mes_ref) FROM ventas {}",
+        if base_where.is_empty() { "".to_string() } else { format!(" {}", base_where) }
+    );
+    
+    let stats: Option<(f64, f64, f64, i64, String, String)> = sqlx::query_as(&stats_query)
+        .fetch_optional(pool)
+        .await?;
+    
+    Ok(DryRunResult {
+        rows_to_upload: count as usize,
+        total_batches,
+        total_cantidad: stats.as_ref().map(|s| s.0).unwrap_or(0.0),
+        total_soles: stats.as_ref().map(|s| s.1).unwrap_or(0.0),
+        total_dolares: stats.as_ref().map(|s| s.2).unwrap_or(0.0),
+        unique_invoices: stats.as_ref().map(|s| s.3).unwrap_or(0),
+        date_range_start: stats.as_ref().map(|s| s.4.clone()),
+        date_range_end: stats.as_ref().map(|s| s.5.clone()),
+    })
+}
+
+#[derive(Debug, Clone)]
+pub struct DryRunResult {
+    pub rows_to_upload: usize,
+    pub total_batches: usize,
+    pub total_cantidad: f64,
+    pub total_soles: f64,
+    pub total_dolares: f64,
+    pub unique_invoices: i64,
+    pub date_range_start: Option<String>,
+    pub date_range_end: Option<String>,
+}

@@ -1151,7 +1151,9 @@ fn main() {
             preview_import, reparse_raw,
             abort_capture, test_intranet, preview_csv,
             // Auditoría e integridad
-            verify_integrity, calculate_checksums, get_sync_history, get_checksum_history
+            verify_integrity, calculate_checksums, get_sync_history, get_checksum_history,
+            // Protección de upload
+            upload_dry_run, upload_all_with_verify
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
