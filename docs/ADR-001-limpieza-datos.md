@@ -73,3 +73,43 @@ en la carga (quedan en el CSV crudo si algún día se necesitan).
 - Los checksums detectan alteraciones de cantidades (no solo filas/montos)
 - Cualquier limpieza futura de los 2 casos DOC_CLIENTE anómalos queda
   documentada como decisión consciente (hoy: preservar)
+
+---
+
+## Addendum 2026-09-02: renombres de razón social y NCs huérfanas
+
+### Renombres (casos 47138 y 17953/TIENDAS APOLO)
+
+Verificado contra CSVs crudos y la NCR 215-7171 (2018): el reporte de
+estadísticas del ERP **estampa el nombre actual del master al exportar**, no el
+nombre histórico de la transacción. La NCR de 2018 aparece con
+"TIENDAS APOLO S.A.C." (nombre 2026) aunque el comprobante físico lleve la
+razón social de 2018.
+
+**Consecuencia**: los renombres ocurridos antes de la carga masiva (2026) son
+irrecuperables desde esta capa — no es un defecto del pipeline, es una
+limitación de la fuente. La clave (id_cliente + RUC) es estable, así que las
+agregaciones por cliente nunca se parten. El blindaje implementado
+(detección de renombres + vw_dim con nombre más reciente) cubre el único caso
+que sí puede aparecer: renombres ENTRE capturas futuras.
+
+### NC/ND huérfanas: 3,894 (0.33% de filas, 5.5% de las NCs)
+
+NCs/NDs cuya factura referenciada NO está en la BD:
+
+| Serie referenciada | NCs | Soles | Causa |
+|--------------------|-----|-------|-------|
+| 201 | 2,783 | S/ 1.66M | factura pre-2018 o excluida por allowed_lines |
+| 1 | 481 | S/ 57K | serie antigua (fuera del rango exportable del intranet) |
+| 211 (FEX) | 398 | S/ 726K | factura pre-2018 |
+| otras | 232 | — | ídem |
+
+**Impacto en el flujo de devoluciones: ninguno.** La app de retornos parte de
+la FACTURA y busca sus NCs (join `factura_ref → serie/nro`); una NC huérfana
+apunta a una factura que no existe en la capa de datos, por lo que nunca
+participa en un cálculo de saldo. El saldo de cada factura capturada usa solo
+las devoluciones que la referencian a ella.
+
+**Regla documentada**: si algún día se exporta el rango pre-2018 (si el
+intranet lo permitiera), estas huérfanas se resolverían solas. No requiere
+acción.
