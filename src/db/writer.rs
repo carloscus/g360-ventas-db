@@ -296,19 +296,23 @@ pub async fn log_sync(
     Ok(row_id)
 }
 
-/// Genera checksums mensuales para detectar cambios en los datos
+/// Genera checksums mensuales para detectar cambios en los datos.
+/// El checksum integra: COUNT(*), SUM(soles), SUM(dolares) y SUM(cantidad) —
+/// cualquier alteración de filas o montos cambia el hash.
 pub async fn calculate_monthly_checksums(pool: &SqlitePool) -> Result<Vec<(String, String, i64, f64)>> {
     let results = sqlx::query_as(
-        r#"INSERT INTO mes_checksums (mes_ref, checksum, total_filas, total_soles, calculado_en)
-           SELECT 
+        r#"INSERT INTO mes_checksums (mes_ref, checksum, total_filas, total_soles, total_cantidad, calculado_en)
+           SELECT
                mes_ref,
-               printf('%08x-%08x-%08x', 
+               printf('%08x-%08x-%08x-%08x',
                    COUNT(*),
                    CAST(ROUND(SUM(soles) * 100) AS INTEGER) & 0xFFFFFFFF,
-                   CAST(ROUND(SUM(COALESCE(dolares, 0) * 100), 0) AS INTEGER) & 0xFFFFFFFF
+                   CAST(ROUND(SUM(COALESCE(dolares, 0) * 100), 0) AS INTEGER) & 0xFFFFFFFF,
+                   CAST(ROUND(SUM(cantidad) * 100) AS INTEGER) & 0xFFFFFFFF
                ) as checksum,
                COUNT(*) as total_filas,
                ROUND(SUM(soles), 2) as total_soles,
+               ROUND(SUM(cantidad), 2) as total_cantidad,
                datetime('now')
            FROM ventas
            GROUP BY mes_ref
@@ -316,6 +320,7 @@ pub async fn calculate_monthly_checksums(pool: &SqlitePool) -> Result<Vec<(Strin
                checksum = excluded.checksum,
                total_filas = excluded.total_filas,
                total_soles = excluded.total_soles,
+               total_cantidad = excluded.total_cantidad,
                calculado_en = excluded.calculado_en
            RETURNING mes_ref, checksum, total_filas, total_soles"#
     )

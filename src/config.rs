@@ -270,7 +270,7 @@ pub fn get_supabase_key() -> String {
 
 pub fn default_allowed_lines() -> Vec<String> {
     vec![
-        "01","02","09","11","14","72","73","75","76","77","78","79","85",
+        "01","02","09","11","14","72","73","75","76","77","78","79","81","85","99",
         "MA","CA","AD","CB","CC","CD","CE","CF","CG",
     ].into_iter().map(String::from).collect()
 }

@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS mes_checksums (
     checksum TEXT NOT NULL,
     total_filas INTEGER NOT NULL,
     total_soles REAL NOT NULL,
+    total_cantidad REAL,
     calculado_en TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (mes_ref)
 );
