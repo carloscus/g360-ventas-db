@@ -134,6 +134,30 @@ fn normalize_client_id(s: &str) -> String {
     }
 }
 
+/// ID_LINEA canonico: 4 chars con prefijo "01" (0101, 01MA...).
+/// Si el ERP manda la forma corta ("01", "MA"), se re-padea al canonico.
+/// Regla validada 2026-09-02: 24 lineas existentes, todas "01xx", cero colisiones.
+fn normalize_line_id(s: &str) -> String {
+    let t = clean_id(s).to_uppercase();
+    if t.len() == 2 {
+        format!("01{}", t)
+    } else {
+        t
+    }
+}
+
+/// ID_VENDEDOR canonico: 5 chars con prefijo "01" (01177, 01A02, 01PE1...).
+/// Si el ERP manda la forma corta ("177", "A02"), se re-padea al canonico.
+/// Regla validada 2026-09-02: 56 vendedores existentes, todas "01xxx", cero colisiones.
+fn normalize_seller_id(s: &str) -> String {
+    let t = clean_id(s).to_uppercase();
+    if t.len() == 3 {
+        format!("01{}", t)
+    } else {
+        t
+    }
+}
+
 /// Computa tipo_operacion + factura_ref (serie/nro) derivados del documento.
 /// referencia formato: "F01/204-50867" -> serie=204 nro=50867
 pub fn derivar_campos(v: &mut crate::models::Venta) {
@@ -265,7 +289,7 @@ fn parse_export_csv_inner(path: &Path) -> Result<ParseOutput> {
             id_articulo: normalize_doc_id(&g(c_ia)),
             original_sku: g(c_ia),
             nom_articulo: g(c_na),
-            id_linea: g(c_il),
+            id_linea: normalize_line_id(&g(c_il)),
             nom_linea: g(c_nl),
             id_grupo: g(c_ig),
             nom_grupo: g(c_ng),
@@ -317,7 +341,7 @@ fn parse_export_csv_inner(path: &Path) -> Result<ParseOutput> {
             departamento: g(c_dep),
             provincia: g(c_pro),
             distrito: g(c_dis),
-            id_vendedor: g(c_iv),
+            id_vendedor: normalize_seller_id(&g(c_iv)),
             nom_vendedor: g(c_nv),
             id_pedido: g(c_ip),
             file_source: path

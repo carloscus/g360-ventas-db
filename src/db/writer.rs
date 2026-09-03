@@ -330,6 +330,140 @@ pub async fn calculate_monthly_checksums(pool: &SqlitePool) -> Result<Vec<(Strin
 }
 
 /// Verifica la integridad de la base de datos y retorna inconsistencias
+/// Detecta entidades posiblemente PARTIDAS en dos claves por formatos de codigo
+/// distintos (ej: "56101" y "00056101" serian el mismo cliente). Complementa a
+/// las reglas de canonizacion del parser: el parser previene, esto DETECTA.
+pub async fn detectar_entidades_duplicadas(pool: &SqlitePool) -> Result<Vec<String>> {
+    let mut issues = Vec::new();
+
+    // Cliente: dos id_cliente que son el mismo numero con distinto padding
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM (
+            SELECT LTRIM(id_cliente,'0') k, COUNT(DISTINCT id_cliente) n
+            FROM ventas WHERE id_cliente != '' GROUP BY k HAVING n > 1
+        )"
+    )
+    .fetch_one(pool)
+    .await?;
+    if n > 0 {
+        issues.push(format!(
+            "🔴 CLIENTES PARTIDOS: {} grupos donde 2+ id_cliente son el mismo numero con distinto padding", n));
+    }
+
+    // Vendedor: mismo numero con/sin prefijo "01"
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM (
+            SELECT CASE WHEN id_vendedor LIKE '01%' THEN SUBSTR(id_vendedor,3) ELSE id_vendedor END k,
+                   COUNT(DISTINCT id_vendedor) n
+            FROM ventas WHERE id_vendedor != '' GROUP BY k HAVING n > 1
+        )"
+    )
+    .fetch_one(pool)
+    .await?;
+    if n > 0 {
+        issues.push(format!("🔴 VENDEDORES PARTIDOS: {} grupos con forma corta y larga del mismo codigo", n));
+    }
+
+    // Linea: mismo codigo con/sin prefijo "01"
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM (
+            SELECT CASE WHEN id_linea LIKE '01%' THEN SUBSTR(id_linea,3) ELSE id_linea END k,
+                   COUNT(DISTINCT id_linea) n
+            FROM ventas WHERE id_linea != '' GROUP BY k HAVING n > 1
+        )"
+    )
+    .fetch_one(pool)
+    .await?;
+    if n > 0 {
+        issues.push(format!("🔴 LÍNEAS PARTIDAS: {} grupos con forma corta y larga del mismo codigo", n));
+    }
+
+    // SKU: colisiones al quitar ceros — INFORMATIVO (011019 y 11019 pueden ser
+    // SKUs legitimos distintos; solo alerta si el conteo crece inesperadamente)
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM (
+            SELECT LTRIM(id_articulo,'0') k, COUNT(DISTINCT id_articulo) n
+            FROM ventas WHERE id_articulo != '' GROUP BY k HAVING n > 1
+        )"
+    )
+    .fetch_one(pool)
+    .await?;
+    if n > 0 {
+        issues.push(format!(
+            "ℹ️  SKUs con colision de ceros: {} grupos (pueden ser legitimos, ej 011019≠11019; revisar si crece)", n));
+    }
+
+    // Mismo RUC (doc_cliente) apuntando a 2+ id_cliente — excluye anomalias ERP conocidas
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM (
+            SELECT doc_cliente k, COUNT(DISTINCT id_cliente) n
+            FROM ventas
+            WHERE doc_cliente NOT IN ('', '00') AND LENGTH(doc_cliente) >= 10
+            GROUP BY k HAVING n > 1
+        )"
+    )
+    .fetch_one(pool)
+    .await?;
+    if n > 0 {
+        issues.push(format!("🟡 RUC duplicado: {} RUCs apuntan a 2+ id_cliente (renombres/fusiones del ERP)", n));
+    }
+
+    // Mismo nombre de cliente con 2+ id_cliente (causa comun de splits)
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM (
+            SELECT UPPER(TRIM(nom_cliente)) k, COUNT(DISTINCT id_cliente) n
+            FROM ventas WHERE nom_cliente != '' GROUP BY k HAVING n > 1
+        )"
+    )
+    .fetch_one(pool)
+    .await?;
+    if n > 0 {
+        issues.push(format!("🟡 Nombres repetidos: {} nombres de cliente comparten 2+ id_cliente (posible split por renombre ERP)", n));
+    }
+
+    // Renombres legitimos: un id_cliente con 2+ razones sociales a lo largo del
+    // tiempo. NO es corrupcion (la clave es id_cliente; cada fila conserva el
+    // nombre vigente al momento de la venta = historia auditable). Informativo.
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM (
+            SELECT id_cliente FROM ventas
+            WHERE id_cliente != '' AND nom_cliente != ''
+            GROUP BY id_cliente HAVING COUNT(DISTINCT nom_cliente) > 1
+        )"
+    )
+    .fetch_one(pool)
+    .await?;
+    if n > 0 {
+        issues.push(format!("ℹ️  Clientes renombrados: {} clientes tienen 2+ razones sociales historicas (vw_dim_cliente muestra la mas reciente)", n));
+    }
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM (
+            SELECT id_vendedor FROM ventas
+            WHERE id_vendedor != '' AND nom_vendedor != ''
+            GROUP BY id_vendedor HAVING COUNT(DISTINCT nom_vendedor) > 1
+        )"
+    )
+    .fetch_one(pool)
+    .await?;
+    if n > 0 {
+        issues.push(format!("ℹ️  Vendedores con 2+ nombres historicos: {} (cambio de nombre o correccion; la clave id_vendedor no se rompe)", n));
+    }
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM (
+            SELECT id_articulo FROM ventas
+            WHERE id_articulo != '' AND nom_articulo != ''
+            GROUP BY id_articulo HAVING COUNT(DISTINCT nom_articulo) > 1
+        )"
+    )
+    .fetch_one(pool)
+    .await?;
+    if n > 0 {
+        issues.push(format!("ℹ️  SKUs con 2+ nombres historicos: {} (renombre de catalogo; la clave id_articulo no se rompe)", n));
+    }
+
+    Ok(issues)
+}
+
 pub async fn verify_integrity(pool: &SqlitePool) -> Result<Vec<String>> {
     let mut issues = Vec::new();
 
@@ -379,6 +513,12 @@ pub async fn verify_integrity(pool: &SqlitePool) -> Result<Vec<String>> {
 
     if checksum_count == 0 {
         issues.push("ℹ️  No hay checksums calculados. Ejecuta 'calcular_checksums' para establecer baseline".to_string());
+    }
+
+    // 5. Entidades posiblemente partidas (clientes/vendedores/lineas/SKUs/RUCs)
+    match detectar_entidades_duplicadas(pool).await {
+        Ok(found) => issues.extend(found),
+        Err(e) => issues.push(format!("⚠️  Deteccion de duplicados fallo: {}", e)),
     }
 
     if issues.is_empty() {

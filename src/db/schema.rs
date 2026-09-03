@@ -108,19 +108,24 @@ pub const CREATE_VIEWS_SQL: &[&str] = &[
     // Clientes unicos (fuente de verdad: cada cliente con su ultimo nombre conocido)
     r#"
     CREATE VIEW IF NOT EXISTS vw_dim_cliente AS
-    SELECT id_cliente, doc_cliente, MAX(nom_cliente) AS nom_cliente,
-           MAX(departamento) AS departamento, MAX(provincia) AS provincia, MAX(distrito) AS distrito
-    FROM ventas WHERE id_cliente != '' GROUP BY id_cliente
+    SELECT id_cliente, doc_cliente, nom_cliente, departamento, provincia, distrito
+    FROM (
+      SELECT id_cliente, doc_cliente, nom_cliente, departamento, provincia, distrito,
+             ROW_NUMBER() OVER (PARTITION BY id_cliente ORDER BY fecha_orig DESC, id DESC) rn
+      FROM ventas WHERE id_cliente != ''
+    ) WHERE rn = 1
     "#,
     // Articulos unicos: todas las dimensiones de producto
     r#"
     CREATE VIEW IF NOT EXISTS vw_dim_articulo AS
-    SELECT id_articulo, original_sku, MAX(nom_articulo) AS nom_articulo,
-           MAX(id_linea) AS id_linea, MAX(nom_linea) AS nom_linea,
-           MAX(id_grupo) AS id_grupo, MAX(nom_grupo) AS nom_grupo,
-           MAX(id_tipo) AS id_tipo, MAX(nom_tipo) AS nom_tipo,
-           MAX(id_familia) AS id_familia, MAX(nom_familia) AS nom_familia
-    FROM ventas WHERE id_articulo != '' GROUP BY id_articulo
+    SELECT id_articulo, original_sku, nom_articulo, id_linea, nom_linea,
+           id_grupo, nom_grupo, id_tipo, nom_tipo, id_familia, nom_familia
+    FROM (
+      SELECT id_articulo, original_sku, nom_articulo, id_linea, nom_linea,
+             id_grupo, nom_grupo, id_tipo, nom_tipo, id_familia, nom_familia,
+             ROW_NUMBER() OVER (PARTITION BY id_articulo ORDER BY fecha_orig DESC, id DESC) rn
+      FROM ventas WHERE id_articulo != ''
+    ) WHERE rn = 1
     "#,
     // Lineas / categorias del ERP (jerarquia de producto)
     r#"
