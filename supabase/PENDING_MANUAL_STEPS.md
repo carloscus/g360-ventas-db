@@ -63,7 +63,7 @@ with compras as (
   select
     id_cliente, nom_cliente,
     id_articulo, nom_articulo, id_linea, nom_linea,
-    fecha_orig, precio_unitario,
+    fecha_orig, cantidad, precio_unitario,
     lag(fecha_orig) over (partition by id_cliente, id_articulo
                           order by fecha_orig) as fecha_previa
   from public.ventas
@@ -73,7 +73,7 @@ gaps as (
   select
     id_cliente, nom_cliente,
     id_articulo, nom_articulo, id_linea, nom_linea,
-    fecha_orig, precio_unitario,
+    fecha_orig, cantidad, precio_unitario,
     (fecha_orig - fecha_previa) as dias_gap
   from compras
   where fecha_previa is not null
