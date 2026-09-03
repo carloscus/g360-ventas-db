@@ -207,6 +207,83 @@ pub const CREATE_VIEWS_SQL: &[&str] = &[
         WHERE t.serie_doc = n.factura_ref_serie AND t.nro_doc = n.factura_ref_nro
       )
     "#,
+    // ─── Cockpit de ventas (apps de campo) ──────────────────────────────────
+    // Historial de venta por cliente+SKU con precios comparados (LAG).
+    // La cadena LAG corre solo sobre 'venta' (ajuste_valor contaminaría el
+    // precio); NC/ND se exponen via UNION ALL con precio NULL.
+    r#"
+    CREATE VIEW IF NOT EXISTS vw_historial_venta_cliente AS
+    WITH cadena AS (
+      SELECT id_cliente, nom_cliente, id_vendedor, nom_vendedor,
+             id_articulo, nom_articulo, id_linea, nom_linea,
+             folio_unico, tpo_doc, serie_doc, nro_doc,
+             fecha_orig, mes_ref, tipo_operacion, cantidad, soles, precio_unitario,
+             LAG(precio_unitario)    OVER w AS precio_anterior,
+             LAG(fecha_orig)         OVER w AS fecha_anterior,
+             LAG(precio_unitario, 2) OVER w AS precio_anterior2
+      FROM ventas
+      WHERE tipo_operacion = 'venta'
+      WINDOW w AS (PARTITION BY id_cliente, id_articulo ORDER BY fecha_orig, id)
+    )
+    SELECT * FROM cadena
+    UNION ALL
+    SELECT id_cliente, nom_cliente, id_vendedor, nom_vendedor,
+           id_articulo, nom_articulo, id_linea, nom_linea,
+           folio_unico, tpo_doc, serie_doc, nro_doc,
+           fecha_orig, mes_ref, tipo_operacion, cantidad, soles,
+           NULL, NULL, NULL, NULL
+    FROM ventas
+    WHERE tipo_operacion IN ('ajuste_valor', 'devolucion')
+    "#,
+    // Radar de recompra: cadencia por cliente+SKU (fallback a línea si <3 compras).
+    // 'VENCIDO' = dias_silencio > cadencia_efectiva * 1.5
+    r#"
+    CREATE VIEW IF NOT EXISTS vw_radar_recompra AS
+    WITH compras AS (
+      SELECT id_cliente, nom_cliente, id_articulo, nom_articulo,
+             id_linea, nom_linea, fecha_orig, cantidad, precio_unitario,
+             LAG(fecha_orig) OVER (PARTITION BY id_cliente, id_articulo
+                                   ORDER BY fecha_orig) AS fecha_previa
+      FROM ventas
+      WHERE tipo_operacion = 'venta' AND cantidad > 0
+    ),
+    gaps AS (
+      SELECT id_cliente, nom_cliente, id_articulo, nom_articulo,
+             id_linea, nom_linea, fecha_orig, cantidad, precio_unitario,
+             CAST(julianday(fecha_orig) - julianday(fecha_previa) AS INTEGER) AS dias_gap
+      FROM compras
+      WHERE fecha_previa IS NOT NULL
+    ),
+    cadencia_sku AS (
+      SELECT id_cliente, nom_cliente, id_articulo, nom_articulo, id_linea, nom_linea,
+             COUNT(*)                                AS n_compras,
+             MAX(fecha_orig)                         AS ultima_compra,
+             CAST(ROUND(AVG(dias_gap)) AS INTEGER)   AS dias_cadencia,
+             CAST(ROUND(AVG(precio_unitario), 4) AS REAL) AS precio_promedio,
+             CAST(SUM(cantidad) AS REAL) / MAX(CAST(julianday(MAX(fecha_orig)) - julianday(MIN(fecha_orig)) AS INTEGER), 1)
+                                                     AS und_por_dia
+      FROM gaps
+      GROUP BY 1,2,3,4,5,6
+    ),
+    cadencia_linea AS (
+      SELECT id_cliente, id_linea, CAST(ROUND(AVG(dias_gap)) AS INTEGER) AS cadencia_linea
+      FROM gaps
+      GROUP BY 1,2
+    )
+    SELECT cs.*,
+           CAST(julianday('now') - julianday(cs.ultima_compra) AS INTEGER) AS dias_silencio,
+           COALESCE(cs.dias_cadencia, cl.cadencia_linea)                   AS cadencia_efectiva,
+           CASE
+             WHEN CAST(julianday('now') - julianday(cs.ultima_compra) AS INTEGER)
+                  > COALESCE(cs.dias_cadencia, cl.cadencia_linea) * 1.5
+             THEN 'VENCIDO'
+             ELSE 'OK'
+           END AS estado_oportunidad
+    FROM cadencia_sku cs
+    LEFT JOIN cadencia_linea cl
+      ON cl.id_cliente = cs.id_cliente AND cl.id_linea = cs.id_linea
+     AND cs.n_compras < 3
+    "#,
     // Facturas disponibles con saldo y precio neto — para App devoluciones (LIFO)
     r#"
     CREATE VIEW IF NOT EXISTS vw_facturas_disponibles AS
