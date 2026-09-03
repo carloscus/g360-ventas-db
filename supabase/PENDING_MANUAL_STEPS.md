@@ -6,13 +6,15 @@
 
 Estado: ~~PENDIENTE~~ **EJECUTADAS** (2026-09-02). Verificado por API:
 - `vw_historial_venta_cliente` ✅ (200 con anon key; cadena precios OK, TAI LOY/02211 = 3.3248 estable)
-- `vw_radar_recompra` ✅ creada — **pero timeout si no se filtra por `id_cliente` acotado**
-  (calcula window functions sobre 618K filas por request). El app DEBE filtrar
-  por cliente (o lista pequeña `id_cliente=in.(...)`). Si se requiere radar
-  global sin filtro: convertir a MATERIALIZED VIEW + refresh nocturno.
-- Índices ✅ aplicados; latencias ficha cliente+periodo: ~400 ms (PostgREST
-  baseline ~300 ms incluido). Radar por cliente: 3.4 s (aceptable, mejorable
-  con materialized view si el usuario lo pide).
+- **Radar convertido a MATERIALIZED VIEW** — ver abajo. Ya NO timeoutea.
+- Índices ✅ aplicados; latencias ficha cliente+periodo: ~340-410 ms (PostgREST
+  baseline ~300 ms incluido).
+- **Radar convertido a MATERIALIZED VIEW** (migración 20250902000003, ejecutada
+  y verificada): TAI LOY completo (el caso que timeouteaba con la vista regular)
+  responde en **554 ms** con anon key; consultas simples ~380-400 ms.
+  Grants anon aplicados explícitamente (las MV no heredan grants automáticos).
+  Refresh nocturno opcional con pg_cron: 21:00 UTC (16:00 Perú, post-sync 15:00).
+  Ver migración 20250902000003_mv_radar.sql, paso 5.
 - Fix aplicado durante ejecución: `round(double precision, int)` no existe en
   PG → cast `::numeric`; `cantidad` faltante en CTEs compras/gaps.
 
