@@ -84,8 +84,8 @@ cadencia_sku as (
     id_articulo, nom_articulo, id_linea, nom_linea,
     count(*)                       as n_compras,
     max(fecha_orig)                as ultima_compra,
-    round(avg(dias_gap))           as dias_cadencia,
-    round(avg(precio_unitario), 4) as precio_promedio,
+    round(avg(dias_gap))                                   as dias_cadencia,
+    round((avg(precio_unitario))::numeric, 4)              as precio_promedio,
     sum(cantidad) / greatest(max(fecha_orig) - min(fecha_orig), 1)
                                    as und_por_dia
   from gaps
