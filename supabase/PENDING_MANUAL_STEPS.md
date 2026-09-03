@@ -4,8 +4,17 @@
 > Ejecutar en: https://supabase.com/dashboard/project/tqdmoytaucnfrpaklprc/sql
 > IMPORTANTE: desactivar el toggle "Limit" (read-only) en el SQL Editor.
 
-Estado: `20250902000001` y `20250902000002` = PENDIENTES de ejecutar en Supabase.
-Las vistas ya están aplicadas y verificadas en el SQLite local.
+Estado: ~~PENDIENTE~~ **EJECUTADAS** (2026-09-02). Verificado por API:
+- `vw_historial_venta_cliente` ✅ (200 con anon key; cadena precios OK, TAI LOY/02211 = 3.3248 estable)
+- `vw_radar_recompra` ✅ creada — **pero timeout si no se filtra por `id_cliente` acotado**
+  (calcula window functions sobre 618K filas por request). El app DEBE filtrar
+  por cliente (o lista pequeña `id_cliente=in.(...)`). Si se requiere radar
+  global sin filtro: convertir a MATERIALIZED VIEW + refresh nocturno.
+- Índices ✅ aplicados; latencias ficha cliente+periodo: ~400 ms (PostgREST
+  baseline ~300 ms incluido). Radar por cliente: 3.4 s (aceptable, mejorable
+  con materialized view si el usuario lo pide).
+- Fix aplicado durante ejecución: `round(double precision, int)` no existe en
+  PG → cast `::numeric`; `cantidad` faltante en CTEs compras/gaps.
 
 ---
 
