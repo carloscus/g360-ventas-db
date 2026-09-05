@@ -43,3 +43,7 @@ path = "src/bin/upload.rs"
 [[bin]]
 name = "query"
 path = "src/bin/query.rs"
+
+[[bin]]
+name = "recapture"
+path = "src/bin/recapture.rs"

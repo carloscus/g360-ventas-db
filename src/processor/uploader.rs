@@ -149,6 +149,27 @@ pub async fn upload_all(
         _ => String::new(),
     };
 
+    // MONTH-AWARE SYNC: detectar meses re-capturados localmente (capturado_en más
+    // reciente que lo que Supabase conoce) y purgarlos en Supabase ANTES de subir.
+    // Cubre: re-capturas de meses pasados (datos posteados tarde en el ERP),
+    // re-atribuciones (vendedor/razón social) y reparses. Sin esto, Supabase
+    // retendría versiones viejas de esos meses para siempre.
+    if !sync_where.is_empty() {
+        if let Some(cb) = progress_cb {
+            cb(0, 0, 0.01, "Verificando meses re-capturados...");
+        }
+        match resync_stale_months(pool, last_sync).await {
+            Ok(stale) if !stale.is_empty() => {
+                info!("Month-aware sync: {} meses re-capturados detectados: {:?}", stale.len(), stale);
+                for (mes, purged) in stale {
+                    info!("Month-aware sync: mes {} purgado ({} filas)", mes, purged);
+                }
+            }
+            Ok(_) => {}
+            Err(e) => return Err(anyhow::anyhow!("Month-aware sync: fallo purga de meses: {}", e)),
+        }
+    }
+
     // Calcular cutoff de retencion (mes alineado: mes_ref es 'YYYY-MM')
     let retention_cutoff_date = if retention_days > 0 {
         let d = (chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
@@ -285,6 +306,130 @@ pub async fn upload_all(
 /// Elimina de Supabase los registros DENTRO de la ventana de retención (full sync).
 /// Borra por rangos de mes_ref (menos filas por request que por id, evita timeouts).
 /// Solo se llama desde full-sync (last_sync=None) antes de re-subir la ventana.
+/// MONTH-AWARE SYNC: detecta meses cuya versión local es más reciente que la de
+/// Supabase (por re-captura, reparse o re-atribución del ERP) y los PURGA de
+/// Supabase para que el upload los re-inserte completos.
+///
+/// Mecanismo: para cada mes_ref local con capturado_en > last_sync, compara el
+/// MAX(capturado_en) del mes en Supabase. Si local > supabase -> mes desactualizado
+/// en Supabase -> DELETE por mes_ref (loop hasta vaciar). Si el mes NO existe en
+/// Supabase es un mes nuevo (normal, no requiere purga).
+///
+/// Retorna los meses purgados con su conteo.
+pub async fn resync_stale_months(
+    pool: &sqlx::SqlitePool,
+    last_sync: Option<&str>,
+) -> Result<Vec<(String, usize)>> {
+    let url = get_supabase_url();
+    let key = get_supabase_service_key();
+    if url.contains("TU_SUPABASE") || key.contains("TU_ANON") {
+        return Ok(vec![]);
+    }
+
+    // Meses locales tocados desde el ultimo sync (o todos si full sync)
+    let cutoff = last_sync.unwrap_or("2000-01-01");
+    let meses: Vec<(String, String)> = sqlx::query_as(
+        "SELECT mes_ref, MAX(capturado_en) FROM ventas
+         WHERE capturado_en > ? GROUP BY mes_ref ORDER BY mes_ref",
+    )
+    .bind(cutoff)
+    .fetch_all(pool)
+    .await?;
+
+    if meses.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .build()?;
+    let base_url = format!("{}/rest/v1/{}", url, SUPABASE_TABLE);
+    let mut purgados: Vec<(String, usize)> = Vec::new();
+
+    for (mes_ref, max_local) in &meses {
+        // MAX(capturado_en) del mes en Supabase
+        let resp = client
+            .get(&base_url)
+            .header("apikey", &key)
+            .header("Authorization", format!("Bearer {}", key))
+            .header("Prefer", "count=exact")
+            .header("Range", "0-0")
+            .query(&[
+                ("mes_ref", mes_ref.as_str()),
+                ("order", "capturado_en.desc"),
+                ("select", "capturado_en"),
+            ])
+            .send()
+            .await
+            .context("Month-aware: fallo consulta de mes en Supabase")?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "Month-aware: Supabase {} al consultar mes {}: {}",
+                resp.status(), mes_ref,
+                resp.text().await.unwrap_or_default().chars().take(120).collect::<String>()
+            );
+        }
+
+        // content-range total: si 0, el mes no existe en Supabase (mes nuevo, no purgar)
+        let total: usize = resp
+            .headers()
+            .get("content-range")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|cr| cr.split('/').nth(1).and_then(|s| s.parse().ok()))
+            .unwrap_or(0);
+        if total == 0 {
+            continue; // mes nuevo en Supabase: no requiere purga
+        }
+
+        // Comparar: capturado_en max local vs max supabase (ambos ISO strings comparables)
+        let supa_max: Option<String> = resp.json::<serde_json::Value>().await
+            .ok()
+            .and_then(|v| v.as_array().and_then(|a| a.first().cloned()))
+            .and_then(|row| row.get("capturado_en").and_then(|c| c.as_str()).map(String::from));
+        let local_is_newer = match supa_max {
+            Some(s) => max_local.as_str() > s.as_str(),
+            None => true,
+        };
+        if !local_is_newer {
+            continue;
+        }
+
+        // Purgar el mes desactualizado (loop hasta vaciar)
+        let mut purged_mes = 0usize;
+        loop {
+            let resp = client
+                .delete(&base_url)
+                .header("apikey", &key)
+                .header("Authorization", format!("Bearer {}", key))
+                .header("Prefer", "return=representation")
+                .query(&[("mes_ref", mes_ref.as_str()), ("select", "id")])
+                .send()
+                .await
+                .context("Month-aware: fallo DELETE de mes")?;
+            if !resp.status().is_success() {
+                anyhow::bail!(
+                    "Month-aware: Supabase {} al purgar mes {}: {}",
+                    resp.status(), mes_ref,
+                    resp.text().await.unwrap_or_default().chars().take(120).collect::<String>()
+                );
+            }
+            let rows: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!([]));
+            let n = rows.as_array().map(|a| a.len()).unwrap_or(0);
+            purged_mes += n;
+            if n == 0 {
+                break;
+            }
+        }
+        if purged_mes > 0 {
+            info!("Month-aware: mes {} desactualizado -> purgadas {} filas", mes_ref, purged_mes);
+            purgados.push((mes_ref.clone(), purged_mes));
+        }
+    }
+
+    Ok(purgados)
+}
+
 pub async fn purge_supabase_window(retention_days: u32) -> Result<usize> {
     if retention_days == 0 {
         return Ok(0);
