@@ -299,12 +299,14 @@ Almacenado en `%APPDATA%\g360-db-ventas\data\config.json`:
 
 | Escenario | Comportamiento |
 |-----------|----------------|
-| **Local** | historial completo (sin límite de años) |
-| **Supabase** | ventana de `supabase_retention_years` (4 años), filtrada **en el SELECT** antes de subir |
+| **Local** | historial completo (sin límite de años) + export RAW del ERP (todas las líneas) |
+| **Supabase** | **ventana ROTATIVA** de `supabase_retention_days` (1277 = 3.5 años): cada subida inserta lo nuevo y elimina los meses con `mes_ref < cutoff` — un mes entra, un mes sale. Tamaño estable ~385 MB (77% del plan gratuito de 500 MB) |
 | **Apps derivadas** | ventana activa de `app_retention_years` (3 años) |
-| **Líneas no permitidas** | se filtran en el parse (`is_allowed_line`) |
+| **Líneas no permitidas** | raw-first: viven SOLO en la BD local; se filtran al subir (`config::with_line_filter`: allowlist + regla NC/ND por factura referenciada) |
 
-> El filtro de retención se aplica en el `WHERE mes_ref >= cutoff` del uploader — los datos antiguos nunca salen de la BD local hacia Supabase. Los meses fuera de rango también se pueden eliminar manualmente desde **📅 meses** (multiselección + confirmación).
+> RAW-FIRST: el parser ya no filtra por línea — la BD local guarda el export completo del ERP, así que cambiar el allowlist o reprocesar no requiere re-capturar desde la intranet. El filtro obligatorio vive en el WHERE del uploader (`supabase_line_filter_sql`, fail-closed): sube líneas permitidas y NC/ND cuya factura referenciada (F01) tenga línea permitida (lookup global, cubre cross-mes). `stats_cache` se calcula con el mismo filtro para mantener el dashboard coherente con Supabase.
+>
+> **Capacidad (plan gratuito 500 MB)**: costo real medido ≈ 732 bytes/fila con índices. Monitoreo: `select * from vw_ventas_storage;` en el SQL Editor. Regla: <85% tranquilo, 85-95% planificar recorte, >95% riesgo de pausa. La rotación mensual genera ~11 MB/mes de dead tuples — `pg_cron` semanal (BLOQUE 7 de `supabase/RELOAD_CHECKLIST.sql`) los limpia. Tras cualquier recreación de la tabla, re-aplicar RLS + índices con ese mismo checklist.
 
 ---
 

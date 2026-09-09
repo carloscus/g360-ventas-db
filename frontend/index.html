@@ -136,6 +136,8 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .menu button:hover{background:rgba(255,255,255,.06)}
 .menu .sep{border-top:1px solid rgba(255,255,255,.08);margin:4px 0}
 .menu .danger{color:#f87171}
+.menu .msec{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#5a7a9a;padding:7px 9px 2px;font-weight:800;user-select:none}
+.menu .msec:first-child{padding-top:4px}
 .warn-chip{display:inline-flex;align-items:center;background:rgba(245,158,11,.15);color:#fbbf24;border-radius:9px;padding:1px 6px;font-size:9px;font-weight:800;cursor:pointer;border:1px solid rgba(245,158,11,.3);margin-left:5px}
 .warn-chip:hover{background:rgba(245,158,11,.28)}
 .dropzone{border:2px dashed rgba(0,212,140,.35);border-radius:8px;padding:20px 10px;text-align:center;color:#7e96ad;font-size:11px;margin:8px 0;transition:.15s;cursor:pointer;line-height:1.5}
@@ -190,19 +192,21 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <div class="menu-wrap">
   <button class="btn btn-s" id="moreBtn" style="margin-top:0">⋯ más acciones</button>
   <div class="menu" id="moreMenu">
-    <button id="importBtn">📥 Importar mes (arrastrar XLS)</button>
-    <button id="sync">↻ Sync última fecha</button>
-    <button id="uploadBtn">☁ Subir a Supabase</button>
-    <button id="resetSyncBtn" class="btn-ghost" title="Resetea el marcador incremental y re-sube todo a Supabase">🔄 Forzar Full Sync Supabase</button>
-    <button id="manageMonths">📅 Gestionar meses</button>
-    <button id="previewBtn">👁 Vista previa CSV</button>
-    <button id="reparse" class="btn-ghost" title="Re-parsea CSVs en raw/ con allowed_lines actual (sin intranet)">⚡ Reprocesar raw</button>
-    <div class="sep"></div>
+    <div class="msec">BD local — poblar y reparar</div>
+    <button id="sync" title="Captura incremental desde la última fecha (lo usual día a día)">↻ Sync última fecha</button>
+    <button id="importBtn" title="Repara un mes incompleto con el XLS mensual del intranet">📥 Importar mes (arrastrar XLS)</button>
+    <button id="reparse" class="btn-ghost" title="Re-parsea TODOS los CSV de raw/ sin filtrar (raw-first). El filtro de líneas se aplica al subir, no aquí">⚡ Reprocesar raw</button>
+    <button id="manageMonths" title="Revisar o borrar meses específicos de la BD local">📅 Gestionar meses</button>
+    <div class="msec">Supabase — publicar</div>
+    <button id="uploadBtn" title="Sube solo lo elegible: líneas del allowlist + NC/ND con factura F01 permitida (raw-first)">☁ Subir a Supabase</button>
+    <button id="resetSyncBtn" title="Resetea el marcador incremental, purga la ventana en Supabase y re-sube TODO con el filtro actual">🔄 Forzar Full Sync Supabase</button>
+    <div class="msec">Diagnóstico (opcional)</div>
     <button id="verifyBtn" class="btn-ghost" title="Verifica integridad de la BD (duplicados, folios huérfanos)">🔍 Verificar Integridad</button>
     <button id="checksumBtn" class="btn-ghost" title="Genera checksums mensuales para detección de cambios">🔐 Calcular Checksums</button>
-    <div class="sep"></div>
-    <button id="clr">Limpiar caché XLS</button>
-    <button id="dbclr" class="danger">Recrear BD local (borra todo)</button>
+    <button id="previewBtn" title="Muestra las primeras filas de la BD local">👁 Vista previa CSV</button>
+    <div class="msec">Mantenimiento</div>
+    <button id="clr" class="btn-ghost" title="Borra XLS temporales descargados">🧹 Limpiar caché XLS</button>
+    <button id="dbclr" class="danger" title="Borra historial.db y archivos locales. NO afecta a Supabase">🗑 Recrear BD local (borra todo)</button>
   </div>
 </div>
 <div id="est" class="est hid">⏱ ~<span id="estm">0</span> min</div>
@@ -685,7 +689,8 @@ document.getElementById('uploadBtn').addEventListener('click',async()=>{
   try{const r=await invoke('upload_all');show(r.message);load();startPolling();}catch(err){show('error: '+err,true);startPolling();}
 });
 document.getElementById('resetSyncBtn').addEventListener('click',async()=>{
-  if(!confirm('¿Forzar re-subida completa (Full Sync) a Supabase?\n\nEsto re-subirá todos los registros de los últimos 4 años, reparando cualquier discrepancia.'))return;
+  let years=4; try{const c=await invoke('get_settings'); years=Math.max(1,Math.round((c.supabase_retention_days||1277)/365));}catch(e){}
+  if(!confirm('¿Forzar re-subida completa (Full Sync) a Supabase?\n\n- Purga la ventana de retención en Supabase y re-sube TODO con el filtro de líneas actual\n- Si cambiaste las Líneas permitidas, aquí se aplican SIN re-capturar ni reprocesar\n- Cobertura: últimos '+years+' años'))return;
   show('reseteando marcador y subiendo...');stopPolling();
   try{
     await invoke('reset_sync_marker');
@@ -726,9 +731,9 @@ document.getElementById('checksumBtn').addEventListener('click',async()=>{
     console.log('Checksum history:', hist);
   }catch(err){show('error: '+err,true)}
 });
-// Re-parse raw sin intranet (cuando cambia allowed_lines)
+// Re-parse raw sin intranet (raw-first: consolida TODO el CSV en la BD local, sin filtrar)
 document.getElementById('reparse').addEventListener('click',async()=>{
-  if(!confirm('Reprocesar todos los CSVs en raw/ con el filtro actual?\n\n- Lee los CSVs ya descargados\n- Re-aplica allowed_lines y NC/ND cross-month\n- Reemplaza en la BD (sin intranet)'))return;
+  if(!confirm('Reprocesar todos los CSVs en raw/?\n\n- Lee los CSVs ya descargados y re-parsea TODO el contenido (raw-first, sin filtrar)\n- El filtro de líneas NO se aplica aquí: vive al subir a Supabase\n- Cambios de allowlist se aplican con "Forzar Full Sync Supabase", no con esto\n- Reemplaza los meses presentes en raw/ (sin intranet)'))return;
   show('reprocesando raw...');stopPolling();
   try{const r=await invoke('reparse_raw');show(r.message||r);startPolling();}catch(err){show('error: '+err,true);startPolling();}
 });

@@ -11,18 +11,27 @@ async fn main() -> Result<()> {
     g360_db_ventas::config::load_dotenv();
     info!("g360-db-ventas - Upload -> Supabase");
     let pool = g360_db_ventas::db::writer::init_pool().await?;
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas")
+    // RAW-FIRST: el filtro obligatorio de lineas se aplica aqui (no en el parse).
+    // Sin este WHERE se subirian traslados/servicios/líneas fuera de allowlist.
+    let upload_where = g360_db_ventas::config::with_line_filter("");
+    let total: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM ventas {}", upload_where
+    ))
+    .fetch_one(&pool)
+    .await?;
+    let total_raw: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas")
         .fetch_one(&pool)
-        .await?;
+        .await
+        .unwrap_or(0);
     if total == 0 {
-        error!("No records");
+        error!("No records elegibles (raw local: {})", total_raw);
         return Ok(());
     }
-    info!("{} records", total);
+    info!("{} records elegibles de {} en raw local", total, total_raw);
     let bs = 500;
     let mut up = 0usize;
     for off in (0..total as usize).step_by(bs) {
-        let rows: Vec<g360_db_ventas::models::Venta> = sqlx::query(
+        let rows: Vec<g360_db_ventas::models::Venta> = sqlx::query(&format!(
             "SELECT id_articulo,original_sku,nom_articulo,id_linea,nom_linea,id_grupo,nom_grupo,\
              id_tipo,nom_tipo,id_familia,nom_familia,\
              id_cliente,doc_cliente,nom_cliente,tpo_doc,serie_doc,nro_doc,referencia,\
@@ -31,8 +40,8 @@ async fn main() -> Result<()> {
              departamento,provincia,distrito,id_vendedor,\
              nom_vendedor,id_pedido,file_source,mes_ref,\
              tipo_operacion,factura_ref_serie,factura_ref_nro,folio_unico \
-             FROM ventas LIMIT ? OFFSET ?",
-        )
+             FROM ventas {} LIMIT ? OFFSET ?", upload_where
+        ))
         .bind(bs as i64)
         .bind(off as i64)
         .map(|row: sqlx::sqlite::SqliteRow| {

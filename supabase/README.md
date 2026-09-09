@@ -45,6 +45,8 @@ SUPABASE_SERVICE_ROLE_KEY=eyJ... # solo backend Rust (bypass RLS)
 
 Tabla: `ventas` (42 cols + id). **Sin constraint única** — la deduplicación se maneja client-side por `(folio_unico, id_articulo)` en cada batch (permite facturas multi-línea). El uploader aplica retención filtrando `WHERE mes_ref >= cutoff` en el SELECT (4 años por defecto).
 
+**Raw-first**: la BD local guarda el export completo del ERP (todas las líneas); Supabase recibe solo lo vital — el uploader aplica un WHERE obligatorio (`config::with_line_filter`): líneas del allowlist + NC/ND cuya factura referenciada tenga línea permitida. Cambios de allowlist se aplican re-subiendo, sin re-capturar.
+
 ## Monitoreo capacidad (500 MB plan)
 
 ```sql

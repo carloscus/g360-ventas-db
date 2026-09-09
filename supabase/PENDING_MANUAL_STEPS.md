@@ -4,6 +4,18 @@
 > Ejecutar en: https://supabase.com/dashboard/project/tqdmoytaucnfrpaklprc/sql
 > IMPORTANTE: desactivar el toggle "Limit" (read-only) en el SQL Editor.
 
+Estado actual (2026-09-09):
+- **RLS activo** + politica `ventas_select_readonly` (anon/authenticated solo lectura;
+  writes unicamente via service_role). Cierra el aviso `rls_disabled_in_public`.
+  Ver `RELOAD_CHECKLIST.sql` — re-aplicar SIEMPRE tras recrear la tabla ventas
+  (DROP TABLE borra RLS y politicas; TRUNCATE las conserva).
+- **Sin constraint unica en folio_unico** (multi-linea OK, verificado).
+- Indices >= 14 aplicados + `vw_ventas_storage` (monitoreo capacidad).
+- **Recarga total 2026-09-09**: raw-first en local (1.19M filas, 2018-2026) y
+  Supabase con ventana 3 anos (486,211 filas / 340 MB / 67.9% de 500 MB).
+  Retencion 1096 dias: 3.5y (~400 MB, 80%) es viable pero justo; 4y (~462 MB, 92%)
+  NO recomendado por riesgo de pausa del plan gratuito.
+
 Estado: ~~PENDIENTE~~ **EJECUTADAS** (2026-09-02). Verificado por API:
 - `vw_historial_venta_cliente` ✅ (200 con anon key; cadena precios OK, TAI LOY/02211 = 3.3248 estable)
 - **Radar convertido a MATERIALIZED VIEW** — ver abajo. Ya NO timeoutea.

@@ -196,23 +196,13 @@ fn parse_date(s: &str) -> chrono::NaiveDate {
     chrono::NaiveDate::default()
 }
 
-/// NCR/NDB -> es nota de credito/debito (valida por factura referenciada)
-fn es_nc_nd(tpo_doc: &str) -> bool {
-    let t = tpo_doc.to_uppercase();
-    t.contains("NCR") || t.contains("NDB")
-}
-
-/// Resultado del parse con NC/ND pendientes de validar contra la BD (cross-mes).
-pub struct ParseOutput {
-    pub ventas: Vec<Venta>,
-    /// NC/ND cuya factura referenciada NO esta en el mismo archivo (requieren lookup BD)
-    pub nc_nd_pendientes: Vec<Venta>,
-}
-
-/// Core de parseo compartido: lee el CSV y aplica filtros.
-/// - ventas: filas con linea permitida + NC/ND cuya factura ref (en-archivo) pasa allowlist
-/// - nc_nd_pendientes: NC/ND con REFERENCIA F01/serie-nro pero factura no presente en el archivo
-fn parse_export_csv_inner(path: &Path) -> Result<ParseOutput> {
+/// Core de parseo: lee el CSV y retorna TODAS las filas (raw-first).
+/// NO filtra por línea aquí: la BD local guarda el export completo del ERP
+/// (incluye traslados/servicios/líneas fuera de allowlist) para que cambios de
+/// allowlist o re-procesos no requieran re-captura desde la intranet.
+/// El filtro obligatorio se aplica al subir a Supabase (config::with_line_filter).
+/// Solo se descartan filas malformadas (sin SKU o sin cliente), igual que antes.
+pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
     let label = path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -360,101 +350,18 @@ fn parse_export_csv_inner(path: &Path) -> Result<ParseOutput> {
             raw_rows.push(v);
         }
     }
-    // Indice de facturas del archivo: (serie,nro) -> alguna linea permitida?
-    // Solo facturas de venta/compra (F01/BDI/FEX/FDI/01B...), no NC/ND
-    let mut facturas: std::collections::HashMap<(String, String), bool> = std::collections::HashMap::new();
-    for v in &raw_rows {
-        if !es_nc_nd(&v.tpo_doc) && !v.serie_doc.is_empty() && !v.nro_doc.is_empty() {
-            let ok = crate::config::is_allowed_line(&v.id_linea);
-            facturas
-                .entry((v.serie_doc.clone(), v.nro_doc.clone()))
-                .and_modify(|e| *e = *e || ok)
-                .or_insert(ok);
-        }
-    }
-    let mut out = Vec::new();
-    let mut nc_nd_pendientes = Vec::new();
-    for v in raw_rows {
-        if crate::config::is_allowed_line(&v.id_linea) {
-            out.push(v);
-            continue;
-        }
-        // NC/ND con linea no permitida: validar contra la FACTURA REFERENCIADA
-        if es_nc_nd(&v.tpo_doc) {
-            // REFERENCIA formato "F01/201-17137" -> serie=201 nro=17137 (ya parseado en factura_ref_*)
-            let (serie, nro) = (v.factura_ref_serie.clone(), v.factura_ref_nro.clone());
-            if serie.is_empty() || nro.is_empty() {
-                continue; // NC sin factura ref clara -> se excluye
-            }
-            if let Some(ok) = facturas.get(&(serie.clone(), nro.clone())) {
-                if *ok {
-                    out.push(v);
-                }
-            } else {
-                // Factura de otro mes -> requiere lookup contra la BD (cross-mes)
-                nc_nd_pendientes.push(v);
-            }
-        }
-        // Otras lineas no permitidas (traslados/servicios fuera del allowlist): se excluyen
-    }
-    info!("parse_export: {} rows from {}", out.len(), path.display());
-    Ok(ParseOutput { ventas: out, nc_nd_pendientes })
+    // RAW-FIRST: se conservan TODAS las filas. La regla de NC/ND (se sube solo si
+    // su factura referenciada tiene linea permitida) vive ahora en el WHERE del
+    // upload (config::supabase_line_filter_sql), resuelta globalmente contra la
+    // BD local: cubre facturas del mismo archivo Y de otros meses, sin pendientes.
+    info!("parse_export: {} rows (raw, sin filtrar) from {}", raw_rows.len(), path.display());
+    Ok(raw_rows)
 }
 
-/// API compatible: parsea sin lookup cross-mes (NC/ND con factura en otro mes se excluyen).
-pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
-    Ok(parse_export_csv_inner(path)?.ventas)
-}
-
-/// Parsea + resuelve NC/ND cross-mes contra la BD. Para el flujo principal de captura.
-pub async fn parse_export_csv_with_cross(path: &Path, pool: &sqlx::SqlitePool) -> Result<Vec<Venta>> {
-    let mut output = parse_export_csv_inner(path)?;
-    if !output.nc_nd_pendientes.is_empty() {
-        info!("  cross-month: {} NC/ND pendientes, resolviendo...", output.nc_nd_pendientes.len());
-        resolve_nc_nd_cross(pool, &mut output.nc_nd_pendientes).await;
-        // Las resueltas se agregan al resultado final
-        output.ventas.append(&mut output.nc_nd_pendientes);
-    }
-    Ok(output.ventas)
-}
-
-/// Resuelve NC/ND pendientes (su factura no esta en el mismo CSV) contra la BD.
-/// Si la factura referenciada existe en la BD con linea permitida, se incluye.
-pub async fn resolve_nc_nd_cross(pool: &sqlx::SqlitePool, pendientes: &mut Vec<Venta>) {
-    if pendientes.is_empty() {
-        return;
-    }
-    let mut resueltas = Vec::new();
-    let mut sin_resolver = Vec::new();
-    for v in pendientes.drain(..) {
-        let serie = &v.factura_ref_serie;
-        let nro = &v.factura_ref_nro;
-        if serie.is_empty() || nro.is_empty() {
-            sin_resolver.push(v);
-            continue;
-        }
-        // Buscar la factura referenciada en la BD
-        let exists: bool = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM ventas WHERE serie_doc = ? AND nro_doc = ? AND (tpo_doc LIKE 'F01%' OR tpo_doc = 'F01')"
-        )
-        .bind(serie)
-        .bind(nro)
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0) > 0;
-        if exists {
-            resueltas.push(v);
-        } else {
-            sin_resolver.push(v);
-        }
-    }
-    let n_res = resueltas.len();
-    let n_sin = sin_resolver.len();
-    if n_res > 0 {
-        info!("  cross-month: {n_res} NC/ND resueltas, {n_sin} sin factura en BD");
-    }
-    // Agregar las resueltas al resultado final
-    pendientes.extend(resueltas);
+/// Compatibilidad con el flujo de captura: en raw-first ya no hay resolucion
+/// cross-mes en el parse (el gate de NC/ND es en upload). Conserva la firma async.
+pub async fn parse_export_csv_with_cross(path: &Path, _pool: &sqlx::SqlitePool) -> Result<Vec<Venta>> {
+    parse_export_csv(path)
 }
 
 /// Parsea formato simple 7 columnas

@@ -291,3 +291,49 @@ pub fn is_allowed_line(id_linea: &str) -> bool {
     let suffix = &id_linea[id_linea.len() - 2..];
     effective_allowed_lines().iter().any(|s| s == suffix)
 }
+
+/// WHERE SQL obligatorio que aplica el filtro de líneas al subir a Supabase (raw-first).
+/// La BD local guarda TODO el export del ERP; Supabase solo recibe lo "vital":
+///   1) filas con línea permitida (sufijo de 2 chars en allowlist, igual que is_allowed_line), o
+///   2) NC/ND cuya FACTURA DE VENTA (F01) existe en la BD local con línea permitida.
+/// El gate F01% alinea el filtro con el resolver cross-mes anterior y con las vistas
+/// (vw_devoluciones / vw_nc_totales / vw_facturas_disponibles): una NC que referencia
+/// una BDI (compra) es devolución de compra, no venta -> se queda solo en local.
+/// Sustituye al filtro en-parser: cambios de allowlist se aplican con solo re-subir,
+/// sin re-capturar. El lookup de NC/ND es global (cubre facturas de otros meses).
+/// Sanitización estricta [A-Z0-9]{2} para prevenir inyección vía config.json.
+/// Fail-closed: allowlist vacía/inválida -> "1 = 0" (no se sube nada).
+pub fn supabase_line_filter_sql() -> String {
+    let list = effective_allowed_lines()
+        .iter()
+        .filter(|l| l.len() == 2 && l.chars().all(|c| c.is_ascii_alphanumeric()))
+        .map(|l| format!("'{}'", l.to_uppercase()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if list.is_empty() {
+        return "1 = 0".to_string();
+    }
+    format!(
+        "(substr(id_linea, -2) IN ({list}) OR ((tpo_doc LIKE '%NCR%' OR tpo_doc LIKE '%NDB%') \
+         AND EXISTS (SELECT 1 FROM ventas f \
+          WHERE f.serie_doc = ventas.factura_ref_serie \
+            AND f.nro_doc = ventas.factura_ref_nro \
+            AND (f.tpo_doc LIKE 'F01%' OR f.tpo_doc = 'F01') \
+            AND substr(f.id_linea, -2) IN ({list}))))"
+    )
+}
+
+/// Combina un WHERE opcional (sync/retención: "" o "WHERE ...") con el filtro
+/// obligatorio de líneas. Usar en todo SELECT/COUNT que calcule qué filas
+/// se suben a Supabase (upload, dry-run, validación, stats_cache).
+pub fn with_line_filter(extra_where: &str) -> String {
+    let f = supabase_line_filter_sql();
+    let extra = extra_where.trim();
+    if extra.is_empty() {
+        format!("WHERE {}", f)
+    } else if extra.len() >= 5 && extra[..5].eq_ignore_ascii_case("where") {
+        format!("{} AND {}", extra, f)
+    } else {
+        format!("WHERE {} AND {}", extra, f)
+    }
+}

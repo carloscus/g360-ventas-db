@@ -337,18 +337,28 @@ async fn upload_all() -> Result<String, String> {
     if !cfg.supabase.is_configured() {
         return Err("Supabase no configurado. Abra Configuracion e ingrese credenciales.".to_string());
     }
+    // Bloquear upload durante una captura activa: la paginacion OFFSET se corrompe
+    // si la tabla se mueve mientras se lee (bug real del full-sync 2026-09-08:
+    // Supabase quedo con meses mezclados viejos/nuevos).
+    {
+        let st = CAPTURE_STATE.lock().unwrap();
+        if st.phase != CapturePhase::Idle && st.phase != CapturePhase::Done && st.phase != CapturePhase::Error {
+            return Err("Hay una captura en curso. Espere a que termine (o detengala) antes de subir a Supabase.".to_string());
+        }
+    }
     set_state("uploading", "Conectando a Supabase...", 0.03);
     let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
 
-    let base_where = match &cfg.last_supabase_sync {
-        Some(s) if !s.is_empty() => format!("WHERE capturado_en > '{}'", s),
-        _ => String::new(),
-    };
-    let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ventas {}", base_where))
+    // Pre-count INFORMATIVO con el mismo filtro del uploader (raw-first: elegibles,
+    // no el raw completo). El conteo real lo hace upload_all dentro de la misma tx logica.
+    let count: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM ventas {}",
+        g360_db_ventas::config::with_line_filter("")
+    ))
         .fetch_one(&pool).await.map_err(|e| e.to_string())?;
     if count == 0 {
-        set_state("idle", "Nada nuevo para subir (sync incremental)", 1.0);
-        return Ok("Sync incremental: nada nuevo para subir".to_string());
+        set_state("idle", "Nada elegible para subir (filtro de lineas)", 1.0);
+        return Ok("Nada elegible para subir (revisa lineas permitidas / raw local)".to_string());
     }
 
     let last_sync = cfg.last_supabase_sync.clone();
@@ -366,7 +376,7 @@ async fn upload_all() -> Result<String, String> {
         drop(s);
     }));
 
-    set_state("uploading", &format!("Subiendo {} registros a Supabase...", count), 0.05);
+    set_state("uploading", &format!("Subiendo ~{} registros elegibles a Supabase...", count), 0.05);
 
     match g360_db_ventas::processor::uploader::upload_all(&pool, retention, last_sync.as_deref(), &progress_cb).await {
         Ok((up, cleaned)) => {

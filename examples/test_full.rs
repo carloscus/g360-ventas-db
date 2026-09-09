@@ -42,9 +42,10 @@ async fn main() -> anyhow::Result<()> {
     form.push(("Button1".into(), "Aceptar".into()));
     let resp = client.post("http://intranet.cipsa.com.pe/intranetcipsa/login.aspx")
         .form(&form).timeout(std::time::Duration::from_secs(30)).send().await?;
+    let status = resp.status().as_u16();
     let body = resp.text().await?;
     let still_login = body.contains("txtnombre");
-    println!("    status: {} | rechazado: {}", resp.status().as_u16(), still_login);
+    println!("    status: {} | rechazado: {}", status, still_login);
     if still_login { println!("    OK: rechaza credenciales invalidas correctamente"); }
     else { println!("    WARN: acepto credenciales invalidas"); }
 

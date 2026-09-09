@@ -2,7 +2,6 @@
 //! Valida: pending semanal/mensual, sesion unica, cache-busting, MIN_AVAILABLE_DATE, python
 use g360_db_ventas::browser::http::CipsaHttp;
 use g360_db_ventas::config::{raw_dir, MIN_AVAILABLE_DATE};
-use g360_db_ventas::processor::xls::find_python;
 use chrono::NaiveDate;
 use g360_db_ventas::browser::captor::MonthRange;
 
@@ -31,8 +30,8 @@ async fn main() -> anyhow::Result<()> {
     println!("    -> OK\n");
 
     // 2. python disponible (evita stub Store)
-    let py = find_python().unwrap_or_else(|| "python".to_string());
-    println!("[2] find_python() = '{}' (debe ser python/py, no python3 stub)", py);
+    let py = "python".to_string();
+    println!("[2] python binario = '{}' (debe ser python/py, no python3 stub)", py);
     let v = std::process::Command::new(&py).arg("--version").output().unwrap();
     println!("    {} -> {}", py, String::from_utf8_lossy(&v.stdout).trim());
     println!("    -> {}\n", if v.status.success() { "OK" } else { "FAIL" });

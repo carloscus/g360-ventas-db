@@ -35,10 +35,19 @@ pub async fn init_pool() -> Result<SqlitePool> {
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
         .busy_timeout(std::time::Duration::from_secs(30));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(20)
+        .max_connections(5)
+        // Reclamo agresivo de conexiones: si un init falla, no quedan conos vivos
+        // filtrando RAM durante minutos (bug real 2026-09-09: 4.5 GB de RAM)
+        .idle_timeout(std::time::Duration::from_secs(60))
+        .max_lifetime(std::time::Duration::from_secs(600))
         .connect_with(opts)
         .await
         .context("DB connect failed")?;
+    // CRITICO: guardar el singleton INMEDIATAMENTE tras conectar. Antes se guardaba
+    // al final, despues de migraciones pesadas (refresh_stats_cache con EXISTS sobre
+    // ~1.2M filas tarda minutos): cada poll de la UI (cada 2s) lanzaba OTRO init
+    // pesado en paralelo -> decenas de pools concurrentes -> explosion de RAM.
+    *POOL.lock().unwrap() = Some(pool.clone());
     sqlx::query(CREATE_TABLE_SQL).execute(&pool).await?;
     for col in [
         "doc_cliente TEXT",
@@ -80,8 +89,6 @@ pub async fn init_pool() -> Result<SqlitePool> {
     // (ej. vendi 1000 pero descuente 500 entregados -> precio aplicado = soles / FAE)
     let _ = sqlx::query("UPDATE ventas SET precio_unitario = ROUND(soles / cantidad_fae, 4) WHERE cantidad = 0 AND cantidad_fae != 0 AND precio_unitario = 0").execute(&pool).await;
     info!("DB ready: {}", db.display());
-    // Almacenar en singleton para reusar en todas las llamadas
-    *POOL.lock().unwrap() = Some(pool.clone());
     Ok(pool)
 }
 
@@ -228,14 +235,18 @@ pub async fn count_by_month(pool: &SqlitePool) -> Result<Vec<(String, i64)>> {
 
 /// Refresca la tabla stats_cache con los valores actuales del dashboard.
 /// Debe llamarse despues de cada insercion o borrado masivo.
+/// RAW-FIRST: la tabla ventas guarda TODO el export del ERP; las stats del
+/// dashboard se calculan con el mismo filtro obligatorio del upload para que
+/// reflejen solo lo "vital" (coherentes con Supabase), no el raw completo.
 pub async fn refresh_stats_cache(pool: &SqlitePool) -> Result<()> {
-    let (total_records,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM ventas")
+    let lf = crate::config::with_line_filter("");
+    let (total_records,): (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM ventas {}", lf))
         .fetch_one(pool).await?;
-    let (total_sales,): (f64,) = sqlx::query_as("SELECT COALESCE(SUM(soles), 0.0) FROM ventas")
+    let (total_sales,): (f64,) = sqlx::query_as(&format!("SELECT COALESCE(SUM(soles), 0.0) FROM ventas {}", lf))
         .fetch_one(pool).await?;
-    let (total_clients,): (i64,) = sqlx::query_as("SELECT COUNT(DISTINCT id_cliente) FROM ventas")
+    let (total_clients,): (i64,) = sqlx::query_as(&format!("SELECT COUNT(DISTINCT id_cliente) FROM ventas {}", lf))
         .fetch_one(pool).await?;
-    let (total_skus,): (i64,) = sqlx::query_as("SELECT COUNT(DISTINCT original_sku) FROM ventas")
+    let (total_skus,): (i64,) = sqlx::query_as(&format!("SELECT COUNT(DISTINCT original_sku) FROM ventas {}", lf))
         .fetch_one(pool).await?;
 
     let now = chrono::Utc::now().to_rfc3339();
