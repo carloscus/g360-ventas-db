@@ -22,11 +22,11 @@
 body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradient(circle at top,#11233d 0%,#080e1a 55%,#050b12 100%);color:#dfeaf6;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:12px;font-size:14px}
 .app{width:min(100%,680px);min-width:300px;padding:8px;display:flex;flex-direction:column;gap:7px;background:rgba(15,22,34,0.88);border:1px solid rgba(148,163,184,0.18);border-radius:16px;box-shadow:0 16px 40px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04)}
 .header{display:flex;align-items:center;gap:8px;padding-bottom:2px}
-.header img{height:18px;filter:drop-shadow(0 0 8px rgba(0,212,140,0.35))}
+.header img{height:18px;}
 .header h1{font-size:14px;font-weight:700;color:#fff;letter-spacing:0.02em}
 .header h1 span{color:#00d48c}
-.dot{margin-left:auto;width:9px;height:9px;border-radius:50%;background:#25d884;box-shadow:0 0 12px rgba(37,216,132,0.8)}
-.dot.syncing{background:#f59e0b;box-shadow:0 0 12px rgba(245,158,11,0.7);animation:pulse 1.5s infinite}
+.dot{margin-left:auto;width:9px;height:9px;border-radius:50%;background:#25d884;box-shadow:0 0 0 1px rgba(37,216,132,0.35)}
+.dot.syncing{background:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,0.45);animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.3);opacity:.8}}
 .settings-btn{background:none;border:none;cursor:pointer;color:#5a7a9a;font-size:14px;padding:2px 6px;border-radius:6px;line-height:1;margin-left:6px}
 .settings-btn:hover{color:#00d48c;background:rgba(0,212,140,0.1)}
@@ -39,18 +39,18 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .db-process-head{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#6a829e;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.08em}
 .db-process-head strong{color:#dfeaf6;letter-spacing:0.04em}
 .progress{height:8px;border-radius:999px;background:rgba(148,163,184,0.12);overflow:hidden}
-.progress-bar{height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#00d48c,#6ee7b7);transition:width .35s ease}
+.progress-bar{height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#00d48c,#6ee7b7);transition:transform .35s ease;transform-origin:left}
 .db-meta{display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:11px;color:#7e96ad}
 .kpis{display:grid;grid-template-columns:1fr 1fr;gap:5px}
 .kpi{background:rgba(255,255,255,0.03);border-radius:10px;padding:6px;text-align:center;border:1px solid rgba(255,255,255,0.06)}
 .kpi-v{font-size:16px;font-weight:800;color:#00d48c;letter-spacing:-0.02em}
-.kpi-l{font-size:10px;color:#5a7a9a;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;font-weight:700}
+.kpi-l{font-size:11px;color:#5a7a9a;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;font-weight:700}
 .info{display:grid;grid-template-columns:1fr 1fr;gap:5px}
 .info-item{background:rgba(255,255,255,0.02);border-radius:6px;padding:5px;text-align:center;border:1px solid rgba(255,255,255,0.04)}
 .info-v{font-size:12px;font-weight:700;color:#e8f4fd;word-break:break-all}
-.info-l{font-size:10px;color:#4a6a8a;margin-top:1px}
+.info-l{font-size:11px;color:#4a6a8a;margin-top:1px}
 .task-flow{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
-.task{padding:6px 5px;border-radius:7px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);font-size:10px;color:#5a7a9a;font-weight:700;text-align:center;letter-spacing:0.04em;text-transform:uppercase;transition:all .2s ease}
+.task{padding:6px 5px;border-radius:7px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);font-size:11px;color:#5a7a9a;font-weight:700;text-align:center;letter-spacing:0.04em;text-transform:uppercase;transition:all .2s ease}
 .task.active{background:rgba(0,212,140,0.12);color:#9feec8;border-color:rgba(0,212,140,0.18)}
 .task.done{background:rgba(96,165,250,0.12);color:#bfdbfe;border-color:rgba(96,165,250,0.2)}
 .ctrl{background:rgba(255,255,255,0.03);border-radius:9px;padding:7px;border:1px solid rgba(255,255,255,0.06)}
@@ -60,7 +60,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .row label{font-size:11px;color:#5a7a9a;flex:1;display:flex;flex-direction:column;gap:2px}
 .row input{width:100%;padding:5px 6px;border-radius:4px;border:1px solid rgba(255,255,255,0.1);background:rgba(10,20,35,0.6);color:#fff;font-size:13px;font-family:inherit}
 .row input:focus{outline:none;border-color:#00d48c}
-.btn{width:100%;padding:6px;border:none;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer;margin-top:3px;font-family:inherit;transition:all 0.2s}
+.btn{width:100%;padding:7px 6px;border:none;border-radius:5px;font-weight:700;font-size:12px;cursor:pointer;margin-top:3px;font-family:inherit;transition:all 0.2s}
 .btn-p{background:#00d48c;color:#061220}
 .btn-p:hover{background:#00b377}
 .btn-s{background:rgba(255,255,255,0.06);color:#a8c8e0;border:1px solid rgba(255,255,255,0.08)}
@@ -72,7 +72,8 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .btn-blue{background:rgba(59,130,246,0.2);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)}
 .btn-blue:hover{background:rgba(59,130,246,0.3)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
-.status{background:rgba(0,212,140,0.08);border-radius:6px;padding:6px 8px;font-size:11px;color:#6ee7b7;display:none;margin-top:6px;align-items:center;gap:4px;border:1px solid rgba(0,212,140,0.15)}
+.status{background:rgba(0,212,140,0.08);border-radius:6px;padding:7px 9px;font-size:12px;line-height:1.45;color:#6ee7b7;display:none;margin-top:6px;align-items:flex-start;gap:5px;border:1px solid rgba(0,212,140,0.15);white-space:pre-line;max-height:140px;overflow-y:auto}
+.status .dot-sm{margin-top:6px}
 .status.act{display:flex}
 .status.err{background:rgba(248,113,113,0.08);color:#fca5a5;border-color:rgba(248,113,113,0.15)}
 .dot-sm{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
@@ -82,7 +83,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .est .phase{color:#fff;font-weight:800;margin-right:4px}
 .est .eta{color:#fbbf24;font-weight:600}
 .est .elapsed{color:#9fb6cb;font-weight:400}
-.footer{text-align:center;margin-top:6px;font-size:9px;color:#3a5a7a}
+.footer{text-align:center;margin-top:6px;font-size:10px;color:#3a5a7a}
 .footer span{color:#00d48c}
 .table-container{background:rgba(255,255,255,0.02);border-radius:8px;padding:8px;margin-top:8px;border:1px solid rgba(255,255,255,0.06);max-height:180px;overflow-y:auto}
 .table-container h3{font-size:11px;color:#5a7a9a;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em}
@@ -124,7 +125,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .month-select-bar label{cursor:pointer;display:flex;align-items:center;gap:4px}
 .month-summary{display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid rgba(255,255,255,0.08);font-size:11px;color:#7e96ad}
 /* ── UI simplificada: pill, menu, dropzone ── */
-.pill{display:flex;align-items:center;gap:6px;border-radius:8px;padding:8px 11px;font-size:11px;font-weight:700;flex:1}
+.pill{display:flex;align-items:center;gap:6px;border-radius:8px;padding:8px 11px;font-size:12px;font-weight:700;flex:1}
 .pill.ok{background:rgba(0,212,140,.1);color:#6ee7b7;border:1px solid rgba(0,212,140,.2)}
 .pill.sync{background:rgba(59,130,246,.12);color:#93c5fd;border:1px solid rgba(59,130,246,.25)}
 .pill.warn{background:rgba(245,158,11,.12);color:#fbbf24;border:1px solid rgba(245,158,11,.28)}
@@ -132,13 +133,13 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .menu-wrap{position:relative;margin-top:3px}
 .menu{position:absolute;right:0;top:110%;background:#0d1a2d;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:4px;display:none;z-index:60;width:100%;box-shadow:0 8px 24px rgba(0,0,0,.5)}
 .menu.open{display:block}
-.menu button{display:block;width:100%;text-align:left;background:none;border:none;color:#d4e6f7;padding:7px 9px;border-radius:5px;font-size:11px;cursor:pointer;font-family:inherit}
+.menu button{display:block;width:100%;text-align:left;background:none;border:none;color:#d4e6f7;padding:8px 9px;border-radius:5px;font-size:12px;cursor:pointer;font-family:inherit}
 .menu button:hover{background:rgba(255,255,255,.06)}
 .menu .sep{border-top:1px solid rgba(255,255,255,.08);margin:4px 0}
 .menu .danger{color:#f87171}
 .menu .msec{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#5a7a9a;padding:7px 9px 2px;font-weight:800;user-select:none}
 .menu .msec:first-child{padding-top:4px}
-.warn-chip{display:inline-flex;align-items:center;background:rgba(245,158,11,.15);color:#fbbf24;border-radius:9px;padding:1px 6px;font-size:9px;font-weight:800;cursor:pointer;border:1px solid rgba(245,158,11,.3);margin-left:5px}
+.warn-chip{display:inline-flex;align-items:center;background:rgba(245,158,11,.15);color:#fbbf24;border-radius:9px;padding:1px 6px;font-size:10px;font-weight:800;cursor:pointer;border:1px solid rgba(245,158,11,.3);margin-left:5px}
 .warn-chip:hover{background:rgba(245,158,11,.28)}
 .dropzone{border:2px dashed rgba(0,212,140,.35);border-radius:8px;padding:20px 10px;text-align:center;color:#7e96ad;font-size:11px;margin:8px 0;transition:.15s;cursor:pointer;line-height:1.5}
 .dropzone.over{background:rgba(0,212,140,.08);border-color:#00d48c;color:#00d48c}
@@ -174,8 +175,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <div class="info-item"><div class="info-v" id="k6">-</div><div class="info-l">tamaño BD</div></div>
 </div>
 <div id="supabaseStatus" class="info" style="margin-top:2px">
-<div class="info-item" style="grid-column:span 2;border-left:2px solid rgba(148,163,184,0.15);padding-left:8px"><div class="info-v" id="sbStatus">—</div><div class="info-l" style="font-size:9px">últ. sync Supabase</div></div>
-<div class="info-item" style="grid-column:span 2;border-left:2px solid rgba(0,212,140,0.2);padding-left:8px"><div class="info-v" id="sbRole">sin rol</div><div class="info-l" style="font-size:9px">escritura (service role)</div></div>
+<div class="info-item" style="grid-column:span 2;border-left:2px solid rgba(0,212,140,0.2);padding-left:8px"><div class="info-v" id="sbStatus">—</div><div class="info-l" style="font-size:10px" id="sbSub">últ. sync Supabase</div></div>
 </div>
 <div class="task-flow">
   <div class="task active" data-task="download">captura</div>
@@ -187,19 +187,22 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <label>desde<input type="date" id="sd"/></label>
 <label>hasta<input type="date" id="ed"/></label>
 </div>
-<button class="btn btn-p" id="cap">⟳ Sincronizar rango</button>
+<div class="btn-grid">
+  <button class="btn btn-p" id="cap" style="margin-top:0">⟳ Sincronizar</button>
+  <button class="btn btn-blue" id="uploadBtn" style="margin-top:0">☁ Subir</button>
+</div>
+<button class="btn btn-s" id="sync" title="Captura incremental desde la última fecha capturada">↻ Sync última fecha</button>
 <button class="btn btn-d hid" id="stopBtn">⏹ detener</button>
 <div class="menu-wrap">
   <button class="btn btn-s" id="moreBtn" style="margin-top:0">⋯ más acciones</button>
   <div class="menu" id="moreMenu">
     <div class="msec">BD local — poblar y reparar</div>
-    <button id="sync" title="Captura incremental desde la última fecha (lo usual día a día)">↻ Sync última fecha</button>
     <button id="importBtn" title="Repara un mes incompleto con el XLS mensual del intranet">📥 Importar mes (arrastrar XLS)</button>
     <button id="reparse" class="btn-ghost" title="Re-parsea TODOS los CSV de raw/ sin filtrar (raw-first). El filtro de líneas se aplica al subir, no aquí">⚡ Reprocesar raw</button>
     <button id="manageMonths" title="Revisar o borrar meses específicos de la BD local">📅 Gestionar meses</button>
-    <div class="msec">Supabase — publicar</div>
-    <button id="uploadBtn" title="Sube solo lo elegible: líneas del allowlist + NC/ND con factura F01 permitida (raw-first)">☁ Subir a Supabase</button>
-    <button id="resetSyncBtn" title="Resetea el marcador incremental, purga la ventana en Supabase y re-sube TODO con el filtro actual">🔄 Forzar Full Sync Supabase</button>
+    <div class="msec">Supabase — mantenimiento</div>
+    <button id="resetSyncBtn" title="Resetea el marcador incremental, purga la ventana en Supabase y re-sube TODO con el filtro actual (también aplica cambios de Líneas permitidas)">🔄 Forzar Full Sync</button>
+    <div class="msec">Diagnóstico (opcional)</div>
     <div class="msec">Diagnóstico (opcional)</div>
     <button id="verifyBtn" class="btn-ghost" title="Verifica integridad de la BD (duplicados, folios huérfanos)">🔍 Verificar Integridad</button>
     <button id="checksumBtn" class="btn-ghost" title="Genera checksums mensuales para detección de cambios">🔐 Calcular Checksums</button>
@@ -356,7 +359,7 @@ function setAppUnavailable(message){
   textEl.textContent=message;
   document.getElementById('st').className='status act err';
   document.getElementById('stxt').textContent='sin entorno tauri';
-  ['cap','sync','clr','uploadBtn','dbclr'].forEach(id=>{
+  ['cap','sync','clr','uploadBtn','dbclr','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','previewBtn','moreBtn'].forEach(id=>{
     const el=document.getElementById(id);
     if (el) el.disabled=true;
   });
@@ -419,30 +422,25 @@ async function load(){
    if(lastCaptureState==='idle'){
      if(h.status==='EMPTY'){updateTaskFlow('BD vacía');}else{updateTaskFlow('DB lista');}
    }
-   // Supabase sync status
+   // Supabase: una sola línea = estado completo (sync + permisos)
    try{
      const cfg=await invoke('get_settings');
      const sbEl=document.getElementById('sbStatus');
-      if(cfg.supabase_configured){
-        if(cfg.last_supabase_sync){
-          sbEl.textContent=utcToPeru(cfg.last_supabase_sync);
-          sbEl.style.color='#6ee7b7';
-        }else{
-          sbEl.textContent='nunca sincronizado';
-          sbEl.style.color='#fbbf24';
-        }
-      }else{
-        sbEl.textContent='no configurado';
-        sbEl.style.color='#f87171';
-      }
-      const sbRoleEl=document.getElementById('sbRole');
-      if(cfg.supabase_service_role_configured){
-        sbRoleEl.textContent='✅ service role';
-        sbRoleEl.style.color='#00d48c';
-      }else{
-        sbRoleEl.textContent='⚠ sin service role';
-        sbRoleEl.style.color='#fbbf24';
-      }
+     const sbSub=document.getElementById('sbSub');
+     if(!cfg.supabase_configured){
+       sbEl.textContent='no configurado';
+       sbEl.style.color='#f87171';
+       sbSub.textContent='☁ completa ⚙ Configuración';
+     } else if(cfg.last_supabase_sync){
+       const role=cfg.supabase_service_role_configured?' · ✅ escritura':' · ⚠ sin service role';
+       sbEl.textContent=utcToPeru(cfg.last_supabase_sync)+role;
+       sbEl.style.color=cfg.supabase_service_role_configured?'#6ee7b7':'#fbbf24';
+       sbSub.textContent='últ. sync Supabase';
+     }else{
+       sbEl.textContent='nunca sincronizado';
+       sbEl.style.color='#fbbf24';
+       sbSub.textContent=cfg.supabase_service_role_configured?'☁ falta subir':'☁ falta subir · sin service role';
+     }
    }catch(e){}
     
   const monthsBody=document.getElementById('monthsBody');
@@ -515,9 +513,25 @@ function renderPill(healthStatus){
 function rangoValido(s,e){if(!s||!e)return false;const[sy,sm,sd]=s.split('-').map(Number),[ey,em,ed]=e.split('-').map(Number);if(sy>ey)return false;if(sy===ey&&sm>em)return false;if(sy===ey&&sm===em&&sd>ed)return false;return true}
 function est(s,e){if(!s||!e)return 0;const[sy,sm,sd]=s.split('-').map(Number),[ey,em,ed]=e.split('-').map(Number);const d1=new Date(sy,sm-1,sd),d2=new Date(ey,em-1,ed);return Math.max(1,Math.round(Math.ceil((d2-d1)/(30.44*24*3600*1000))*0.5))}
 function show(m,err=false){
-  if(m&&m.length>180)m=m.slice(0,180)+'…';
+  // Sin truncado agresivo: los errores del backend incluyen causa y acción
+  // sugerida; cortarlos a mitad de palabra los inutiliza (P1 critique).
   const s=document.getElementById('st');s.className='status act'+(err?' err':'');
   document.getElementById('stxt').textContent=m;
+  s.scrollTop=0;
+}
+// Diccionario de errores comunes -> mensaje humano + acción (P1 critique)
+const ERR_HINTS=[
+  [/lock ocupado|Otra captura/i,'Hay una operación en curso. Espera o pulsa ⏹ detener.'],
+  [/duplicados/i,'Ejecuta ⋯ → ⚡ Reprocesar raw y vuelve a intentar.'],
+  [/Supabase no configurado/i,'Abre ⚙ Configuración y completa URL y claves.'],
+  [/statement timeout|57014|Internal Server Error/i,'Supabase está saturado (timeout). Reintenta en unos minutos; si persiste, corre VACUUM en el SQL Editor.'],
+  [/rls|row.level|permission denied|401|403/i,'Problema de permisos en Supabase. Verifica la service role key en ⚙ Configuración.'],
+  [/failed|network|red|timeout/i,'Fallo de red. Verifica tu conexión e reintenta.'],
+];
+function humanizeError(e){
+  const t=String(e||'');
+  for(const [re,hint] of ERR_HINTS){ if(re.test(t)) return t+'\n→ '+hint; }
+  return t;
 }
 let prevPollState='';let prevPollMsg='';
 function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInterval(async()=>{try{
@@ -532,7 +546,7 @@ function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInter
     // 1) Barra de progreso + porcentaje
     const pct=Math.min(95,r.progress*100);
     document.getElementById('progWrap').classList.remove('hid');
-    document.getElementById('dbProgressBar').style.width=pct.toFixed(1)+'%';
+    document.getElementById('dbProgressBar').style.transform='scaleX('+(pct/100).toFixed(4)+')';
     document.getElementById('pctLabel').textContent=pct.toFixed(0)+'%';
 
     // 2) Item actual + cronometro + ETA
@@ -562,8 +576,9 @@ function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInter
     // 4) Badges sincronizados con la fase
     updateTaskFlowPhase(r.phase);
 
-    // 5) Deshabilitar botones, mostrar detener
-    ['cap'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=true;}});
+    // 5) Deshabilitar TODO botón de acción durante operación (P2 critique:
+    //    el menú quedaba activo y permitia reparse/upload en paralelo)
+    ['cap','uploadBtn','sync','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','clr','dbclr','previewBtn','moreBtn'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=true;}});
     document.getElementById('stopBtn').classList.remove('hid');
 
     // 6) Mensaje en barra de estado
@@ -577,9 +592,9 @@ function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInter
       document.getElementById('currentItem').classList.add('hid');
       document.getElementById('progWrap').classList.add('hid');
       document.getElementById('pctLabel').textContent='';
-      document.getElementById('dbProgressBar').style.width='0%';
-      // Reactivar botones, ocultar detener
-      ['cap'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=false;}});
+      document.getElementById('dbProgressBar').style.transform='scaleX(0)';
+      // Reactivar acciones, ocultar detener
+      ['cap','uploadBtn','sync','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','clr','dbclr','previewBtn','moreBtn'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=false;}});
       document.getElementById('stopBtn').classList.add('hid');
       // Resetear badges a estado idle
       updateTaskFlow(r.state==='error'?'error':'DB lista');
@@ -674,19 +689,19 @@ document.getElementById('cap').addEventListener('click',async()=>{
   const m=est(s,e);
   if(m>10&&!confirm('~'+m+' min estimado. Continuar?'))return;
   show('iniciando captura...');stopPolling();
-  try{const r=await invoke('capture_range',{startDate:s,endDate:e});show(r.message);startPolling();}catch(err){show('error: '+err,true);startPolling();}
+  try{const r=await invoke('capture_range',{startDate:s,endDate:e});show(r.message);startPolling();}catch(err){show(humanizeError(err),true);startPolling();}
 });
 document.getElementById('sync').addEventListener('click',async()=>{
   show('syncing...');stopPolling();
-  try{const r=await invoke('sync_from_last');show(r.message);startPolling();}catch(err){show('error: '+err,true);startPolling();}
+  try{const r=await invoke('sync_from_last');show(r.message);startPolling();}catch(err){show(humanizeError(err),true);startPolling();}
 });
 document.getElementById('clr').addEventListener('click',async()=>{
   if(!confirm('Limpiar XLS temporales?'))return;
-  try{const r=await invoke('clear_cache');show(r.message);load();}catch(e){show('error: '+e,true)}
+  try{const r=await invoke('clear_cache');show(r.message);load();}catch(e){show(humanizeError(e),true)}
 });
 document.getElementById('uploadBtn').addEventListener('click',async()=>{
   show('subiendo a supabase...');stopPolling();
-  try{const r=await invoke('upload_all');show(r.message);load();startPolling();}catch(err){show('error: '+err,true);startPolling();}
+  try{const r=await invoke('upload_all');show(r.message);load();startPolling();}catch(err){show(humanizeError(err),true);startPolling();}
 });
 document.getElementById('resetSyncBtn').addEventListener('click',async()=>{
   let years=4; try{const c=await invoke('get_settings'); years=Math.max(1,Math.round((c.supabase_retention_days||1277)/365));}catch(e){}
@@ -699,14 +714,14 @@ document.getElementById('resetSyncBtn').addEventListener('click',async()=>{
     load();
     startPolling();
   }catch(err){
-    show('error: '+err,true);
+    show(humanizeError(err),true);
     startPolling();
   }
 });
 document.getElementById('dbclr').addEventListener('click',async()=>{
   if(!confirm('Reiniciar BD LOCAL?\n\n- Borra historial.db y archivos descargados (quedara vacia)\n- NO afecta a Supabase\n- Luego podra ejecutar una nueva captura con sus fechas'))return;
   show('reiniciando bd local...');
-  try{const r=await invoke('clear_db');show(r.message);load();}catch(err){show('error: '+err,true)}
+  try{const r=await invoke('clear_db');show(r.message);load();}catch(err){show(humanizeError(err),true)}
 });
 document.getElementById('verifyBtn').addEventListener('click',async()=>{
   show('verificando integridad...');
@@ -718,7 +733,7 @@ document.getElementById('verifyBtn').addEventListener('click',async()=>{
     } else {
       show('✅ Integridad OK: ' + (issues[0] || 'Sin problemas'));
     }
-  }catch(err){show('error: '+err,true)}
+  }catch(err){show(humanizeError(err),true)}
 });
 document.getElementById('checksumBtn').addEventListener('click',async()=>{
   show('calculando checksums...');
@@ -729,33 +744,18 @@ document.getElementById('checksumBtn').addEventListener('click',async()=>{
     // Also show history
     const hist = await invoke('get_checksum_history');
     console.log('Checksum history:', hist);
-  }catch(err){show('error: '+err,true)}
+  }catch(err){show(humanizeError(err),true)}
 });
 // Re-parse raw sin intranet (raw-first: consolida TODO el CSV en la BD local, sin filtrar)
 document.getElementById('reparse').addEventListener('click',async()=>{
   if(!confirm('Reprocesar todos los CSVs en raw/?\n\n- Lee los CSVs ya descargados y re-parsea TODO el contenido (raw-first, sin filtrar)\n- El filtro de líneas NO se aplica aquí: vive al subir a Supabase\n- Cambios de allowlist se aplican con "Forzar Full Sync Supabase", no con esto\n- Reemplaza los meses presentes en raw/ (sin intranet)'))return;
   show('reprocesando raw...');stopPolling();
-  try{const r=await invoke('reparse_raw');show(r.message||r);startPolling();}catch(err){show('error: '+err,true);startPolling();}
+  try{const r=await invoke('reparse_raw');show(r.message||r);startPolling();}catch(err){show(humanizeError(err),true);startPolling();}
 });
 
-// Preview de XLS arrastrado (valida sin insertar)
-async function handlePreview(xlsPath){
-  try{
-    const p = await invoke('preview_import',{xlsPath});
-    let msg = `Preview ${p.file_name}: ${p.insertable_rows}/${p.total_rows} insertables\n`;
-    msg += `Tipos: ${Object.entries(p.tipo_desglose).map(([k,v])=>k+':'+v).join(', ')}\n`;
-    msg += `Refs: ${Object.entries(p.referencia_status).map(([k,v])=>k+':'+v).join(', ')}\n`;
-    if(p.warnings.length) msg += 'Warnings: '+p.warnings.join('; ');
-    if(!confirm(msg + '\n\n¿Insertar ahora?')) return;
-    // Si confirma, usar import_manual_month con el mismo path
-    const m = prompt('Mes YYYY-MM para importar (ej 2024-01):');
-    if(!m) return;
-    show('importando...'); const r=await invoke('import_manual_month',{month:m, xlsPath}); show(r); load();
-  }catch(e){ show('preview error: '+e,true); }
-}
 document.getElementById('stopBtn').addEventListener('click',async()=>{
   if(!confirm('Detener la captura en curso?'))return;
-  try{const r=await invoke('abort_capture');show(r.message);startPolling();}catch(e){show('error: '+e,true)}
+  try{const r=await invoke('abort_capture');show(r.message);startPolling();}catch(e){show(humanizeError(e),true)}
 });
 document.getElementById('previewBtn').addEventListener('click',async()=>{
   try{
@@ -770,10 +770,18 @@ document.getElementById('previewBtn').addEventListener('click',async()=>{
     html+='</tbody></table>';
     el.innerHTML=html;
     document.getElementById('previewOverlay').classList.add('open');
-  }catch(e){show('Error: '+e,true)}
+  }catch(e){show(humanizeError(e),true)}
 });
 document.getElementById('previewClose').addEventListener('click',()=>document.getElementById('previewOverlay').classList.remove('open'));
 document.getElementById('previewOverlay').addEventListener('click',(e)=>{if(e.target===e.currentTarget)document.getElementById('previewOverlay').classList.remove('open')});
+
+// ── TECLADO: Esc cierra cualquier modal abierto (P2 critique) ────
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Escape')return;
+  ['importOverlay','modalOverlay','monthOverlay','previewOverlay'].forEach(id=>{
+    const el=document.getElementById(id);if(el)el.classList.remove('open');
+  });
+});
 
 // ── MENU ⋯ (acciones secundarias) ────────────────────────────────
 const moreBtn=document.getElementById('moreBtn'),moreMenu=document.getElementById('moreMenu');
