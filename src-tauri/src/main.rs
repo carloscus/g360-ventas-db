@@ -599,6 +599,32 @@ async fn clear_cache() -> Result<CaptureStatus, String> {
     })
 }
 
+/// Abre la carpeta de datos local para copiarla a un extraíble o compartirla
+/// mediante las herramientas de Windows. No crea recursos SMB ni expone la BD
+/// automáticamente en la red.
+#[tauri::command]
+fn open_data_folder() -> Result<String, String> {
+    let data_dir = g360_db_ventas::config::data_dir();
+    std::fs::create_dir_all(&data_dir).map_err(|e| {
+        format!("No se pudo preparar la carpeta de datos: {e}")
+    })?;
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg(&data_dir)
+            .spawn()
+            .map_err(|e| format!("No se pudo abrir la carpeta de datos: {e}"))?;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        return Err("Abrir la carpeta de datos solo está disponible en Windows".to_string());
+    }
+
+    Ok(data_dir.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 async fn clear_db() -> Result<CaptureStatus, String> {
     // Gate de seguridad: solo usuario con credenciales validas puede borrar
@@ -1316,7 +1342,17 @@ fn main() {
             
             let log_dir = g360_db_ventas::config::logs_dir();
             let _ = std::fs::create_dir_all(&log_dir);
-            if let Ok(f) = OpenOptions::new().create(true).append(true).open(log_dir.join("app.log")) {
+            // Rotacion simple: si app.log supera 50 MB, renombrar a app.log.old
+            // (solo se conserva una generacion; el disco no crece infinito)
+            let log_path = log_dir.join("app.log");
+            if let Ok(meta) = std::fs::metadata(&log_path) {
+                if meta.len() > 50 * 1024 * 1024 {
+                    let old = log_dir.join("app.log.old");
+                    let _ = std::fs::remove_file(&old);
+                    let _ = std::fs::rename(&log_path, &old);
+                }
+            }
+            if let Ok(f) = OpenOptions::new().create(true).append(true).open(&log_path) {
                 tracing_subscriber::fmt()
                     .with_env_filter(EnvFilter::new("info"))
                     .with_writer(std::sync::Mutex::new(f))
@@ -1330,7 +1366,7 @@ fn main() {
                 get_dashboard, get_health, get_settings, save_settings,
                 test_supabase, upload_all, admin_reset, reset_sync_marker, save_service_role_key,
                 capture_range, sync_from_last,
-                clear_cache, clear_db,
+                clear_cache, open_data_folder, clear_db,
                 get_capture_status,
                 list_months, delete_month, delete_months, get_completeness, get_failed_days, import_manual_day, import_manual_month,
                 preview_import, reparse_raw,
@@ -1460,6 +1496,15 @@ async fn upload_all_with_verify() -> Result<serde_json::Value, String> {
     if !cfg.supabase.is_configured() {
         return Err("Supabase no configurado".to_string());
     }
+    {
+        let st = CAPTURE_STATE.lock().unwrap();
+        if st.phase != CapturePhase::Idle
+            && st.phase != CapturePhase::Done
+            && st.phase != CapturePhase::Error
+        {
+            return Err("Hay una captura en curso. Espere a que termine antes de subir a Supabase.".to_string());
+        }
+    }
 
     let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
     let retention = cfg.supabase_retention_days_effective();
@@ -1501,18 +1546,17 @@ async fn upload_all_with_verify() -> Result<serde_json::Value, String> {
             let url = g360_db_ventas::config::get_supabase_url();
             let key = g360_db_ventas::config::get_supabase_service_key();
 
-            let verification = match g360_db_ventas::processor::uploader::verify_upload_result(&url, &key, up, Some(&capture_start_utc)).await {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("Post-upload verification failed: {}", e);
-                    g360_db_ventas::processor::uploader::VerificationResult {
-                        expected_count: up,
-                        actual_count: 0,
-                        matched: false,
-                        discrepancy: up,
-                    }
-                }
-            };
+            let verification = g360_db_ventas::processor::uploader::verify_upload_result(
+                &url,
+                &key,
+                up,
+                Some(&capture_start_utc),
+            )
+            .await
+            .map_err(|e| {
+                set_state("idle", &format!("Error verificando Supabase: {e}"), 0.0);
+                format!("Upload completado, pero no se pudo verificar en Supabase: {e}")
+            })?;
 
             // Actualizar marcador solo si verificación pasó
             if up > 0 && verification.matched {

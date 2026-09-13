@@ -24,21 +24,31 @@ pub fn merge_csvs(parts: &[PathBuf], merged: &PathBuf) -> Result<usize> {
     use std::io::{BufRead, BufWriter, Write};
     let mut out = BufWriter::new(std::fs::File::create(merged)?);
     let mut total = 0usize;
-    let mut wrote_header = false;
+    let mut header: Option<String> = None;
     for p in parts {
         let f = std::fs::File::open(p).with_context(|| format!("abrir {}", p.display()))?;
         let reader = std::io::BufReader::new(f);
         for (j, line) in reader.lines().enumerate() {
             let line = line?;
             // Header (primera linea): se escribe una sola vez y no cuenta como data
-            if j == 0 && !wrote_header && !line.trim().is_empty() {
-                out.write_all(line.as_bytes())?;
-                out.write_all(b"\n")?;
-                wrote_header = true;
-                continue;
-            }
-            // Headers de archivos siguientes se saltan
             if j == 0 {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                if let Some(expected) = header.as_ref() {
+                    if expected != &line {
+                        return Err(anyhow!(
+                            "headers incompatibles al combinar {}: esperado {:?}, recibido {:?}",
+                            merged.display(),
+                            expected,
+                            line
+                        ));
+                    }
+                } else {
+                    header = Some(line.clone());
+                    out.write_all(line.as_bytes())?;
+                    out.write_all(b"\n")?;
+                }
                 continue;
             }
             if line.trim().is_empty() {
@@ -148,7 +158,10 @@ async fn build_pending(
             let current_month = today.format("%Y-%m").to_string();
             for r in ranges {
                 let csv = raw.join(format!("ventas_{}.csv", r.label));
-                let exists = csv.exists() && std::fs::metadata(&csv).map(|m| m.len() > 1000).unwrap_or(false);
+                let incomplete = raw.join(format!("failed_{}.json", r.label)).exists();
+                let exists = csv.exists()
+                    && !incomplete
+                    && std::fs::metadata(&csv).map(|m| m.len() > 1000).unwrap_or(false);
                 // No saltar el mes actual: puede tener datos nuevos del dia
                 if r.label == current_month || !exists {
                     pending.push(r);
@@ -187,7 +200,9 @@ async fn build_pending(
             let csv = raw.join(format!("ventas_{}.csv", r.label));
             // No saltar el mes actual: aunque el CSV exista, puede tener datos nuevos
             // del dia (p.ej. hoy 31/08 con docs recientes). Se re-descarga completo.
+            let incomplete = raw.join(format!("failed_{}.json", r.label)).exists();
             if r.label != current_month
+                && !incomplete
                 && csv.exists()
                 && std::fs::metadata(&csv).map(|m| m.len() > 1000).unwrap_or(false)
             {
@@ -706,8 +721,9 @@ pub async fn run_batch_history(
                     cur = cur + Duration::days(1);
                     sleep(StdDuration::from_secs(1)).await;
                 }
-                // Permitir merge parcial: si falta 1-2 días (ej 2024-01-19 sin data) igual mergear 30/31
-                if day_ok >= 1 && day_ok + 2 >= day_total && day_total > 0 {
+                // Un mes parcial no se publica en SQLite: se conservan los CSV diarios
+                // y el marcador de faltantes para reintentar solo esos días.
+                if day_ok == day_total && day_total > 0 {
                     let merged = raw.join(format!("ventas_{}.csv", m.label));
                     let mut parts2 = Vec::new();
                     let mut cur2 = m.start;
@@ -733,28 +749,30 @@ pub async fn run_batch_history(
                             }
                             Err(e) => warn!("  dia-a-dia parse fail {}: {}", m.label, e),
                         }
-                        // Detectar dias faltantes para subida manual
-                        let mut faltantes: Vec<String> = Vec::new();
-                        let mut cur3 = m.start;
-                        while cur3 <= m.end {
-                            let f = raw.join(format!("ventas_{}.csv", cur3.format("%Y-%m-%d")));
-                            if !(f.exists() && std::fs::metadata(&f).map(|mm| mm.len()>1000).unwrap_or(false)) {
-                                faltantes.push(cur3.format("%Y-%m-%d").to_string());
-                            }
-                            cur3 = cur3 + Duration::days(1);
-                        }
-                        if !faltantes.is_empty() {
-                            warn!("  {} dias sin capturar (subida manual requerida): {:?}", m.label, faltantes);
-                            // Guardar para UI: raw/failed_{mes}.json
-                            let fail_path = raw.join(format!("failed_{}.json", m.label));
-                            let _ = std::fs::write(&fail_path, serde_json::to_string(&faltantes).unwrap_or_default());
-                        } else {
-                            let _ = std::fs::remove_file(raw.join(format!("failed_{}.json", m.label)));
-                        }
+                        let _ = std::fs::remove_file(raw.join(format!("failed_{}.json", m.label)));
                         recovered = true;
-                        let msg_extra = if faltantes.is_empty() { String::new() } else { format!(" (faltan {} dias: {} — sube XLS manual)", faltantes.len(), faltantes.join(",")) };
-                        info!("  dia-a-dia OK {} ({}/{}){}", m.label, day_ok, day_total, msg_extra);
+                        info!("  dia-a-dia OK {} ({}/{})", m.label, day_ok, day_total);
                     }
+                } else {
+                    let mut faltantes: Vec<String> = Vec::new();
+                    let mut cur_missing = m.start;
+                    while cur_missing <= m.end {
+                        let f = raw.join(format!("ventas_{}.csv", cur_missing.format("%Y-%m-%d")));
+                        if !(f.exists() && std::fs::metadata(&f).map(|mm| mm.len() > 1000).unwrap_or(false)) {
+                            faltantes.push(cur_missing.format("%Y-%m-%d").to_string());
+                        }
+                        cur_missing += Duration::days(1);
+                    }
+                    warn!(
+                        "  {} incompleto ({}/{} dias); no se inserta en SQLite",
+                        m.label, day_ok, day_total
+                    );
+                    let fail_path = raw.join(format!("failed_{}.json", m.label));
+                    let _ = std::fs::write(
+                        &fail_path,
+                        serde_json::to_string(&faltantes).unwrap_or_default(),
+                    );
+                    let _ = std::fs::remove_file(raw.join(format!("ventas_{}.csv", m.label)));
                 }
                 // Fallback persistente: si dia-a-dia no recupero (ej mes completo falló por rate-limit), probar HTML L0
                 if !recovered {

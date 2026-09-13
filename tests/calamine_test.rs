@@ -52,3 +52,23 @@ fn test_merge_csvs_puro() {
     assert_eq!(content.lines().next().unwrap(), "H1,H2");
     println!("merge ok:\n{content}");
 }
+
+#[test]
+fn test_parser_descarta_fecha_invalida() {
+    let tmp = std::env::temp_dir().join("test_parser_invalid_date_g360");
+    std::fs::create_dir_all(&tmp).unwrap();
+    let csv = tmp.join("ventas_2026_01.csv");
+    std::fs::write(
+        &csv,
+        concat!(
+            "ANHO,MES,ID_CLIENTE,ID_LINEA,ID_ARTICULO,TPO_DOC,SERIE_DOC,NRO_DOC,FECHA_ORIG,CANTIDAD,SOLES\n",
+            "2026,01,00012345,0101,SKU1,F01,201,100,32/01/2026,1,10\n",
+            "2026,01,00012345,0101,SKU2,F01,201,101,01/01/2026,1,10\n"
+        ),
+    )
+    .unwrap();
+
+    let error = g360_db_ventas::processor::parser::parse_export_csv(&csv)
+        .expect_err("una fecha invalida debe bloquear el archivo completo");
+    assert!(error.to_string().contains("fecha_orig invalida"));
+}
