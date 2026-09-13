@@ -55,6 +55,16 @@ pub struct HealthStats {
     pub status: String,
     pub db_path: String,
     pub db_exists: bool,
+    // Cobertura dimensional
+    pub dim_cliente: usize,
+    pub dim_vendedor: usize,
+    pub dim_articulo: usize,
+    pub dim_documento: usize,
+    pub dim_linea: usize,
+    // Checksums
+    pub checksum_months: usize,
+    pub total_months: usize,
+    pub foreign_keys_on: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -165,11 +175,11 @@ async fn get_health() -> Result<HealthStats, String> {
         .unwrap_or_else(|| "n/a".into());
     let st = CAPTURE_STATE.lock().unwrap();
     let running = st.phase != CapturePhase::Idle && st.phase != CapturePhase::Done && st.phase != CapturePhase::Error;
+    drop(st);
     let lock_path = g360_db_ventas::config::raw_dir().join("capture.lock");
     let lock_exists = lock_path.exists();
     // Auto-limpiar lock huerfano en health check (no bloquear UI con STALE)
     let stale_lock = if lock_exists && !running {
-        // Si lleva >2s sin running, es huerfano del Drop fallido en Windows — borrar
         if let Ok(meta) = std::fs::metadata(&lock_path) {
             if let Ok(elapsed) = meta.modified().and_then(|m| m.elapsed().map_err(|_| std::io::Error::from(std::io::ErrorKind::Other))) {
                 if elapsed.as_secs() > 2 {
@@ -188,8 +198,8 @@ async fn get_health() -> Result<HealthStats, String> {
     } else {
         "OK".to_string()
     };
-    drop(st);
-    Ok(HealthStats { total_records, min_date: min_date.unwrap_or_default(), max_date: max_date.unwrap_or_default(), last_capture, db_size_mb, status, db_path: db_path.to_string_lossy().to_string(), db_exists })
+        .fetch_one(&pool).await.unwrap_or(0) == 1;
+    Ok(HealthStats { total_records, min_date: min_date.unwrap_or_default(), max_date: max_date.unwrap_or_default(), last_capture, db_size_mb, status, db_path: db_path.to_string_lossy().to_string(), db_exists, dim_cliente: 0, dim_vendedor: 0, dim_articulo: 0, dim_documento: 0, dim_linea: 0, checksum_months: 0, total_months: 0, foreign_keys_on: false })
 }
 
 // ── Settings y Supabase ────────────────────────────────────────────────
@@ -1375,6 +1385,8 @@ fn main() {
                 verify_integrity, calculate_checksums, get_sync_history, get_checksum_history,
                 // Protección de upload
                 upload_dry_run, upload_all_with_verify,
+                // Mantenimiento DB
+                vacuum_db, backup_db, recalculate_checksums, get_db_health,
                 // Automatización diaria
                 auto_daily_pipeline, get_next_capture_time
             ])
@@ -1739,3 +1751,60 @@ async fn get_next_capture_time() -> Result<serde_json::Value, String> {
         "supabase_retention_years": cfg.supabase_retention_years
     }))
 }
+
+// ─── MANTENIMIENTO BD ─────────────────────────────────────────────────
+
+/// Ejecuta VACUUM para recomprar la BD. Tarda 30-120s en BD de ~1GB.
+#[tauri::command]
+async fn vacuum_db() -> Result<String, String> {
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    g360_db_ventas::db::writer::vacuum_db(&pool).await.map_err(|e| e.to_string())
+}
+
+/// Crea backup con fecha/hora de historial.db. Conserva ultimas 7 copias.
+#[tauri::command]
+async fn backup_db() -> Result<String, String> {
+    g360_db_ventas::db::writer::backup_db().await.map_err(|e| e.to_string())
+}
+
+/// Calcula checksums para meses que aun no tienen hash (complementa los 105/121).
+#[tauri::command]
+async fn recalculate_checksums() -> Result<serde_json::Value, String> {
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    let n = g360_db_ventas::db::writer::recalculate_missing_checksums(&pool)
+        .await.map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "meses_calculados": n }))
+}
+
+/// Retorna coverage health: conteo de dims, checksums y estado de foreign_keys.
+#[tauri::command]
+async fn get_db_health() -> Result<serde_json::Value, String> {
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    let dim_cliente: usize = sqlx::query_scalar("SELECT COUNT(*) FROM dim_cliente")
+        .fetch_one(&pool).await.unwrap_or(0) as usize;
+    let dim_vendedor: usize = sqlx::query_scalar("SELECT COUNT(*) FROM dim_vendedor")
+        .fetch_one(&pool).await.unwrap_or(0) as usize;
+    let dim_articulo: usize = sqlx::query_scalar("SELECT COUNT(*) FROM dim_articulo")
+        .fetch_one(&pool).await.unwrap_or(0) as usize;
+    let dim_documento: usize = sqlx::query_scalar("SELECT COUNT(*) FROM dim_documento")
+        .fetch_one(&pool).await.unwrap_or(0) as usize;
+    let dim_linea: usize = sqlx::query_scalar("SELECT COUNT(*) FROM dim_linea")
+        .fetch_one(&pool).await.unwrap_or(0) as usize;
+    let checksum_months: usize = sqlx::query_scalar("SELECT COUNT(DISTINCT mes_ref) FROM mes_checksums")
+        .fetch_one(&pool).await.unwrap_or(0) as usize;
+    let total_months: usize = sqlx::query_scalar("SELECT COUNT(DISTINCT mes_ref) FROM ventas")
+        .fetch_one(&pool).await.unwrap_or(0) as usize;
+    let fk_on: u8 = sqlx::query_scalar("PRAGMA foreign_keys")
+        .fetch_one(&pool).await.unwrap_or(0);
+    Ok(serde_json::json!({
+        "dim_cliente": dim_cliente,
+        "dim_vendedor": dim_vendedor,
+        "dim_articulo": dim_articulo,
+        "dim_documento": dim_documento,
+        "dim_linea": dim_linea,
+        "checksum_months": checksum_months,
+        "total_months": total_months,
+        "foreign_keys_on": fk_on == 1
+    }))
+}
+

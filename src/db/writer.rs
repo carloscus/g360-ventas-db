@@ -33,6 +33,7 @@ pub async fn init_pool() -> Result<SqlitePool> {
         .filename(&db)
         .create_if_missing(true)
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .foreign_keys(true)
         .busy_timeout(std::time::Duration::from_secs(30));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(5)
@@ -43,6 +44,11 @@ pub async fn init_pool() -> Result<SqlitePool> {
         .connect_with(opts)
         .await
         .context("DB connect failed")?;
+    // Activar foreign keys via PRAGMA (sqlite3_connect_options no lo aplica en todas las versiones)
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&pool)
+        .await
+        .ok();
     // CRITICO: guardar el singleton INMEDIATAMENTE tras conectar. Antes se guardaba
     // al final, despues de migraciones pesadas (refresh_stats_cache con EXISTS sobre
     // ~1.2M filas tarda minutos): cada poll de la UI (cada 2s) lanzaba OTRO init
@@ -224,18 +230,28 @@ pub async fn refresh_stats_cache(pool: &SqlitePool) -> Result<()> {
 /// Reconstruye todas las tablas de dimensiones desde la tabla ventas (fact table).
 /// Cada dimensión se procesa en una funcion separada para trazabilidad de errores.
 /// Se llama tras cada dedup/insert para mantener consistencia.
-/// Costo estimado: ~2-5s en BD de 1.1M filas (full scan de ventas, pero con indices).
-pub async fn refresh_dim_tables(pool: &SqlitePool) -> Result<()> {
+/// Costo estimado: ~2-5s en BD de 1.4M filas (full scan de ventas, pero con indices).
+///
+/// Si las tablas dim estan vacias (caso de BD heredada sin dims), se reconstruyen
+/// automaticamente en el primer init_pool sin necesidad de accion manual.
+/// Todo se ejecuta secuencialmente: si falla a mitad se propaga el error y el caller decide reintentar.
+pub async fn refresh_dim_tables(pool: &SqlitePool) -> Result<usize> {
+    // Verificar si ya hay datos; si no, construir de cero (caso post-migracion)
+    let n_existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dim_cliente")
+        .fetch_one(pool).await.unwrap_or(0);
+    if n_existing > 0 {
+        return Ok(0); // ya pobladas, sin trabajo
+    }
     let n_cli = refresh_dim_cliente(pool).await?;
     let n_vend = refresh_dim_vendedor(pool).await?;
     let n_art = refresh_dim_articulo(pool).await?;
     let n_doc = refresh_dim_documento(pool).await?;
     let n_line = refresh_dim_linea(pool).await?;
     info!(
-        "dim_tables refreshed: clientes={}, vendedores={}, articulos={}, documentos={}, lineas={}",
+        "dim_tables rebuild: cliente={}, vendedor={}, articulo={}, documento={}, linea={}",
         n_cli, n_vend, n_art, n_doc, n_line
     );
-    Ok(())
+    Ok(n_cli + n_vend + n_art + n_doc + n_line)
 }
 
 /// Refresca dim_cliente: maxima info conocida por cliente + KPIs agregados.
@@ -694,4 +710,91 @@ pub async fn get_checksum_history(pool: &SqlitePool) -> Result<Vec<(String, Stri
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+/// Ejecuta VACUUM en la BD para recomprar el archivo y eliminar bloat acumulado
+/// por operaciones DELETE masivas (dedup, re-captura de meses). Costo: ~30-120s
+/// en BD de 1GB; bloquea lecturas durante la ejecucion.
+pub async fn vacuum_db(pool: &SqlitePool) -> Result<String> {
+    info!("VACUUM iniciado — la BD se recomprara (esto puede tardar 30-120s)");
+    sqlx::query("VACUUM").execute(pool).await?;
+    let new_size = std::fs::metadata(db_path()).map(|m| m.len()).unwrap_or(0);
+    info!("VACUUM completado: nueva dimension {} MB", new_size / 1024 / 1024);
+    Ok(format!("VACUUM completado — {} MB", new_size / 1024 / 1024))
+}
+
+/// Crea un backup con fecha/hora del archivo historial.db en la carpeta backup/.
+/// Rotacion automatica: se conservan solo las ultimas 7 copias.
+pub async fn backup_db() -> Result<String> {
+    use std::io::Write;
+    let src = db_path();
+    if !src.exists() {
+        return Err(anyhow::anyhow!("No existe la BD para respaldar"));
+    }
+    let backup_dir = src.parent().unwrap().join("backup");
+    std::fs::create_dir_all(&backup_dir)?;
+    let ts = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let dst = backup_dir.join(format!("historial_{}.db", ts));
+    // Copiar archivo completo ( SQLite WAL modo — copiar -wal tambien)
+    std::fs::copy(&src, &dst)?;
+    // Si existe -wal, copiarlo tambien
+    let wal = src.with_extension("db-wal");
+    if wal.exists() {
+        let _ = std::fs::copy(&wal, dst.with_extension("db-wal"));
+    }
+    // Rotacion: conservar solo ultimas 7 copias
+    let mut backups: Vec<std::time::SystemTime> = std::fs::read_dir(&backup_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|ext| ext == "db").unwrap_or(false))
+        .filter_map(|e| e.metadata().ok().and_then(|m| m.modified().ok()))
+        .collect();
+    backups.sort();
+    while backups.len() > 7 {
+        let oldest = backups.remove(0);
+        // Convertir SystemTime a timestamp string para construir el nombre a borrar
+        let ts_str = oldest.duration_since(std::time::UNIX_EPOCH)
+            .map(|d| {
+                let dt = chrono::DateTime::<chrono::Utc>::from(oldest);
+                dt.format("%Y%m%d_%H%M%S").to_string()
+            })
+            .unwrap_or_default();
+        let name = backup_dir.join(format!("historial_{}.db", ts_str));
+        let _ = std::fs::remove_file(&name);
+    }
+    let size = std::fs::metadata(&dst)?.len();
+    info!("Backup creado: {} ({:.1} MB)", dst.file_name().unwrap().to_string_lossy(), size / 1024 / 1024);
+    Ok(format!("Backup: {} ({:.1} MB)", dst.file_name().unwrap().to_string_lossy(), size / 1024 / 1024))
+}
+
+/// Calcula checksums para todos los meses que aun no tienen hash registrado.
+/// Se usa GROUP BY mes_ref para eficiencia en BD grande.
+pub async fn recalculate_missing_checksums(pool: &SqlitePool) -> Result<usize> {
+    let n = sqlx::query(r#"
+        INSERT INTO mes_checksums (mes_ref, checksum, total_filas, total_soles, calculado_en)
+        SELECT
+            mes_ref,
+            printf('%08x-%08x-%08x-%08x',
+                COUNT(*),
+                CAST(ROUND(SUM(soles) * 100) AS INTEGER) & 0xFFFFFFFF,
+                CAST(ROUND(SUM(COALESCE(dolares, 0) * 100), 0) AS INTEGER) & 0xFFFFFFFF,
+                CAST(ROUND(SUM(cantidad) * 100) AS INTEGER) & 0xFFFFFFFF
+            ) as checksum,
+            COUNT(*) as total_filas,
+            ROUND(SUM(soles), 2) as total_soles,
+            datetime('now')
+        FROM ventas
+        WHERE mes_ref NOT IN (SELECT mes_ref FROM mes_checksums)
+        GROUP BY mes_ref
+        ON CONFLICT(mes_ref) DO UPDATE SET
+            checksum = excluded.checksum,
+            total_filas = excluded.total_filas,
+            total_soles = excluded.total_soles,
+            calculado_en = excluded.calculado_en
+        RETURNING mes_ref
+    "#)
+    .fetch_all(pool)
+    .await?;
+    let count = n.len();
+    info!("Checksums recalculados: {} meses", count);
+    Ok(count)
 }
