@@ -1,7 +1,7 @@
 // Comentarios en espanol - fechas internas yyyy-mm-dd, display dd/mm/yyyy
 use crate::config::db_path;
 use crate::models::Venta;
-use crate::db::schema::{CREATE_INDEXES_SQL, CREATE_TABLE_SQL, CREATE_VIEWS_SQL, CREATE_STATS_CACHE_SQL, CREATE_AUDIT_TABLES_SQL};
+use crate::db::schema::{CREATE_INDEXES_SQL, CREATE_TABLE_SQL, CREATE_VIEWS_SQL, CREATE_STATS_CACHE_SQL, CREATE_AUDIT_TABLES_SQL, CREATE_DIM_TABLES_SQL};
 use anyhow::{Context, Result};
 use sqlx::{query, SqlitePool};
 use std::sync::Mutex;
@@ -58,6 +58,7 @@ pub async fn init_pool() -> Result<SqlitePool> {
         "factura_ref_serie TEXT",
         "factura_ref_nro TEXT",
         "folio_unico TEXT",
+        "ord_compra TEXT",
     ] {
         let name = col.split_whitespace().next().unwrap();
         let exists: bool =
@@ -82,8 +83,11 @@ pub async fn init_pool() -> Result<SqlitePool> {
     }
     // Stats cache table (dashboard performance)
     let _ = sqlx::query(CREATE_STATS_CACHE_SQL).execute(&pool).await;
+    // Dimension tables — derivadas de ventas, se refrescan tras cada cambio
+    let _ = sqlx::query(CREATE_DIM_TABLES_SQL).execute(&pool).await;
     // Refresh stats cache on init
     let _ = refresh_stats_cache(&pool).await;
+    let _ = refresh_dim_tables(&pool).await;
     let _ = sqlx::query("UPDATE ventas SET precio_unitario = CASE WHEN cantidad != 0 THEN soles / cantidad ELSE 0 END WHERE precio_unitario IS NULL").execute(&pool).await;
     // Repopular precio_unitario para ajustes de valor (cantidad=0) usando CANTIDAD FAE como base
     // (ej. vendi 1000 pero descuente 500 entregados -> precio aplicado = soles / FAE)
@@ -93,6 +97,7 @@ pub async fn init_pool() -> Result<SqlitePool> {
 }
 
 pub async fn insert_ventas(pool: &SqlitePool, ventas: &[Venta]) -> Result<usize> {
+    let mut tx = pool.begin().await?;
     if let Some(first) = ventas.first() {
         let is_daily =
             first.mes_ref.len() == 10 && first.mes_ref.chars().filter(|c| *c == '-').count() == 2;
@@ -107,23 +112,22 @@ pub async fn insert_ventas(pool: &SqlitePool, ventas: &[Venta]) -> Result<usize>
                 .map(|v| v.fecha_orig)
                 .max()
                 .unwrap_or(first.fecha_orig);
-            let _ = sqlx::query("DELETE FROM ventas WHERE fecha_orig BETWEEN ? AND ?")
+            sqlx::query("DELETE FROM ventas WHERE fecha_orig BETWEEN ? AND ?")
                 .bind(min_d.to_string())
                 .bind(max_d.to_string())
-                .execute(pool)
-                .await;
+                .execute(&mut *tx)
+                .await?;
         } else {
-            let _ = sqlx::query("DELETE FROM ventas WHERE mes_ref = ?")
+            sqlx::query("DELETE FROM ventas WHERE mes_ref = ?")
                 .bind(&first.mes_ref)
-                .execute(pool)
-                .await;
+                .execute(&mut *tx)
+                .await?;
         }
     }
-    let mut tx = pool.begin().await?;
     let mut n = 0usize;
     for v in ventas {
         sqlx::query(
-            "INSERT INTO ventas (id_articulo,original_sku,nom_articulo,id_linea,nom_linea,id_grupo,nom_grupo, id_tipo,nom_tipo,id_familia,nom_familia, id_cliente,doc_cliente,nom_cliente,tpo_doc,serie_doc,nro_doc,referencia, moneda,cantidad,cantidad_fae,soles,dolares,precio_unitario,anho,mes,fecha_orig, fecha_ref,fecha_venc,cod_sucursal,nom_sucursal, departamento,provincia,distrito, id_vendedor, nom_vendedor,id_pedido,file_source,mes_ref,tipo_operacion,factura_ref_serie,factura_ref_nro,folio_unico) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            "INSERT INTO ventas (id_articulo,original_sku,nom_articulo,id_linea,nom_linea,id_grupo,nom_grupo, id_tipo,nom_tipo,id_familia,nom_familia, id_cliente,doc_cliente,nom_cliente,tpo_doc,serie_doc,nro_doc,referencia, moneda,cantidad,cantidad_fae,soles,dolares,precio_unitario,anho,mes,fecha_orig, fecha_ref,fecha_venc,cod_sucursal,nom_sucursal, departamento,provincia,distrito, id_vendedor, nom_vendedor,id_pedido,ord_compra,file_source,mes_ref,tipo_operacion,factura_ref_serie,factura_ref_nro,folio_unico) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         )
         .bind(&v.id_articulo).bind(&v.original_sku).bind(&v.nom_articulo)
         .bind(&v.id_linea).bind(&v.nom_linea).bind(&v.id_grupo).bind(&v.nom_grupo)
@@ -134,7 +138,7 @@ pub async fn insert_ventas(pool: &SqlitePool, ventas: &[Venta]) -> Result<usize>
         .bind(v.anho).bind(v.mes).bind(v.fecha_orig.to_string())
         .bind(&v.fecha_ref).bind(&v.fecha_venc)
         .bind(&v.cod_sucursal).bind(&v.nom_sucursal).bind(&v.departamento).bind(&v.provincia).bind(&v.distrito)
-        .bind(&v.id_vendedor).bind(&v.nom_vendedor).bind(&v.id_pedido)
+        .bind(&v.id_vendedor).bind(&v.nom_vendedor).bind(&v.id_pedido).bind(&v.ord_compra)
         .bind(&v.file_source).bind(&v.mes_ref)
         .bind(&v.tipo_operacion).bind(&v.factura_ref_serie).bind(&v.factura_ref_nro).bind(&v.folio_unico)
         .execute(&mut *tx).await?;
@@ -161,6 +165,7 @@ pub async fn dedup_ventas(pool: &SqlitePool) -> Result<usize> {
     let affected = r.rows_affected() as usize;
     info!("Dedup removed {} rows", affected);
     let _ = refresh_stats_cache(pool).await;
+    let _ = refresh_dim_tables(pool).await;
     Ok(affected)
 }
 
@@ -173,7 +178,7 @@ pub async fn count_ventas(pool: &SqlitePool) -> Result<i64> {
 
 pub async fn fetch_all_ventas(pool: &SqlitePool) -> Result<Vec<Venta>, sqlx::Error> {
     use sqlx::Row;
-    let rows = query("SELECT id_articulo, original_sku, nom_articulo, id_linea, nom_linea, id_grupo, nom_grupo, id_tipo, nom_tipo, id_familia, nom_familia, id_cliente, doc_cliente, nom_cliente, tpo_doc, serie_doc, nro_doc, referencia, moneda, cantidad, cantidad_fae, soles, dolares, precio_unitario, anho, mes, fecha_orig, fecha_ref, fecha_venc, cod_sucursal, nom_sucursal, departamento, provincia, distrito, id_vendedor, nom_vendedor, id_pedido, file_source, mes_ref, tipo_operacion, factura_ref_serie, factura_ref_nro, folio_unico FROM ventas")
+    let rows = query("SELECT id_articulo, original_sku, nom_articulo, id_linea, nom_linea, id_grupo, nom_grupo, id_tipo, nom_tipo, id_familia, nom_familia, id_cliente, doc_cliente, nom_cliente, tpo_doc, serie_doc, nro_doc, referencia, moneda, cantidad, cantidad_fae, soles, dolares, precio_unitario, anho, mes, fecha_orig, fecha_ref, fecha_venc, cod_sucursal, nom_sucursal, departamento, provincia, distrito, id_vendedor, nom_vendedor, id_pedido, ord_compra, file_source, mes_ref, tipo_operacion, factura_ref_serie, factura_ref_nro, folio_unico FROM ventas")
         .fetch_all(pool).await?;
     Ok(rows
         .iter()
@@ -215,12 +220,13 @@ pub async fn fetch_all_ventas(pool: &SqlitePool) -> Result<Vec<Venta>, sqlx::Err
             id_vendedor: r.get(34),
             nom_vendedor: r.get(35),
             id_pedido: r.get(36),
-            file_source: r.get(37),
-            mes_ref: r.get(38),
-            tipo_operacion: r.try_get(39).unwrap_or_default(),
-            factura_ref_serie: r.try_get(40).unwrap_or_default(),
-            factura_ref_nro: r.try_get(41).unwrap_or_default(),
-            folio_unico: r.try_get(42).unwrap_or_default(),
+            ord_compra: r.get(37),
+            file_source: r.get(38),
+            mes_ref: r.get(39),
+            tipo_operacion: r.try_get(40).unwrap_or_default(),
+            factura_ref_serie: r.try_get(41).unwrap_or_default(),
+            factura_ref_nro: r.try_get(42).unwrap_or_default(),
+            folio_unico: r.try_get(43).unwrap_or_default(),
         })
         .collect())
 }
@@ -268,6 +274,186 @@ pub async fn refresh_stats_cache(pool: &SqlitePool) -> Result<()> {
         .await?;
     }
     Ok(())
+}
+
+/// Reconstruye todas las tablas de dimensiones desde la tabla ventas (fact table).
+/// Cada dimensión se procesa en una funcion separada para trazabilidad de errores.
+/// Se llama tras cada dedup/insert para mantener consistencia.
+/// Costo estimado: ~2-5s en BD de 1.1M filas (full scan de ventas, pero con indices).
+pub async fn refresh_dim_tables(pool: &SqlitePool) -> Result<()> {
+    let n_cli = refresh_dim_cliente(pool).await?;
+    let n_vend = refresh_dim_vendedor(pool).await?;
+    let n_art = refresh_dim_articulo(pool).await?;
+    let n_doc = refresh_dim_documento(pool).await?;
+    let n_line = refresh_dim_linea(pool).await?;
+    info!(
+        "dim_tables refreshed: clientes={}, vendedores={}, articulos={}, documentos={}, lineas={}",
+        n_cli, n_vend, n_art, n_doc, n_line
+    );
+    Ok(())
+}
+
+/// Refresca dim_cliente: maxima info conocida por cliente + KPIs agregados.
+/// Fuente de verdad para navegacion por cliente en el dashboard local.
+async fn refresh_dim_cliente(pool: &SqlitePool) -> Result<usize> {
+    sqlx::query("DELETE FROM dim_cliente")
+        .execute(pool)
+        .await
+        .context("refresh_dim_cliente: DELETE falló")?;
+    let n = sqlx::query(r#"
+        INSERT INTO dim_cliente
+            (id_cliente, nom_cliente, doc_cliente, departamento, provincia, distrito,
+             n_ventas, total_soles, total_dolares, ultima_compra, actualizado_en)
+        SELECT
+            id_cliente,
+            MAX(nom_cliente)   AS nom_cliente,
+            MAX(doc_cliente)   AS doc_cliente,
+            MAX(departamento)  AS departamento,
+            MAX(provincia)     AS provincia,
+            MAX(distrito)      AS distrito,
+            COUNT(*)           AS n_ventas,
+            ROUND(SUM(soles), 2)         AS total_soles,
+            ROUND(SUM(COALESCE(dolares, 0.0)), 2) AS total_dolares,
+            MAX(fecha_orig)      AS ultima_compra,
+            datetime('now')      AS actualizado_en
+        FROM ventas
+        WHERE id_cliente != ''
+        GROUP BY id_cliente
+    "#)
+    .execute(pool)
+    .await
+    .context("refresh_dim_cliente: INSERT-SELECT falló")?;
+    Ok(n.rows_affected() as usize)
+}
+
+/// Refresca dim_vendedor: maxima info por vendedor + KPIs agregados.
+/// Permite navegar por vendedores y ver su cartera de clientes rapidamente.
+async fn refresh_dim_vendedor(pool: &SqlitePool) -> Result<usize> {
+    sqlx::query("DELETE FROM dim_vendedor")
+        .execute(pool)
+        .await
+        .context("refresh_dim_vendedor: DELETE falló")?;
+    let n = sqlx::query(r#"
+        INSERT INTO dim_vendedor
+            (id_vendedor, nom_vendedor, n_ventas, total_soles, n_clientes, ultima_venta, actualizado_en)
+        SELECT
+            id_vendedor,
+            MAX(nom_vendedor)     AS nom_vendedor,
+            COUNT(*)              AS n_ventas,
+            ROUND(SUM(soles), 2)  AS total_soles,
+            COUNT(DISTINCT id_cliente) AS n_clientes,
+            MAX(fecha_orig)       AS ultima_venta,
+            datetime('now')       AS actualizado_en
+        FROM ventas
+        WHERE id_vendedor != ''
+        GROUP BY id_vendedor
+    "#)
+    .execute(pool)
+    .await
+    .context("refresh_dim_vendedor: INSERT-SELECT falló")?;
+    Ok(n.rows_affected() as usize)
+}
+
+/// Refresca dim_articulo: maxima info de catalogo por SKU + KPIs agregados.
+/// Permite navegar por articulos, ver precio promedio y volumen de ventas.
+async fn refresh_dim_articulo(pool: &SqlitePool) -> Result<usize> {
+    sqlx::query("DELETE FROM dim_articulo")
+        .execute(pool)
+        .await
+        .context("refresh_dim_articulo: DELETE falló")?;
+    let n = sqlx::query(r#"
+        INSERT INTO dim_articulo
+            (id_articulo, original_sku, nom_articulo, id_linea, nom_linea,
+             id_grupo, nom_grupo, id_tipo, nom_tipo, id_familia, nom_familia,
+             n_ventas, total_cantidad, total_soles, precio_promedio, ultima_venta, actualizado_en)
+        SELECT
+            id_articulo,
+            MAX(original_sku)   AS original_sku,
+            MAX(nom_articulo)   AS nom_articulo,
+            MAX(id_linea)       AS id_linea,  MAX(nom_linea)  AS nom_linea,
+            MAX(id_grupo)       AS id_grupo,  MAX(nom_grupo)  AS nom_grupo,
+            MAX(id_tipo)        AS id_tipo,   MAX(nom_tipo)   AS nom_tipo,
+            MAX(id_familia)     AS id_familia, MAX(nom_familia) AS nom_familia,
+            COUNT(*)            AS n_ventas,
+            ROUND(SUM(cantidad), 2) AS total_cantidad,
+            ROUND(SUM(soles), 2)      AS total_soles,
+            ROUND(SUM(soles) / NULLIF(SUM(cantidad), 0), 4) AS precio_promedio,
+            MAX(fecha_orig)   AS ultima_venta,
+            datetime('now')   AS actualizado_en
+        FROM ventas
+        WHERE id_articulo != ''
+        GROUP BY id_articulo
+    "#)
+    .execute(pool)
+    .await
+    .context("refresh_dim_articulo: INSERT-SELECT falló")?;
+    Ok(n.rows_affected() as usize)
+}
+
+/// Refresca dim_documento: cabeceras de documentos (una fila por folio unico).
+/// Permite navegar por facturas/NC/ND y ver resumen de lineas, montos y fechas.
+async fn refresh_dim_documento(pool: &SqlitePool) -> Result<usize> {
+    sqlx::query("DELETE FROM dim_documento")
+        .execute(pool)
+        .await
+        .context("refresh_dim_documento: DELETE falló")?;
+    let n = sqlx::query(r#"
+        INSERT INTO dim_documento
+            (folio_unico, tpo_doc, serie_doc, nro_doc, fecha_orig,
+             id_cliente, id_vendedor, n_lineas, total_cantidad,
+             total_soles, total_dolares, moneda, actualizado_en)
+        SELECT
+            folio_unico,
+            MAX(tpo_doc)      AS tpo_doc,
+            MAX(serie_doc)    AS serie_doc,
+            MAX(nro_doc)      AS nro_doc,
+            MAX(fecha_orig)   AS fecha_orig,
+            MAX(id_cliente)   AS id_cliente,
+            MAX(id_vendedor)  AS id_vendedor,
+            COUNT(*)          AS n_lineas,
+            ROUND(SUM(cantidad), 2)     AS total_cantidad,
+            ROUND(SUM(soles), 2)        AS total_soles,
+            ROUND(SUM(COALESCE(dolares, 0.0)), 2) AS total_dolares,
+            MAX(moneda)     AS moneda,
+            datetime('now') AS actualizado_en
+        FROM ventas
+        WHERE folio_unico != ''
+        GROUP BY folio_unico
+    "#)
+    .execute(pool)
+    .await
+    .context("refresh_dim_documento: INSERT-SELECT falló")?;
+    Ok(n.rows_affected() as usize)
+}
+
+/// Refresca dim_linea: maxima info por linea/negocio + KPIs agregados.
+/// Permite navegar por lineas de producto y ver volumen por grupo/familia.
+async fn refresh_dim_linea(pool: &SqlitePool) -> Result<usize> {
+    sqlx::query("DELETE FROM dim_linea")
+        .execute(pool)
+        .await
+        .context("refresh_dim_linea: DELETE falló")?;
+    let n = sqlx::query(r#"
+        INSERT INTO dim_linea
+            (id_linea, nom_linea, id_grupo, nom_grupo, id_familia, nom_familia,
+             n_ventas, total_soles, n_clientes, actualizado_en)
+        SELECT
+            id_linea,
+            MAX(nom_linea)    AS nom_linea,
+            MAX(id_grupo)     AS id_grupo,  MAX(nom_grupo) AS nom_grupo,
+            MAX(id_familia)   AS id_familia, MAX(nom_familia) AS nom_familia,
+            COUNT(*)          AS n_ventas,
+            ROUND(SUM(soles), 2) AS total_soles,
+            COUNT(DISTINCT id_cliente) AS n_clientes,
+            datetime('now')   AS actualizado_en
+        FROM ventas
+        WHERE id_linea != ''
+        GROUP BY id_linea
+    "#)
+    .execute(pool)
+    .await
+    .context("refresh_dim_linea: INSERT-SELECT falló")?;
+    Ok(n.rows_affected() as usize)
 }
 
 // ─── AUDITORÍA E INTEGRIDAD ─────────────────────────────────────────────────

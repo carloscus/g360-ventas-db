@@ -97,7 +97,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 /* modal */
 .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);display:none;align-items:center;justify-content:center;z-index:100}
 .modal-overlay.open{display:flex}
-.modal{background:#0d1a2d;border:1px solid rgba(255,255,255,0.12);border-radius:10px;padding:14px;width:420px;max-width:90vw}
+.modal{background:#0d1a2d;border:1px solid rgba(255,255,255,0.12);border-radius:10px;padding:14px;width:420px;max-width:90vw;max-height:90vh;overflow-y:auto}
 .modal h2{font-size:13px;font-weight:700;color:#fff;margin-bottom:10px;display:flex;align-items:center;gap:6px}
 .modal h2 span{color:#00d48c}
 .field{margin-bottom:8px}
@@ -144,6 +144,37 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .dropzone{border:2px dashed rgba(0,212,140,.35);border-radius:8px;padding:20px 10px;text-align:center;color:#7e96ad;font-size:11px;margin:8px 0;transition:.15s;cursor:pointer;line-height:1.5}
 .dropzone.over{background:rgba(0,212,140,.08);border-color:#00d48c;color:#00d48c}
 .field select{width:100%;padding:6px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(10,20,35,0.8);color:#fff;font-size:13px;font-family:inherit}
+.retention-note{margin:5px 0 9px;padding:7px 8px;border-radius:6px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.2);color:#a8c8e0;font-size:10px;line-height:1.45}
+.retention-note strong{color:#dbeafe}
+.config-help{font-size:10px;color:#7e96ad;line-height:1.45;margin:-3px 0 8px}
+.welcome-overlay{position:fixed;inset:0;background:rgba(3,9,18,.86);display:none;align-items:center;justify-content:center;z-index:120;padding:16px}
+.welcome-overlay.open{display:flex}
+.welcome-card{width:min(100%,460px);background:#0d1a2d;border:1px solid rgba(0,212,140,.28);border-radius:14px;padding:20px;box-shadow:0 20px 55px rgba(0,0,0,.45)}
+.welcome-card h2{font-size:19px;line-height:1.2;color:#fff;margin-bottom:8px}
+.welcome-card h2 span{color:#00d48c}
+.welcome-lead{font-size:12px;line-height:1.55;color:#a8c8e0;margin-bottom:14px}
+.welcome-steps{display:grid;gap:7px;margin:12px 0 16px}
+.welcome-step{display:grid;grid-template-columns:24px 1fr;gap:9px;align-items:start;padding:9px 10px;border-radius:9px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.07)}
+.welcome-step strong{display:block;color:#e8f4fd;font-size:12px;margin-bottom:2px}
+.welcome-step p{color:#7e96ad;font-size:11px;line-height:1.4}
+.welcome-step-mark{width:22px;height:22px;border-radius:7px;background:rgba(0,212,140,.14);color:#6ee7b7;font-size:11px;font-weight:800;display:grid;place-items:center}
+.welcome-note{font-size:10px;color:#7e96ad;line-height:1.45;margin-bottom:12px}
+.welcome-actions{display:flex;gap:7px}
+.welcome-actions button{flex:1;padding:9px 8px;border:0;border-radius:6px;font:700 12px inherit;cursor:pointer}
+.welcome-primary{background:#00d48c;color:#061220}
+.welcome-secondary{background:rgba(255,255,255,.08);color:#a8c8e0}
+.welcome-actions button:disabled{opacity:.45;cursor:not-allowed}
+.welcome-stop{display:none!important;background:rgba(248,113,113,.12);color:#fca5a5!important;border:1px solid rgba(248,113,113,.25)!important}
+.welcome-stop.show{display:block!important}
+.welcome-result{display:none;margin-top:10px;padding:8px 9px;border-radius:7px;font-size:11px;line-height:1.4}
+.welcome-result.show{display:block;background:rgba(59,130,246,.1);color:#bfdbfe;border:1px solid rgba(59,130,246,.2)}
+.welcome-result.err{background:rgba(248,113,113,.1);color:#fca5a5;border-color:rgba(248,113,113,.2)}
+.welcome-result.warn{background:rgba(245,158,11,.1);color:#fcd68a;border-color:rgba(245,158,11,.25)}
+.welcome-progress{height:6px;border-radius:99px;background:rgba(148,163,184,.12);overflow:hidden;margin-top:9px;display:none}
+.welcome-progress.show{display:block}
+.welcome-progress-bar{height:100%;width:0;background:linear-gradient(90deg,#00d48c,#60a5fa);transition:width .4s ease}
+.welcome-timer{display:none;margin-top:7px;color:#7e96ad;font-size:10px;line-height:1.4}
+.welcome-timer.show{display:block}
 </style>
 </head>
 <body>
@@ -188,28 +219,26 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <label>hasta<input type="date" id="ed"/></label>
 </div>
 <div class="btn-grid">
-  <button class="btn btn-p" id="cap" style="margin-top:0">⟳ Sincronizar</button>
+  <button class="btn btn-p" id="cap" style="margin-top:0">⟳ Capturar rango</button>
   <button class="btn btn-blue" id="uploadBtn" style="margin-top:0">☁ Subir</button>
 </div>
 <button class="btn btn-s" id="sync" title="Captura incremental desde la última fecha capturada">↻ Sync última fecha</button>
+<div class="btn-grid">
+  <button class="btn btn-ghost" id="verifyBtn" title="Verifica duplicados, folios y consistencia de la BD local">🔍 Verificar BD</button>
+  <button class="btn btn-ghost" id="checksumBtn" title="Genera checksums mensuales para detectar cambios">🔐 Checksum</button>
+</div>
+<button class="btn btn-s" id="shareDbBtn" title="Abre la carpeta local para copiarla a un extraíble o compartirla en la red">📂 Compartir / respaldar BD</button>
 <button class="btn btn-d hid" id="stopBtn">⏹ detener</button>
 <div class="menu-wrap">
   <button class="btn btn-s" id="moreBtn" style="margin-top:0">⋯ más acciones</button>
   <div class="menu" id="moreMenu">
     <div class="msec">BD local — poblar y reparar</div>
     <button id="importBtn" title="Repara un mes incompleto con el XLS mensual del intranet">📥 Importar mes (arrastrar XLS)</button>
-    <button id="reparse" class="btn-ghost" title="Re-parsea TODOS los CSV de raw/ sin filtrar (raw-first). El filtro de líneas se aplica al subir, no aquí">⚡ Reprocesar raw</button>
     <button id="manageMonths" title="Revisar o borrar meses específicos de la BD local">📅 Gestionar meses</button>
-    <div class="msec">Supabase — mantenimiento</div>
-    <button id="resetSyncBtn" title="Resetea el marcador incremental, purga la ventana en Supabase y re-sube TODO con el filtro actual (también aplica cambios de Líneas permitidas)">🔄 Forzar Full Sync</button>
     <div class="msec">Diagnóstico (opcional)</div>
-    <div class="msec">Diagnóstico (opcional)</div>
-    <button id="verifyBtn" class="btn-ghost" title="Verifica integridad de la BD (duplicados, folios huérfanos)">🔍 Verificar Integridad</button>
-    <button id="checksumBtn" class="btn-ghost" title="Genera checksums mensuales para detección de cambios">🔐 Calcular Checksums</button>
     <button id="previewBtn" title="Muestra las primeras filas de la BD local">👁 Vista previa CSV</button>
     <div class="msec">Mantenimiento</div>
     <button id="clr" class="btn-ghost" title="Borra XLS temporales descargados">🧹 Limpiar caché XLS</button>
-    <button id="dbclr" class="danger" title="Borra historial.db y archivos locales. NO afecta a Supabase">🗑 Recrear BD local (borra todo)</button>
   </div>
 </div>
 <div id="est" class="est hid">⏱ ~<span id="estm">0</span> min</div>
@@ -227,6 +256,37 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <p>No hay datos capturados todavia.<br>Ejecute una captura para ver los meses aqui.</p>
 </div>
 <div class="footer">powered by <span>g360</span></div>
+</div>
+
+<!-- First-run workflow guide -->
+<div class="welcome-overlay" id="welcomeOverlay">
+  <section class="welcome-card" role="dialog" aria-modal="true" aria-labelledby="welcomeTitle">
+    <h2 id="welcomeTitle">Primero actualiza, luego <span>publica</span></h2>
+    <p class="welcome-lead">G360 mantiene el histórico completo en SQLite local. Supabase recibe únicamente la ventana vigente, después de validar los datos.</p>
+    <div class="welcome-steps">
+      <div class="welcome-step">
+        <span class="welcome-step-mark">1</span>
+        <div><strong>Captura reciente</strong><p>Recupera pendientes y vuelve a revisar los últimos días para incluir ventas tardías.</p></div>
+      </div>
+      <div class="welcome-step">
+        <span class="welcome-step-mark">2</span>
+        <div><strong>Valida y limpia</strong><p>Controla fechas, líneas permitidas y duplicados antes de tocar Supabase.</p></div>
+      </div>
+      <div class="welcome-step">
+        <span class="welcome-step-mark">3</span>
+        <div><strong>Sube con verificación</strong><p>Actualiza solo lo elegible y confirma el resultado. Si no hay novedades, no se modifica Supabase.</p></div>
+      </div>
+    </div>
+    <p class="welcome-note">Este flujo puede tardar según los días pendientes. Puedes usar la app directamente y repetirlo cuando necesites actualizar.</p>
+    <div class="welcome-actions">
+      <button class="welcome-secondary" id="welcomeLater">Entrar a la app</button>
+      <button class="welcome-primary" id="welcomeRun">Actualizar y subir ahora</button>
+      <button class="welcome-stop" id="welcomeStop">Detener</button>
+    </div>
+    <div class="welcome-progress" id="welcomeProgress"><div class="welcome-progress-bar" id="welcomeProgressBar"></div></div>
+    <div class="welcome-timer" id="welcomeTimer"></div>
+    <div class="welcome-result" id="welcomeResult"></div>
+  </section>
 </div>
 
 <!-- Import month modal (drag & drop) -->
@@ -297,13 +357,23 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
   <label><input type="checkbox" id="cfgAutoSync" style="margin-right:6px"> Auto-sync al abrir app</label>
 </div>
 <div class="field">
-  <label>Retencion Supabase (dias, buffer NC/ND — 1277 = 3.5 años)</label>
-  <input type="number" id="cfgRetentionSupa" min="0" max="3650" value="1277">
+  <label for="cfgRetentionSupa">Ventana Supabase (días)</label>
+  <input type="number" id="cfgRetentionSupa" min="1" max="3650" step="1" inputmode="numeric" value="1277">
 </div>
+<div class="config-help">Los datos anteriores se conservan en la BD local, pero nunca se cargan ni se purgan en Supabase.</div>
+<div class="retention-note" id="retentionNote">Calculando ventana efectiva…</div>
 <div class="field">
-  <label>Retencion apps derivadas (anos)</label>
-  <input type="number" id="cfgRetentionApp" min="0" max="10" value="3">
+  <label for="cfgRetentionApp">Retención de apps derivadas (años)</label>
+  <input type="number" id="cfgRetentionApp" min="0" max="10" step="1" inputmode="numeric" value="3">
 </div>
+
+<div style="font-size:10px;color:#fbbf24;text-transform:uppercase;letter-spacing:.08em;margin:10px 0 4px">Operaciones avanzadas</div>
+<div class="config-help">Estas acciones pueden reemplazar datos locales o reconstruir la ventana completa de Supabase. Requieren confirmación.</div>
+<div class="btn-grid">
+  <button class="btn btn-warn" id="reparse" title="Reprocesa todos los CSV locales">⚡ Reprocesar raw</button>
+  <button class="btn btn-warn" id="resetSyncBtn" title="Purga y reconstruye la ventana de Supabase">🔄 Full Sync</button>
+</div>
+<button class="btn btn-d" id="dbclr" title="Borra la BD y archivos locales; no afecta Supabase">🗑 Recrear BD local</button>
 
 <div class="modal-actions">
   <button class="btn-test" id="cfgTestIntra">test intranet</button>
@@ -359,7 +429,7 @@ function setAppUnavailable(message){
   textEl.textContent=message;
   document.getElementById('st').className='status act err';
   document.getElementById('stxt').textContent='sin entorno tauri';
-  ['cap','sync','clr','uploadBtn','dbclr','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','previewBtn','moreBtn'].forEach(id=>{
+  ['cap','sync','clr','uploadBtn','shareDbBtn','dbclr','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','previewBtn','moreBtn'].forEach(id=>{
     const el=document.getElementById(id);
     if (el) el.disabled=true;
   });
@@ -643,12 +713,31 @@ document.getElementById('cfgBtn').addEventListener('click',async()=>{
   document.getElementById('cfgGenPor').value=cfg.generado_por||'';
   document.getElementById('cfgLines').value=cfg.allowed_lines||'';
   document.getElementById('cfgAutoSync').checked=cfg.auto_sync||false;
-  document.getElementById('cfgRetentionSupa').value=cfg.supabase_retention_days||1277;
-  document.getElementById('cfgRetentionApp').value=cfg.app_retention_years||3;
+  document.getElementById('cfgRetentionSupa').value=cfg.supabase_retention_days||cfg.supabase_retention_years||1277;
+  document.getElementById('cfgRetentionApp').value=cfg.app_retention_years??3;
+  updateRetentionNote();
   document.getElementById('modalOverlay').classList.add('open');
   document.getElementById('cfgTestResult').className='test-result';
   document.getElementById('cfgTestResult').textContent='';
 });
+function updateRetentionNote(){
+  const input=document.getElementById('cfgRetentionSupa');
+  const days=Number(input.value);
+  const note=document.getElementById('retentionNote');
+  if(!Number.isInteger(days)||days<1||days>3650){
+    note.innerHTML='<strong>Valor inválido.</strong> Usa entre 1 y 3650 días.';
+    note.style.borderColor='rgba(248,113,113,.3)';
+    note.style.background='rgba(248,113,113,.08)';
+    return false;
+  }
+  const cutoff=new Date(Date.now()-days*86400000);
+  const month=cutoff.toISOString().slice(0,7);
+  note.innerHTML='<strong>Ventana activa desde '+month+'.</strong> Los meses anteriores quedan solo en SQLite; al avanzar el calendario, Supabase rota automáticamente.';
+  note.style.borderColor='rgba(59,130,246,.2)';
+  note.style.background='rgba(59,130,246,.1)';
+  return true;
+}
+document.getElementById('cfgRetentionSupa').addEventListener('input',updateRetentionNote);
 document.getElementById('cfgCancel').addEventListener('click',()=>document.getElementById('modalOverlay').classList.remove('open'));
 document.getElementById('modalOverlay').addEventListener('click',(e)=>{if(e.target===e.currentTarget)document.getElementById('modalOverlay').classList.remove('open')});
 document.getElementById('cfgSave').addEventListener('click',async()=>{
@@ -660,13 +749,20 @@ document.getElementById('cfgSave').addEventListener('click',async()=>{
   const gp=document.getElementById('cfgGenPor').value.trim();
   const al=document.getElementById('cfgLines').value.trim();
   const as=document.getElementById('cfgAutoSync').checked;
-  const retSupa=parseInt(document.getElementById('cfgRetentionSupa').value)||1277;
-  const retApp=parseInt(document.getElementById('cfgRetentionApp').value)||3;
+  const retSupa=Number(document.getElementById('cfgRetentionSupa').value);
+  const retApp=Number(document.getElementById('cfgRetentionApp').value);
+  if(!updateRetentionNote()||!Number.isInteger(retApp)||retApp<0||retApp>10){
+    show('Revise los valores de retención',true);
+    return;
+  }
+  if(iu&&ip&&!intranetVerified&&!confirm('Las credenciales del intranet aún no fueron verificadas en esta sesión. Se guardarán y deberá probar el login antes de capturar. ¿Continuar?'))return;
   try{
+    document.getElementById('cfgSave').disabled=true;
     if(svcKey){await invoke('save_service_role_key',{serviceRoleKey:svcKey});}
     await invoke('save_settings',{supabaseUrl:url,supabaseKey:key,intranetUser:iu,intranetPass:ip,generadoPor:gp,allowedLines:al,autoSync:as,appRetentionYears:retApp,supabaseRetentionYears:0,supabaseRetentionDays:retSupa,autoDailyCapture:false,captureTimes:['12:00','20:00']});
     show('Configuracion guardada');document.getElementById('modalOverlay').classList.remove('open');
   }catch(e){show('Error al guardar: '+e,true)}
+  finally{document.getElementById('cfgSave').disabled=false;}
 });
 document.getElementById('cfgTest').addEventListener('click',async()=>{
   const url=document.getElementById('cfgUrl').value.trim()||'https://TU_SUPABASE.supabase.co';
@@ -675,10 +771,13 @@ document.getElementById('cfgTest').addEventListener('click',async()=>{
   r.className='test-result';r.textContent='testeando...';r.style.display='block';
   try{const res=await invoke('test_supabase',{url,key});r.className='test-result ok';r.textContent='ok: '+res;}catch(e){r.className='test-result err';r.textContent='error: '+e;}
 });
+let intranetVerified=false;
+document.getElementById('cfgIntUser').addEventListener('input',()=>{intranetVerified=false});
+document.getElementById('cfgIntPass').addEventListener('input',()=>{intranetVerified=false});
 document.getElementById('cfgTestIntra').addEventListener('click',async()=>{
   const r=document.getElementById('cfgTestResult');
   r.className='test-result';r.textContent='testeando intranet...';r.style.display='block';
-  try{const res=await invoke('test_intranet');r.className='test-result ok';r.textContent='ok: '+res;}catch(e){r.className='test-result err';r.textContent='error: '+e;}
+  try{const res=await invoke('test_intranet');intranetVerified=true;r.className='test-result ok';r.textContent='ok: '+res;}catch(e){intranetVerified=false;r.className='test-result err';r.textContent='error: '+e;}
 });
 
 ['sd','ed'].forEach(id=>{const el=document.getElementById(id); if(!el) return; el.addEventListener('change',()=>{ try{ localStorage.setItem('g360_'+id, el.value);}catch(e){} const s=document.getElementById('sd').value,e=document.getElementById('ed').value,b=document.getElementById('est'); if(s&&e&&rangoValido(s,e)){const m=est(s,e); if(m>5){b.classList.remove('hid');document.getElementById('estm').textContent=m; return}} b.classList.add('hid') })});
@@ -688,10 +787,12 @@ document.getElementById('cap').addEventListener('click',async()=>{
   if(!rangoValido(s,e))return alert('La fecha "hasta" debe ser mayor o igual que "desde"');
   const m=est(s,e);
   if(m>10&&!confirm('~'+m+' min estimado. Continuar?'))return;
+  if(!intranetVerified&&!confirm('No se ha verificado el login del intranet en esta sesión. ¿Continuar de todos modos?'))return;
   show('iniciando captura...');stopPolling();
   try{const r=await invoke('capture_range',{startDate:s,endDate:e});show(r.message);startPolling();}catch(err){show(humanizeError(err),true);startPolling();}
 });
 document.getElementById('sync').addEventListener('click',async()=>{
+  if(!intranetVerified&&!confirm('No se ha verificado el login del intranet en esta sesión. ¿Continuar de todos modos?'))return;
   show('syncing...');stopPolling();
   try{const r=await invoke('sync_from_last');show(r.message);startPolling();}catch(err){show(humanizeError(err),true);startPolling();}
 });
@@ -701,7 +802,13 @@ document.getElementById('clr').addEventListener('click',async()=>{
 });
 document.getElementById('uploadBtn').addEventListener('click',async()=>{
   show('subiendo a supabase...');stopPolling();
-  try{const r=await invoke('upload_all');show(r.message);load();startPolling();}catch(err){show(humanizeError(err),true);startPolling();}
+  try{const r=await invoke('upload_all_with_verify');show(r.message||r);load();startPolling();}catch(err){show(humanizeError(err),true);startPolling();}
+});
+document.getElementById('shareDbBtn').addEventListener('click',async()=>{
+  try{
+    const path=await invoke('open_data_folder');
+    show('Carpeta de datos abierta. Puede copiarla a un extraíble o compartirla desde el Explorador:\n'+path);
+  }catch(err){show(humanizeError(err),true);}
 });
 document.getElementById('resetSyncBtn').addEventListener('click',async()=>{
   let years=4; try{const c=await invoke('get_settings'); years=Math.max(1,Math.round((c.supabase_retention_days||1277)/365));}catch(e){}
@@ -709,7 +816,7 @@ document.getElementById('resetSyncBtn').addEventListener('click',async()=>{
   show('reseteando marcador y subiendo...');stopPolling();
   try{
     await invoke('reset_sync_marker');
-    const r=await invoke('upload_all');
+    const r=await invoke('upload_all_with_verify');
     show(r.message||r);
     load();
     startPolling();
@@ -958,11 +1065,156 @@ if('Notification' in window && Notification.permission==='default'){
   Notification.requestPermission();
 }
 
+// ── FIRST-RUN GUIDE: capture locally, then upload with verification ──
+const welcomeOverlay=document.getElementById('welcomeOverlay');
+const welcomeResult=document.getElementById('welcomeResult');
+const welcomeProgress=document.getElementById('welcomeProgress');
+const welcomeProgressBar=document.getElementById('welcomeProgressBar');
+const welcomeTimer=document.getElementById('welcomeTimer');
+let welcomeTimerHandle=null;
+let welcomeStartedAt=0;
+let welcomeLastStatus={phase:'checking_lock',progress:0};
+function closeWelcome(){
+  if(welcomeTimerHandle){clearInterval(welcomeTimerHandle);welcomeTimerHandle=null;}
+  welcomeOverlay.classList.remove('open');
+  try{localStorage.setItem('g360_onboarding_seen','1');}catch(e){}
+}
+function showWelcome(){
+  if(!welcomeOverlay)return;
+  welcomeOverlay.classList.add('open');
+}
+function formatElapsed(seconds){
+  const minutes=Math.floor(seconds/60);
+  const secs=seconds%60;
+  return minutes+'m '+String(secs).padStart(2,'0')+'s';
+}
+function updateWelcomeProgress(status, phaseOverride){
+  if(status)welcomeLastStatus=status;
+  status=welcomeLastStatus;
+  const elapsed=Math.floor((Date.now()-welcomeStartedAt)/1000);
+  const phase=phaseOverride||status?.phase||'checking_lock';
+  const labels={checking_lock:'verificando bloqueo',downloading:'descargando intranet',parsing:'parseando archivos',normalizing:'actualizando SQLite',uploading:'subiendo a Supabase',done:'completado'};
+  const pct=status&&Number.isFinite(status.progress)?Math.max(0,Math.min(100,status.progress*100)):0;
+  welcomeProgressBar.style.width=pct.toFixed(1)+'%';
+  welcomeTimer.textContent='Inicio: '+new Date(welcomeStartedAt).toLocaleTimeString()+
+    ' · Transcurrido: '+formatElapsed(elapsed)+
+    ' · Fase: '+(labels[phase]||phase);
+  welcomeTimer.classList.add('show');
+  if(elapsed>=600){
+    welcomeResult.className='welcome-result show err';
+    welcomeResult.textContent='La operación lleva más de 10 minutos. Puede seguir trabajando; revise la fase anterior y deténgala si no cambia durante varios minutos.';
+    if(elapsed===600&&'Notification' in window&&Notification.permission==='granted'){
+      new Notification('G360 DB Ventas',{body:'La actualización lleva más de 10 minutos. Revisa su progreso.'});
+    }
+  }else if(elapsed>=300){
+    welcomeResult.className='welcome-result show warn';
+    welcomeResult.textContent='La operación sigue en curso. Ya lleva '+formatElapsed(elapsed)+'; el tiempo depende de los días pendientes y la respuesta del intranet.';
+  }else{
+    welcomeResult.className='welcome-result show';
+    welcomeResult.textContent=(labels[phase]||'Procesando')+' · '+formatElapsed(elapsed);
+  }
+}
+function startWelcomeTimer(){
+  welcomeStartedAt=Date.now();
+  welcomeLastStatus={phase:'checking_lock',progress:0};
+  welcomeProgress.classList.add('show');
+  updateWelcomeProgress({phase:'checking_lock',progress:0});
+  welcomeTimerHandle=setInterval(()=>updateWelcomeProgress(),1000);
+}
+function stopWelcomeTimer(){if(welcomeTimerHandle){clearInterval(welcomeTimerHandle);welcomeTimerHandle=null;}}
+function waitForCapture(){
+  return new Promise((resolve,reject)=>{
+    let activeSeen=false;
+    const timer=setInterval(async()=>{
+      try{
+        const status=await invoke('get_capture_status');
+        if(status.state==='error'){
+          clearInterval(timer);
+          reject(new Error(status.message||'La captura no pudo completarse.'));
+        }else if(status.state==='syncing'||status.state==='uploading'||status.phase==='checking_lock'){
+          activeSeen=true;
+          updateWelcomeProgress(status);
+        }else if(activeSeen){
+          clearInterval(timer);
+          resolve(status);
+        }else if(Date.now()-welcomeStartedAt>45*60*1000){
+          clearInterval(timer);
+          reject(new Error('La captura excedió el tiempo esperado. Revise el estado y reintente.'));
+        }
+      }catch(err){
+        clearInterval(timer);
+        reject(err);
+      }
+    },1500);
+  });
+}
+function waitForUpload(uploadPromise){
+  const monitor=setInterval(async()=>{
+    try{
+      const status=await invoke('get_capture_status');
+      updateWelcomeProgress(status,'uploading');
+    }catch(e){}
+  },1000);
+  return uploadPromise.finally(()=>{clearInterval(monitor);});
+}
+document.getElementById('welcomeLater').addEventListener('click',closeWelcome);
+document.getElementById('welcomeStop').addEventListener('click',async()=>{
+  if(!confirm('¿Detener la captura en curso? Los datos ya guardados localmente se conservarán.'))return;
+  try{
+    await invoke('abort_capture');
+    welcomeResult.className='welcome-result show warn';
+    welcomeResult.textContent='Captura detenida. Los datos locales ya guardados se conservaron; puede reintentar cuando lo necesite.';
+  }catch(err){
+    welcomeResult.className='welcome-result show err';
+    welcomeResult.textContent='No se pudo detener: '+humanizeError(err);
+  }
+});
+document.getElementById('welcomeRun').addEventListener('click',async()=>{
+  const runBtn=document.getElementById('welcomeRun');
+  const laterBtn=document.getElementById('welcomeLater');
+  const stopBtn=document.getElementById('welcomeStop');
+  runBtn.disabled=true;
+  laterBtn.disabled=true;
+  stopBtn.classList.add('show');
+  startWelcomeTimer();
+  welcomeResult.textContent='Iniciando captura…';
+  try{
+    stopPolling();
+    await invoke('sync_from_last');
+    startPolling();
+    await waitForCapture();
+    updateWelcomeProgress({phase:'uploading',progress:.82});
+    welcomeResult.textContent='Captura local lista. Validando y subiendo a Supabase…';
+    await waitForUpload(invoke('upload_all_with_verify'));
+    welcomeResult.textContent='Actualización completada y verificada. Ya puede trabajar normalmente.';
+    welcomeProgressBar.style.width='100%';
+    welcomeTimer.textContent+=' · Finalizado: '+new Date().toLocaleTimeString();
+    stopWelcomeTimer();
+    stopBtn.classList.remove('show');
+    setTimeout(closeWelcome,1200);
+  }catch(err){
+    stopWelcomeTimer();
+    startPolling();
+    welcomeResult.className='welcome-result show err';
+    welcomeResult.textContent='No se completó el flujo: '+humanizeError(err);
+    runBtn.disabled=false;
+    laterBtn.disabled=false;
+    stopBtn.classList.remove('show');
+  }
+});
+welcomeOverlay.addEventListener('click',async(e)=>{
+  if(e.target!==welcomeOverlay)return;
+  if(welcomeTimerHandle&&confirm('La actualización sigue en curso. ¿Desea detener la captura?')){
+    try{await invoke('abort_capture');}catch(err){welcomeResult.className='welcome-result show err';welcomeResult.textContent='No se pudo detener: '+humanizeError(err);}
+  }
+});
+
 // ── AUTO-SYNC ON STARTUP ────────────────────────────────────────
 async function checkAutoSync(){
   try{
     const cfg=await invoke('get_settings');
-    if(cfg.auto_sync){
+    const onboardingSeen=(()=>{try{return localStorage.getItem('g360_onboarding_seen')==='1';}catch(e){return false;}})();
+    if(cfg.auto_sync&&onboardingSeen){
       show('auto-sync: verificando ultima captura...');
       const r=await invoke('sync_from_last');
       show(r.message);
@@ -973,6 +1225,9 @@ async function checkAutoSync(){
 
 load(); loadFailedDays();
 startPolling();
+try{
+  if(localStorage.getItem('g360_onboarding_seen')!=='1')showWelcome();
+}catch(e){showWelcome();}
 checkAutoSync();
 setInterval(loadFailedDays, 10000);
 </script>

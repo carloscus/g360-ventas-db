@@ -16,7 +16,7 @@ pub const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS ventas (
     cod_sucursal TEXT, nom_sucursal TEXT,
     departamento TEXT, provincia TEXT,     distrito TEXT,
     id_vendedor TEXT, nom_vendedor TEXT,
-    id_pedido TEXT,
+    id_pedido TEXT, ord_compra TEXT,
     file_source TEXT, mes_ref TEXT NOT NULL,
     capturado_en TEXT DEFAULT (datetime('now')),
     tipo_operacion TEXT DEFAULT 'venta',
@@ -102,6 +102,100 @@ CREATE TABLE IF NOT EXISTS stats_cache (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_stats_key ON stats_cache(key);
+";
+
+/// Tablas de dimensiones derivadas de ventas.
+/// Cada tabla se reconstruye con refresh_dim_tables() tras cada dedup/insert.
+/// Son la fuente de verdad para navegación local (clientes, vendedores, documentos, SKUs, lineas).
+pub const CREATE_DIM_TABLES_SQL: &str = "
+-- Clientes unicos (ultima info conocida + KPIs)
+CREATE TABLE IF NOT EXISTS dim_cliente (
+    id_cliente TEXT PRIMARY KEY,
+    nom_cliente TEXT NOT NULL,
+    doc_cliente TEXT,
+    departamento TEXT,
+    provincia TEXT,
+    distrito TEXT,
+    n_ventas INTEGER DEFAULT 0,
+    total_soles REAL DEFAULT 0,
+    total_dolares REAL DEFAULT 0,
+    ultima_compra TEXT,
+    actualizado_en TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_dim_cliente_nombre ON dim_cliente(nom_cliente);
+CREATE INDEX IF NOT EXISTS idx_dim_cliente_ruc ON dim_cliente(doc_cliente);
+
+-- Vendedores unicos
+CREATE TABLE IF NOT EXISTS dim_vendedor (
+    id_vendedor TEXT PRIMARY KEY,
+    nom_vendedor TEXT NOT NULL,
+    n_ventas INTEGER DEFAULT 0,
+    total_soles REAL DEFAULT 0,
+    n_clientes INTEGER DEFAULT 0,
+    ultima_venta TEXT,
+    actualizado_en TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_dim_vendedor_nombre ON dim_vendedor(nom_vendedor);
+
+-- Articulos/SKUs unicos (ultima info de catalogo)
+CREATE TABLE IF NOT EXISTS dim_articulo (
+    id_articulo TEXT PRIMARY KEY,
+    original_sku TEXT,
+    nom_articulo TEXT NOT NULL,
+    id_linea TEXT,
+    nom_linea TEXT,
+    id_grupo TEXT,
+    nom_grupo TEXT,
+    id_tipo TEXT,
+    nom_tipo TEXT,
+    id_familia TEXT,
+    nom_familia TEXT,
+    n_ventas INTEGER DEFAULT 0,
+    total_cantidad REAL DEFAULT 0,
+    total_soles REAL DEFAULT 0,
+    precio_promedio REAL DEFAULT 0,
+    ultima_venta TEXT,
+    actualizado_en TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_dim_articulo_sku ON dim_articulo(original_sku);
+CREATE INDEX IF NOT EXISTS idx_dim_articulo_nombre ON dim_articulo(nom_articulo);
+CREATE INDEX IF NOT EXISTS idx_dim_articulo_linea ON dim_articulo(id_linea);
+
+-- Cabeceras de documentos (una fila por folio unico)
+CREATE TABLE IF NOT EXISTS dim_documento (
+    folio_unico TEXT PRIMARY KEY,
+    tpo_doc TEXT NOT NULL,
+    serie_doc TEXT NOT NULL,
+    nro_doc TEXT NOT NULL,
+    fecha_orig TEXT NOT NULL,
+    id_cliente TEXT NOT NULL,
+    id_vendedor TEXT,
+    n_lineas INTEGER DEFAULT 0,
+    total_cantidad REAL DEFAULT 0,
+    total_soles REAL DEFAULT 0,
+    total_dolares REAL DEFAULT 0,
+    moneda TEXT DEFAULT 'Soles',
+    actualizado_en TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_dim_documento_cliente ON dim_documento(id_cliente, fecha_orig);
+CREATE INDEX IF NOT EXISTS idx_dim_documento_vendedor ON dim_documento(id_vendedor, fecha_orig);
+CREATE INDEX IF NOT EXISTS idx_dim_documento_fecha ON dim_documento(fecha_orig);
+CREATE INDEX IF NOT EXISTS idx_dim_documento_serie_nro ON dim_documento(serie_doc, nro_doc);
+
+-- Lineas/categorias unicas
+CREATE TABLE IF NOT EXISTS dim_linea (
+    id_linea TEXT PRIMARY KEY,
+    nom_linea TEXT,
+    id_grupo TEXT,
+    nom_grupo TEXT,
+    id_familia TEXT,
+    nom_familia TEXT,
+    n_ventas INTEGER DEFAULT 0,
+    total_soles REAL DEFAULT 0,
+    n_clientes INTEGER DEFAULT 0,
+    actualizado_en TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_dim_linea_grupo ON dim_linea(id_grupo);
 ";
 
 /// Vistas listas para consumir por CRM / dashboard / plataforma de devoluciones.

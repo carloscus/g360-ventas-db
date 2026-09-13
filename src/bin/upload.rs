@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
              moneda,cantidad,cantidad_fae,soles,dolares,precio_unitario,anho,mes,fecha_orig,\
              fecha_ref,fecha_venc,cod_sucursal,nom_sucursal,\
              departamento,provincia,distrito,id_vendedor,\
-             nom_vendedor,id_pedido,file_source,mes_ref,\
+              nom_vendedor,id_pedido,ord_compra,file_source,mes_ref,\
              tipo_operacion,factura_ref_serie,factura_ref_nro,folio_unico \
              FROM ventas {} LIMIT ? OFFSET ?", upload_where
         ))
@@ -84,12 +84,13 @@ async fn main() -> Result<()> {
                 id_vendedor: row.get(34),
                 nom_vendedor: row.get(35),
                 id_pedido: row.get(36),
-                file_source: row.get(37),
-                mes_ref: row.get(38),
-                tipo_operacion: row.try_get(39).unwrap_or_default(),
-                factura_ref_serie: row.try_get(40).unwrap_or_default(),
-                factura_ref_nro: row.try_get(41).unwrap_or_default(),
-                folio_unico: row.try_get(42).unwrap_or_default(),
+                ord_compra: row.get(37),
+                file_source: row.get(38),
+                mes_ref: row.get(39),
+                tipo_operacion: row.try_get(40).unwrap_or_default(),
+                factura_ref_serie: row.try_get(41).unwrap_or_default(),
+                factura_ref_nro: row.try_get(42).unwrap_or_default(),
+                folio_unico: row.try_get(43).unwrap_or_default(),
             }
         })
         .fetch_all(&pool)

@@ -115,45 +115,23 @@ pub async fn upload_all(
     progress_cb: &ProgressCb,
 ) -> Result<(usize, usize)> {
     let bs = 500;
-
-    // Full-sync (sin last_sync): purgar ventana completa en Supabase ANTES de re-subir,
-    // si no habría duplicados (no hay constraint única desde 20250901000000_fix_folio_unique.sql).
-    if last_sync.is_none() || last_sync == Some("") {
-        if let Some(cb) = progress_cb {
-            cb(0, 0, 0.02, "Full sync: purgando ventana en Supabase...");
-        }
-        match purge_supabase_window(retention_days).await {
-            Ok(purged) => info!("Full sync: {} filas purgadas en ventana de retencion", purged),
-            Err(e) => return Err(anyhow::anyhow!("Full sync: fallo purge de ventana: {}", e)),
-        }
-    }
+    // La retención se decide por mes de venta (`mes_ref`), nunca por
+    // `capturado_en`. Este último solo indica que el mes fue recapturado.
+    let retention_cutoff_month = if retention_days > 0 {
+        Some(
+            (chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
+                .format("%Y-%m")
+                .to_string(),
+        )
+    } else {
+        None
+    };
 
     // Filtro incremental: solo registros desde last_supabase_sync
     let sync_where = match last_sync {
         Some(s) if !s.is_empty() => format!("WHERE capturado_en > '{}'", s),
         _ => String::new(),
     };
-
-    // MONTH-AWARE SYNC: detectar meses re-capturados localmente (capturado_en más
-    // reciente que lo que Supabase conoce) y purgarlos en Supabase ANTES de subir.
-    // Cubre: re-capturas de meses pasados (datos posteados tarde en el ERP),
-    // re-atribuciones (vendedor/razón social) y reparses. Sin esto, Supabase
-    // retendría versiones viejas de esos meses para siempre.
-    if !sync_where.is_empty() {
-        if let Some(cb) = progress_cb {
-            cb(0, 0, 0.01, "Verificando meses re-capturados...");
-        }
-        match resync_stale_months(pool, last_sync).await {
-            Ok(stale) if !stale.is_empty() => {
-                info!("Month-aware sync: {} meses re-capturados detectados: {:?}", stale.len(), stale);
-                for (mes, purged) in stale {
-                    info!("Month-aware sync: mes {} purgado ({} filas)", mes, purged);
-                }
-            }
-            Ok(_) => {}
-            Err(e) => return Err(anyhow::anyhow!("Month-aware sync: fallo purga de meses: {}", e)),
-        }
-    }
 
     // Calcular cutoff de retencion (mes alineado: mes_ref es 'YYYY-MM')
     let retention_cutoff_date = if retention_days > 0 {
@@ -176,6 +154,54 @@ pub async fn upload_all(
     // RAW-FIRST: filtro OBLIGATORIO de líneas (allowlist + regla NC/ND) al subir.
     // La BD local guarda todo el export del ERP; Supabase solo recibe lo vital.
     let upload_where = crate::config::with_line_filter(&base_where);
+
+    let invalid_dates: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM ventas {} AND (
+            fecha_orig = '0001-01-01'
+            OR date(fecha_orig) IS NULL
+            OR length(fecha_orig) != 10
+            OR substr(fecha_orig, 5, 1) != '-'
+            OR substr(fecha_orig, 8, 1) != '-'
+            OR substr(fecha_orig, 1, 7) != substr(mes_ref, 1, 7)
+        )",
+        upload_where
+    ))
+    .fetch_one(pool)
+    .await
+    .context("Date validation query failed")?;
+    if invalid_dates > 0 {
+        return Err(anyhow::anyhow!(
+            "Se encontraron {} filas elegibles con fecha inválida o fuera de su mes_ref. Corrige/reprocesa el archivo local antes de subir.",
+            invalid_dates
+        ));
+    }
+
+    // Todas las purgas se ejecutan después de validar el lote local; un error de
+    // calidad nunca debe dejar Supabase parcialmente vacío.
+    if last_sync.is_none() || last_sync == Some("") {
+        if let Some(cb) = progress_cb {
+            cb(0, 0, 0.02, "Full sync: purgando ventana en Supabase...");
+        }
+        match purge_supabase_window(retention_days).await {
+            Ok(purged) => info!("Full sync: {} filas purgadas en ventana de retencion", purged),
+            Err(e) => return Err(anyhow::anyhow!("Full sync: fallo purge de ventana: {}", e)),
+        }
+    } else if let Some(cb) = progress_cb {
+        cb(0, 0, 0.01, "Verificando meses re-capturados...");
+    }
+
+    if !sync_where.is_empty() {
+        match resync_stale_months(pool, last_sync, retention_cutoff_month.as_deref()).await {
+            Ok(stale) if !stale.is_empty() => {
+                info!("Month-aware sync: {} meses re-capturados detectados: {:?}", stale.len(), stale);
+                for (mes, purged) in stale {
+                    info!("Month-aware sync: mes {} purgado ({} filas)", mes, purged);
+                }
+            }
+            Ok(_) => {}
+            Err(e) => return Err(anyhow::anyhow!("Month-aware sync: fallo purga de meses: {}", e)),
+        }
+    }
 
     // VALIDACIÓN duplicados: SOLO entre las filas elegibles para upload y con folio
     // no vacío. Raw-first: un duplicado en filas no-elegibles es irrelevante para
@@ -234,7 +260,7 @@ pub async fn upload_all(
          moneda,cantidad,cantidad_fae,soles,dolares,precio_unitario,anho,mes,fecha_orig,\
          fecha_ref,fecha_venc,cod_sucursal,nom_sucursal,\
          departamento,provincia,distrito,id_vendedor,\
-         nom_vendedor,id_pedido,file_source,mes_ref,\
+          nom_vendedor,id_pedido,ord_compra,file_source,mes_ref,\
          tipo_operacion,factura_ref_serie,factura_ref_nro,folio_unico \
          FROM ventas {} AND id > ? ORDER BY id LIMIT ?", upload_where
     );
@@ -292,12 +318,13 @@ pub async fn upload_all(
                     id_vendedor: row.get(35),
                     nom_vendedor: row.get(36),
                     id_pedido: row.get(37),
-                    file_source: row.get(38),
-                    mes_ref: row.get(39),
-                    tipo_operacion: row.try_get(40).unwrap_or_default(),
-                    factura_ref_serie: row.try_get(41).unwrap_or_default(),
-                    factura_ref_nro: row.try_get(42).unwrap_or_default(),
-                    folio_unico: row.try_get(43).unwrap_or_default(),
+                    ord_compra: row.try_get(38).unwrap_or_default(),
+                    file_source: row.get(39),
+                    mes_ref: row.get(40),
+                    tipo_operacion: row.try_get(41).unwrap_or_default(),
+                    factura_ref_serie: row.try_get(42).unwrap_or_default(),
+                    factura_ref_nro: row.try_get(43).unwrap_or_default(),
+                    folio_unico: row.try_get(44).unwrap_or_default(),
                 };
                 (row.get(0), v)
             })
@@ -355,6 +382,7 @@ pub async fn upload_all(
 pub async fn resync_stale_months(
     pool: &sqlx::SqlitePool,
     last_sync: Option<&str>,
+    retention_cutoff_month: Option<&str>,
 ) -> Result<Vec<(String, usize)>> {
     let url = get_supabase_url();
     let key = get_supabase_service_key();
@@ -364,13 +392,25 @@ pub async fn resync_stale_months(
 
     // Meses locales tocados desde el ultimo sync (o todos si full sync)
     let cutoff = last_sync.unwrap_or("2000-01-01");
-    let meses: Vec<(String, String)> = sqlx::query_as(
-        "SELECT mes_ref, MAX(capturado_en) FROM ventas
-         WHERE capturado_en > ? GROUP BY mes_ref ORDER BY mes_ref",
-    )
-    .bind(cutoff)
-    .fetch_all(pool)
-    .await?;
+    let meses: Vec<(String, String)> = if let Some(cutoff_month) = retention_cutoff_month {
+        sqlx::query_as(
+            "SELECT mes_ref, MAX(capturado_en) FROM ventas
+             WHERE capturado_en > ? AND mes_ref >= ?
+             GROUP BY mes_ref ORDER BY mes_ref",
+        )
+        .bind(cutoff)
+        .bind(cutoff_month)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query_as(
+            "SELECT mes_ref, MAX(capturado_en) FROM ventas
+             WHERE capturado_en > ? GROUP BY mes_ref ORDER BY mes_ref",
+        )
+        .bind(cutoff)
+        .fetch_all(pool)
+        .await?
+    };
 
     if meses.is_empty() {
         return Ok(vec![]);
@@ -383,6 +423,7 @@ pub async fn resync_stale_months(
     let mut purgados: Vec<(String, usize)> = Vec::new();
 
     for (mes_ref, max_local) in &meses {
+        let mes_filter = format!("eq.{}", mes_ref);
         // MAX(capturado_en) del mes en Supabase
         let resp = client
             .get(&base_url)
@@ -391,7 +432,7 @@ pub async fn resync_stale_months(
             .header("Prefer", "count=exact")
             .header("Range", "0-0")
             .query(&[
-                ("mes_ref", mes_ref.as_str()),
+                ("mes_ref", mes_filter.as_str()),
                 ("order", "capturado_en.desc"),
                 ("select", "capturado_en"),
             ])
@@ -439,7 +480,7 @@ pub async fn resync_stale_months(
                 .header("apikey", &key)
                 .header("Authorization", format!("Bearer {}", key))
                 .header("Prefer", "return=representation")
-                .query(&[("mes_ref", mes_ref.as_str()), ("select", "id")])
+                .query(&[("mes_ref", mes_filter.as_str()), ("select", "id")])
                 .send()
                 .await
                 .context("Month-aware: fallo DELETE de mes")?;
@@ -737,7 +778,7 @@ pub async fn validate_upload_data(
     // Calcular cutoff de retención
     let cutoff = if retention_days > 0 {
         Some((chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
-            .format("%Y-%m-%d")
+            .format("%Y-%m")
             .to_string())
     } else {
         None
@@ -780,6 +821,22 @@ pub async fn validate_upload_data(
         if cnt > 0 {
             invalid_rows.push(format!("{}: {} registros", name, cnt));
         }
+    }
+    let invalid_dates: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM ventas {} AND (
+            fecha_orig = '0001-01-01'
+            OR date(fecha_orig) IS NULL
+            OR length(fecha_orig) != 10
+            OR substr(fecha_orig, 5, 1) != '-'
+            OR substr(fecha_orig, 8, 1) != '-'
+            OR substr(fecha_orig, 1, 7) != substr(mes_ref, 1, 7)
+        )",
+        crate::config::with_line_filter(&base_where)
+    ))
+    .fetch_one(pool)
+    .await?;
+    if invalid_dates > 0 {
+        invalid_rows.push(format!("fechas_invalidas: {} registros", invalid_dates));
     }
     
     Ok(ValidationReport {
@@ -867,7 +924,7 @@ pub async fn dry_run_upload(
     // Calcular filtro de retención
     let retention_cutoff = if retention_days > 0 {
         Some((chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
-            .format("%Y-%m-%d")
+            .format("%Y-%m")
             .to_string())
     } else {
         None
@@ -887,6 +944,27 @@ pub async fn dry_run_upload(
         (Some(w), Some(cutoff)) => format!("{} AND mes_ref >= '{}'", w, cutoff),
     };
     let upload_where = crate::config::with_line_filter(&base_where);
+
+    let invalid_dates: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM ventas {} AND (
+            fecha_orig = '0001-01-01'
+            OR date(fecha_orig) IS NULL
+            OR length(fecha_orig) != 10
+            OR substr(fecha_orig, 5, 1) != '-'
+            OR substr(fecha_orig, 8, 1) != '-'
+            OR substr(fecha_orig, 1, 7) != substr(mes_ref, 1, 7)
+        )",
+        upload_where
+    ))
+    .fetch_one(pool)
+    .await
+    .context("Date validation query failed")?;
+    if invalid_dates > 0 {
+        return Err(anyhow::anyhow!(
+            "Dry-run bloqueado: {} filas elegibles tienen fechas inválidas o fuera de su mes_ref.",
+            invalid_dates
+        ));
+    }
 
     // Contar filas a subir
     let count_query = format!(

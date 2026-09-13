@@ -49,8 +49,9 @@ pub struct Venta {
     // Vendedor
     pub id_vendedor: String,
     pub nom_vendedor: String,
-    // Pedido
+    // Pedido / OC
     pub id_pedido: String,
+    pub ord_compra: String,
     // Metadata
     pub file_source: String,
     pub mes_ref: String,
@@ -101,6 +102,7 @@ impl Venta {
             id_vendedor: String::new(),
             nom_vendedor: String::new(),
             id_pedido: String::new(),
+            ord_compra: String::new(),
             file_source: file_source.to_string(),
             mes_ref: mes_ref.to_string(),
             tipo_operacion: String::new(),

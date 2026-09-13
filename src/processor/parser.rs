@@ -1,6 +1,6 @@
 // Comentarios en español - fechas internas yyyy-mm-dd, display dd/mm/yyyy
 use crate::models::Venta;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::path::Path;
 use tracing::info;
 
@@ -182,18 +182,21 @@ pub fn derivar_campos(v: &mut crate::models::Venta) {
     v.folio_unico = format!("{}/{}/{}", v.tpo_doc, v.serie_doc, v.nro_doc);
 }
 
-fn parse_date(s: &str) -> chrono::NaiveDate {
+fn parse_date(s: &str) -> Option<chrono::NaiveDate> {
     let s = s.trim();
     if s.is_empty() {
-        return chrono::NaiveDate::default();
+        return None;
     }
     if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%d/%m/%Y") {
-        return d;
+        return Some(d);
     }
     if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%d-%m-%Y") {
-        return d;
+        return Some(d);
     }
-    chrono::NaiveDate::default()
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return Some(d);
+    }
+    None
 }
 
 /// Core de parseo: lee el CSV y retorna TODAS las filas (raw-first).
@@ -242,6 +245,7 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
     let c_sd = col("SERIE_DOC");
     let c_nd = col("NRO_DOC");
     let _c_oc = col("ORD_COMPRA");
+    let c_oc = col("ORD_COMPRA");
     let _c_gu = col("ID_GUIA");
     let c_fo = col("FECHA_ORIG");
     let c_ref = col("REFERENCIA");
@@ -256,9 +260,15 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
     let c_fv = col("FECHA_VENC");
     let _c_div = col("DIVISION");
     let mut raw_rows: Vec<Venta> = Vec::new();
+    let mut invalid_dates = 0usize;
     for row in reader.records() {
         let r = row?;
         let g = |i: Option<usize>| -> String { clean_str(i.and_then(|x| r.get(x)).unwrap_or("")) };
+        let fecha_orig_raw = g(c_fo);
+        let Some(fecha_orig) = parse_date(&fecha_orig_raw) else {
+            invalid_dates += 1;
+            continue;
+        };
         let cantidad = parse_f64_ctx(&g(c_qt), "CANTIDAD");
         let cantidad_fae = parse_f64_ctx(&g(c_fae), "CANTIDAD FAE");
         let soles_raw = parse_f64_ctx(&g(c_sl), "SOLES");
@@ -309,7 +319,7 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
             precio_unitario,
             anho: g(c_anho).parse().unwrap_or(0),
             mes: label.get(5..7).and_then(|s| s.parse::<i32>().ok()).unwrap_or(0),
-            fecha_orig: parse_date(&g(c_fo)),
+            fecha_orig,
             fecha_ref: {
                 let s = g(c_fr);
                 if s.is_empty() {
@@ -334,6 +344,7 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
             id_vendedor: normalize_seller_id(&g(c_iv)),
             nom_vendedor: g(c_nv),
             id_pedido: g(c_ip),
+            ord_compra: g(c_oc),
             file_source: path
                 .file_name()
                 .unwrap_or_default()
@@ -354,6 +365,13 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
     // su factura referenciada tiene linea permitida) vive ahora en el WHERE del
     // upload (config::supabase_line_filter_sql), resuelta globalmente contra la
     // BD local: cubre facturas del mismo archivo Y de otros meses, sin pendientes.
+    if invalid_dates > 0 {
+        return Err(anyhow!(
+            "{} filas con fecha_orig invalida en {}; no se reemplaza el mes",
+            invalid_dates,
+            path.display()
+        ));
+    }
     info!("parse_export: {} rows (raw, sin filtrar) from {}", raw_rows.len(), path.display());
     Ok(raw_rows)
 }
@@ -431,6 +449,7 @@ pub fn parse_simple_csv(path: &Path) -> Result<Vec<Venta>> {
             id_vendedor: String::new(),
             nom_vendedor: String::new(),
             id_pedido: String::new(),
+            ord_compra: String::new(),
             file_source: path
                 .file_name()
                 .unwrap_or_default()
