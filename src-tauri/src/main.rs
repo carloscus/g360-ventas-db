@@ -198,7 +198,6 @@ async fn get_health() -> Result<HealthStats, String> {
     } else {
         "OK".to_string()
     };
-        .fetch_one(&pool).await.unwrap_or(0) == 1;
     Ok(HealthStats { total_records, min_date: min_date.unwrap_or_default(), max_date: max_date.unwrap_or_default(), last_capture, db_size_mb, status, db_path: db_path.to_string_lossy().to_string(), db_exists, dim_cliente: 0, dim_vendedor: 0, dim_articulo: 0, dim_documento: 0, dim_linea: 0, checksum_months: 0, total_months: 0, foreign_keys_on: false })
 }
 
