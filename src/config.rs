@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Carga variables desde un archivo .env si existen y no están ya definidas.
 /// Busca en: cwd, carpeta del ejecutable y hasta 6 niveles hacia arriba

@@ -1,4 +1,4 @@
-use crate::config::{get_supabase_key, get_supabase_service_key, get_supabase_url, SUPABASE_TABLE};
+use crate::config::{get_supabase_service_key, get_supabase_url, SUPABASE_TABLE};
 use crate::models::Venta;
 use anyhow::{Context, Result};
 use std::sync::Arc;
@@ -621,14 +621,6 @@ pub async fn cleanup_supabase_retention(
         .to_string();
     // mes alineado: borrar por mes_ref evita borrar dias sueltos del mes-corte
     let cutoff_mes = cutoff[..7].to_string();
-    let client = reqwest::Client::new();
-    let base_url = format!("{}/rest/v1/{}", url, SUPABASE_TABLE);
-
-    let cutoff = (chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
-        .format("%Y-%m-%d")
-        .to_string();
-    // mes alineado: borrar por mes_ref evita borrar dias sueltos del mes-corte
-    let cutoff_mes = cutoff[..7].to_string();
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
         .connect_timeout(Duration::from_secs(15))
@@ -757,96 +749,6 @@ pub async fn test_supabase_connection(url: &str, key: &str) -> Result<String> {
         ))
     }
 }
-
-// ─── CAPAS DE PROTECCIÓN PARA UPLOAD ────────────────────────────────────────
-
-/// Estructura de resultados para validación pre-upload
-#[derive(Debug, Clone)]
-pub struct ValidationReport {
-    pub total_rows: usize,
-    pub valid_rows: usize,
-    pub invalid_rows: Vec<String>,
-    pub warnings: Vec<String>,
-}
-
-/// Valida la calidad de los datos ANTES de subir
-pub async fn validate_upload_data(
-    pool: &sqlx::SqlitePool,
-    retention_days: u32,
-    last_sync: Option<&str>,
-) -> Result<ValidationReport> {
-    // Calcular cutoff de retención
-    let cutoff = if retention_days > 0 {
-        Some((chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
-            .format("%Y-%m")
-            .to_string())
-    } else {
-        None
-    };
-    
-    // Filtro incremental
-    let sync_filter = match last_sync {
-        Some(s) if !s.is_empty() => Some(s.to_string()),
-        _ => None,
-    };
-    
-    // WHERE base: retención + sync incremental
-    let base_where = match (&cutoff, &sync_filter) {
-        (Some(c), Some(s)) => format!("WHERE mes_ref >= '{}' AND capturado_en > '{}'", c, s),
-        (Some(c), None) => format!("WHERE mes_ref >= '{}'", c),
-        (None, Some(s)) => format!("WHERE capturado_en > '{}'", s),
-        (None, None) => String::new(),
-    };
-
-    // Contar filas que se subirian (con el filtro obligatorio de lineas, raw-first)
-    let count_query = format!(
-        "SELECT COUNT(*) FROM ventas {}",
-        crate::config::with_line_filter(&base_where)
-    );
-    
-    let total: i64 = sqlx::query_scalar(&count_query)
-        .fetch_one(pool)
-        .await?;
-    
-    // Validar que no haya nulos en campos críticos
-    let null_checks = vec![
-        ("sin_folio", "SELECT COUNT(*) FROM ventas WHERE folio_unico IS NULL OR folio_unico = ''"),
-        ("sin_sku", "SELECT COUNT(*) FROM ventas WHERE id_articulo IS NULL OR id_articulo = ''"),
-        ("cant_neg", "SELECT COUNT(*) FROM ventas WHERE cantidad < 0"),
-    ];
-    
-    let mut invalid_rows = Vec::new();
-    for (name, query) in null_checks {
-        let cnt: i64 = sqlx::query_scalar(query).fetch_one(pool).await.unwrap_or(0);
-        if cnt > 0 {
-            invalid_rows.push(format!("{}: {} registros", name, cnt));
-        }
-    }
-    let invalid_dates: i64 = sqlx::query_scalar(&format!(
-        "SELECT COUNT(*) FROM ventas {} AND (
-            fecha_orig = '0001-01-01'
-            OR date(fecha_orig) IS NULL
-            OR length(fecha_orig) != 10
-            OR substr(fecha_orig, 5, 1) != '-'
-            OR substr(fecha_orig, 8, 1) != '-'
-            OR substr(fecha_orig, 1, 7) != substr(mes_ref, 1, 7)
-        )",
-        crate::config::with_line_filter(&base_where)
-    ))
-    .fetch_one(pool)
-    .await?;
-    if invalid_dates > 0 {
-        invalid_rows.push(format!("fechas_invalidas: {} registros", invalid_dates));
-    }
-    
-    Ok(ValidationReport {
-        total_rows: total as usize,
-        valid_rows: total as usize,
-        invalid_rows,
-        warnings: Vec::new(),
-    })
-}
-
 /// Verifica post-upload: compara filas enviadas vs filas recibidas en Supabase.
 /// `since_utc` filtra por capturado_en >= timestamp de inicio del upload (las filas
 /// de esta corrida); sin él compararía contra el total de la tabla (siempre dispara

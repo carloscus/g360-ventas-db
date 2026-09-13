@@ -119,9 +119,6 @@ fn clean_id(s: &str) -> String {
     }
     t
 }
-fn normalize_doc_id(s: &str) -> String {
-    clean_id(s)
-}
 fn normalize_client_id(s: &str) -> String {
     let t = clean_id(s);
     if t.is_empty() {
@@ -174,8 +171,8 @@ pub fn derivar_campos(v: &mut crate::models::Venta) {
         // "F01/204-50867" -> parte[0]=F01 parte[1]=204-50867
         let rest = v.referencia.rsplit('/').next().unwrap_or("").to_string();
         if let Some((s, n)) = rest.split_once('-') {
-            v.factura_ref_serie = normalize_doc_id(s).to_uppercase();
-            v.factura_ref_nro = normalize_doc_id(n);
+            v.factura_ref_serie = clean_id(s).to_uppercase();
+            v.factura_ref_nro = clean_id(n);
         }
     }
     // folio_unico: ID unico para lookups y dedup en CRM
@@ -286,7 +283,7 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
         };
         let precio_unitario = (precio_raw * 10_000.0).round() / 10_000.0;
         let mut v = Venta {
-            id_articulo: normalize_doc_id(&g(c_ia)),
+            id_articulo: clean_id(&g(c_ia)),
             original_sku: g(c_ia),
             nom_articulo: g(c_na),
             id_linea: normalize_line_id(&g(c_il)),
@@ -301,8 +298,8 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
             doc_cliente: g(c_dc),
             nom_cliente: g(c_nc),
             tpo_doc: g(c_td).to_uppercase(),
-            serie_doc: normalize_doc_id(&g(c_sd)).to_uppercase(),
-            nro_doc: normalize_doc_id(&g(c_nd)),
+            serie_doc: clean_id(&g(c_sd)).to_uppercase(),
+            nro_doc: clean_id(&g(c_nd)),
             referencia: g(c_ref),
             moneda: {
                 let m = g(c_mn);
@@ -376,96 +373,8 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
     Ok(raw_rows)
 }
 
-/// Compatibilidad con el flujo de captura: en raw-first ya no hay resolucion
-/// cross-mes en el parse (el gate de NC/ND es en upload). Conserva la firma async.
+/// Wrapper async que reutiliza parse_export_csv para compatibilidad con el pipeline de captura.
+/// No aplica filtro cross-mes (el gate de NC/ND vive en upload).
 pub async fn parse_export_csv_with_cross(path: &Path, _pool: &sqlx::SqlitePool) -> Result<Vec<Venta>> {
     parse_export_csv(path)
-}
-
-/// Parsea formato simple 7 columnas
-pub fn parse_simple_csv(path: &Path) -> Result<Vec<Venta>> {
-    let label = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("unknown")
-        .replace("ventas_", "");
-    let mut reader = csv::Reader::from_path(path)?;
-    let headers: Vec<String> = reader
-        .headers()?
-        .iter()
-        .map(|h| h.trim().to_uppercase())
-        .collect();
-    let col = |name: &str| -> Option<usize> { headers.iter().position(|h| h.contains(name)) };
-    let nro_doc = col("NRO_DOCUMENTO");
-    let nom_cliente = col("NOM_CLIENTE");
-    let cod_sucursal = col("COD_SUCURSAL");
-    let nom_sucursal = col("NOM_SUCURSAL");
-    let cantidad = col("CANTIDAD");
-    let soles = col("SOLES");
-    let dolares = col("DOLARES");
-    let mut out = Vec::new();
-    for row in reader.records() {
-        let r = row?;
-        let g = |i: Option<usize>| -> String { clean_str(i.and_then(|x| r.get(x)).unwrap_or("")) };
-        let doc = g(nro_doc);
-        if doc.is_empty() || doc == "NRO_DOCUMENTO" {
-            continue;
-        }
-        let mut v = Venta {
-            id_articulo: String::new(),
-            original_sku: String::new(),
-            nom_articulo: String::new(),
-            id_linea: String::new(),
-            nom_linea: String::new(),
-            id_grupo: String::new(),
-            nom_grupo: String::new(),
-            id_tipo: String::new(),
-            nom_tipo: String::new(),
-            id_familia: String::new(),
-            nom_familia: String::new(),
-            id_cliente: normalize_client_id(&doc),
-            doc_cliente: String::new(),
-            nom_cliente: g(nom_cliente),
-            tpo_doc: String::new(),
-            serie_doc: String::new(),
-            nro_doc: doc.clone(),
-            referencia: String::new(),
-            moneda: "Soles".to_string(),
-            cantidad: parse_f64_ctx(&g(cantidad), "CANTIDAD"),
-            cantidad_fae: 0.0,
-            soles: parse_f64_ctx(&g(soles), "SOLES"),
-            dolares: parse_f64_ctx(&g(dolares), "DOLARES"),
-            precio_unitario: 0.0,
-            anho: label.get(0..4).and_then(|s| s.parse::<i32>().ok()).unwrap_or(0),
-            mes: label.get(5..7).and_then(|s| s.parse::<i32>().ok()).unwrap_or(0),
-            fecha_orig: chrono::NaiveDate::default(),
-            fecha_ref: None,
-            fecha_venc: None,
-            cod_sucursal: g(cod_sucursal),
-            nom_sucursal: g(nom_sucursal),
-            departamento: String::new(),
-            provincia: String::new(),
-            distrito: String::new(),
-            id_vendedor: String::new(),
-            nom_vendedor: String::new(),
-            id_pedido: String::new(),
-            ord_compra: String::new(),
-            file_source: path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string(),
-            mes_ref: label.clone(),
-            tipo_operacion: String::new(),
-            factura_ref_serie: String::new(),
-            factura_ref_nro: String::new(),
-            folio_unico: String::new(),
-        };
-        derivar_campos(&mut v);
-        if !v.id_cliente.is_empty() {
-            out.push(v);
-        }
-    }
-    info!("parse_simple: {} rows from {}", out.len(), path.display());
-    Ok(out)
 }

@@ -29,14 +29,6 @@ tempfile = "3"
 mockall = "0.13"
 
 [[bin]]
-name = "capture"
-path = "src/bin/capture.rs"
-
-[[bin]]
-name = "batch"
-path = "src/bin/batch_capture.rs"
-
-[[bin]]
 name = "upload"
 path = "src/bin/upload.rs"
 

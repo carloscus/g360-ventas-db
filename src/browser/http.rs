@@ -102,8 +102,7 @@ impl CipsaHttp {
         &self,
         url: &str,
         out_path: &Path,
-    ) -> Result<PathBufAlias> {
-        use std::path::PathBuf;
+    ) -> Result<std::path::PathBuf> {
         // Abort cooperativo: si el usuario pidio detener, cortar antes de iniciar red
         if crate::capture::CAPTURE_ABORT_GLOBAL.load(std::sync::atomic::Ordering::Relaxed) {
             return Err(anyhow!("abortado por usuario"));
@@ -160,8 +159,6 @@ impl CipsaHttp {
         Ok(out_path.to_path_buf())
     }
 }
-
-type PathBufAlias = std::path::PathBuf;
 
 fn url_is_login(html: &str) -> bool {
     // Pagina de login contiene el input txtnombre; el reporte no

@@ -176,61 +176,6 @@ pub async fn count_ventas(pool: &SqlitePool) -> Result<i64> {
     Ok(r.0)
 }
 
-pub async fn fetch_all_ventas(pool: &SqlitePool) -> Result<Vec<Venta>, sqlx::Error> {
-    use sqlx::Row;
-    let rows = query("SELECT id_articulo, original_sku, nom_articulo, id_linea, nom_linea, id_grupo, nom_grupo, id_tipo, nom_tipo, id_familia, nom_familia, id_cliente, doc_cliente, nom_cliente, tpo_doc, serie_doc, nro_doc, referencia, moneda, cantidad, cantidad_fae, soles, dolares, precio_unitario, anho, mes, fecha_orig, fecha_ref, fecha_venc, cod_sucursal, nom_sucursal, departamento, provincia, distrito, id_vendedor, nom_vendedor, id_pedido, ord_compra, file_source, mes_ref, tipo_operacion, factura_ref_serie, factura_ref_nro, folio_unico FROM ventas")
-        .fetch_all(pool).await?;
-    Ok(rows
-        .iter()
-        .map(|r| Venta {
-            id_articulo: r.get(0),
-            original_sku: r.get(1),
-            nom_articulo: r.get(2),
-            id_linea: r.get(3),
-            nom_linea: r.get(4),
-            id_grupo: r.get(5),
-            nom_grupo: r.get(6),
-            id_tipo: r.get(7),
-            nom_tipo: r.get(8),
-            id_familia: r.get(9),
-            nom_familia: r.get(10),
-            id_cliente: r.get(11),
-            doc_cliente: r.get(12),
-            nom_cliente: r.get(13),
-            tpo_doc: r.get(14),
-            serie_doc: r.get(15),
-            nro_doc: r.get(16),
-            referencia: r.get(17),
-            moneda: r.get(18),
-            cantidad: r.get(19),
-            cantidad_fae: r.get(20),
-            soles: r.get(21),
-            dolares: r.get(22),
-            precio_unitario: r.get(23),
-            anho: r.get(24),
-            mes: r.get(25),
-            fecha_orig: r.get(26),
-            fecha_ref: r.try_get(27).unwrap_or(None),
-            fecha_venc: r.try_get(28).unwrap_or(None),
-            cod_sucursal: r.get(29),
-            nom_sucursal: r.get(30),
-            departamento: r.get(31),
-            provincia: r.get(32),
-            distrito: r.get(33),
-            id_vendedor: r.get(34),
-            nom_vendedor: r.get(35),
-            id_pedido: r.get(36),
-            ord_compra: r.get(37),
-            file_source: r.get(38),
-            mes_ref: r.get(39),
-            tipo_operacion: r.try_get(40).unwrap_or_default(),
-            factura_ref_serie: r.try_get(41).unwrap_or_default(),
-            factura_ref_nro: r.try_get(42).unwrap_or_default(),
-            folio_unico: r.try_get(43).unwrap_or_default(),
-        })
-        .collect())
-}
-
 pub async fn count_by_month(pool: &SqlitePool) -> Result<Vec<(String, i64)>> {
     Ok(
         sqlx::query_as("SELECT mes_ref, COUNT(*) FROM ventas GROUP BY mes_ref ORDER BY mes_ref")

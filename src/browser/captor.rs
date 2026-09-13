@@ -57,14 +57,6 @@ pub fn generate_month_ranges(count: u32) -> Vec<MonthRange> {
         .collect()
 }
 
-pub fn generate_day_range(date: NaiveDate) -> MonthRange {
-    MonthRange {
-        start: date,
-        end: date,
-        label: date.format("%Y-%m-%d").to_string(),
-    }
-}
-
 /// Prechequeos para fallar rapido con mensaje accionable (ej. otra maquina/admin).
 pub fn preflight_checks() -> Result<(), String> {
     if effective_intranet_user().is_empty() || effective_intranet_pass().is_empty() {
@@ -439,28 +431,4 @@ impl CipsaSession {
         }
         Err(anyhow!("todos los esquemas de split fallaron para {}", day.label))
     }
-}
-
-pub async fn capture_month(
-    browser: &Browser,
-    month: &MonthRange,
-    output_dir: &Path,
-) -> Result<PathBuf> {
-    // compat: crea sesion efimera (usado por CLI antiguo)
-    let tab = browser.new_tab().map_err(|e| anyhow!("{:?}", e))?;
-    tab.set_default_timeout(Duration::from_secs(180));
-    info!("  [1] Login (compat)");
-    tab.navigate_to(LOGIN_URL).map_err(|e| anyhow!("{:?}", e))?;
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    js(&tab, &format!("document.getElementById('txtnombre').value='{}'", effective_intranet_user()));
-    tab.press_key("Tab").map_err(|e| anyhow!("{:?}", e))?;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    js(&tab, &format!("document.getElementById('txtpass').value='{}'", effective_intranet_pass()));
-    tab.press_key("Enter").map_err(|e| anyhow!("{:?}", e))?;
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    if tab.get_url().contains("login") { return Err(anyhow!("Login failed")); }
-    let report_url = format!("http://intranet.cipsa.com.pe/ESTADISTICASVENTAS/Estadistica11.aspx?valueCli=&valueVend=&valueVend2=&valueCli2=&valueSucI=&valueSucF=&accion=D0&valueArtI=&valueArtF=&valueAlmI=&valueAlmF=&valueFI={}&valueFF={}&valueGrat=1&valueDocs=01F%2c+01B%2c+01NCR%2c+01NDB", month.to_url_params().0, month.to_url_params().1);
-    tab.navigate_to(&report_url).map_err(|e| anyhow!("{:?}", e))?;
-    for _ in 0..12 { tokio::time::sleep(Duration::from_secs(2)).await; let bl = js(&tab, "document.body ? document.body.innerHTML.length : 0").parse::<usize>().unwrap_or(0); if bl>1000 {break;} }
-    download_xls(&tab, month, output_dir).await
 }

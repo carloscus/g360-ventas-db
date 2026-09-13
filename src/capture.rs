@@ -6,11 +6,11 @@ use std::time::{Duration as StdDuration, Instant};
 use tokio::time::sleep;
 use tracing::{info, warn};
 
-use crate::browser::captor::{CipsaSession, MonthRange};
+use crate::browser::captor::MonthRange;
 use crate::config::{raw_dir, SLEEP_BETWEEN_MONTHS};
 use crate::db::writer::{dedup_ventas, init_pool, insert_ventas};
-use crate::processor::parser::{parse_export_csv, parse_export_csv_with_cross};
-use crate::capture_state::{CapturePhase, ProgressState, SharedProgress, now_secs};
+use crate::processor::parser::parse_export_csv_with_cross;
+use crate::capture_state::{CapturePhase, SharedProgress, now_secs};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -74,7 +74,7 @@ impl Drop for LockGuard {
     fn drop(&mut self) {
         // Cerrar handle explicito antes de borrar (Windows requiere handle cerrado)
         let _ = self._file.sync_all();
-        drop(&self._file);
+        // Drop del File directamente — Drop impl se encarga cuando el campo sale del scope
         // Reintentar borrado hasta 3 veces (Windows puede tardar en liberar)
         for _ in 0..3 {
             if std::fs::remove_file(&self.path).is_ok() { break; }
@@ -291,7 +291,7 @@ pub async fn run_batch_history(
     } else {
         let s_d = user_start.unwrap();
         let e_d = user_end.unwrap();
-        ((e_d - s_d).num_days() as usize / 31 + 1)
+        (e_d - s_d).num_days() as usize / 31 + 1
     };
 
     {
@@ -354,7 +354,7 @@ pub async fn run_batch_history(
         }
     }
 
-    let mut session: Transport = {
+    let session: Transport = {
         let http = crate::browser::http::CipsaHttp::new();
         match http {
             Ok(h) => match h.login().await {
@@ -778,7 +778,7 @@ pub async fn run_batch_history(
                 if !recovered {
                     warn!("  {} dia-a-dia incompleto, probando fallback HTML L0", m.label);
                     match session.scrape_html(m, &raw).await {
-                        Ok(xls) => {
+                        Ok(_xls) => {
                             let csv = raw.join(format!("ventas_{}.csv", m.label));
                             // scrape_html ya deja CSV, intentar parsear
                             if csv.exists() {
