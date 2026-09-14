@@ -109,6 +109,17 @@ pub async fn init_pool() -> Result<SqlitePool> {
             let _ = refresh_dim_tables(&pool).await;
         }
     }
+    // Migración 2026-09-13: normalizar id_vendedor quitando prefijo "01"
+    // Antes: 01O01, 01193, 01M09 (5 chars con prefijo) -> Después: O01, 193, M09 (3 chars)
+    let ventas_migradas = sqlx::query("UPDATE ventas SET id_vendedor = SUBSTR(id_vendedor, 4) WHERE id_vendedor GLOB '01???'")
+        .execute(&pool)
+        .await;
+    if let Ok(affected) = ventas_migradas {
+        if affected.rows_affected() > 0 {
+            info!("Migracion id_vendedor: {} filas normalizadas (quitando prefijo 01)", affected.rows_affected());
+            let _ = refresh_dim_tables(&pool).await;
+        }
+    }
     info!("DB ready: {}", db.display());
     Ok(pool)
 }
@@ -519,18 +530,17 @@ pub async fn detectar_entidades_duplicadas(pool: &SqlitePool) -> Result<Vec<Stri
             "🔴 CLIENTES PARTIDOS: {} grupos donde 2+ id_cliente son el mismo numero con distinto padding", n));
     }
 
-    // Vendedor: mismo numero con/sin prefijo "01"
+    // Vendedor: ya normalizado (sin prefijo 01), verificar integridad
     let n: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM (
-            SELECT CASE WHEN id_vendedor LIKE '01%' THEN SUBSTR(id_vendedor,3) ELSE id_vendedor END k,
-                   COUNT(DISTINCT id_vendedor) n
+            SELECT id_vendedor k, COUNT(DISTINCT id_vendedor) n
             FROM ventas WHERE id_vendedor != '' GROUP BY k HAVING n > 1
         )"
     )
     .fetch_one(pool)
     .await?;
     if n > 0 {
-        issues.push(format!("🔴 VENDEDORES PARTIDOS: {} grupos con forma corta y larga del mismo codigo", n));
+        issues.push(format!("🔴 VENDEDORES PARTIDOS: {} grupos con claves duplicadas", n));
     }
 
     // Linea: mismo codigo con/sin prefijo "01"

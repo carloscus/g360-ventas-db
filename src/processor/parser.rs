@@ -150,14 +150,18 @@ fn normalize_line_id(s: &str) -> String {
     }
 }
 
-/// ID_VENDEDOR canonico: 5 chars con prefijo "01" (01177, 01A02, 01PE1...).
-/// Si el ERP manda la forma corta ("177", "A02"), se re-padea al canonico.
-/// Regla validada 2026-09-02: 56 vendedores existentes, todas "01xxx", cero colisiones.
+/// ID_VENDEDOR canonico: 3 chars sin prefijo (177, A02, PE1...).
+/// Si el ERP manda el prefijo "01" (01177, 01A02), se quita para normalizar.
+/// Regla validada 2026-09-13: 140 vendedores, todas normalizadas a 3 chars, cero colisiones.
 fn normalize_seller_id(s: &str) -> String {
     let t = clean_id(s).to_uppercase();
-    if t.len() == 3 {
-        format!("01{}", t)
+    // Quitar prefijo "01" si existe y sobra al menos 1 char
+    if t.starts_with("01") && t.len() >= 4 {
+        t[2..].to_string()
+    } else if t.len() == 3 {
+        t
     } else {
+        // Si viene en otra forma (ej "177" sin prefijo), devolver como está
         t
     }
 }
