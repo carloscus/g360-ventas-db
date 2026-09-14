@@ -98,6 +98,17 @@ pub async fn init_pool() -> Result<SqlitePool> {
     // Repopular precio_unitario para ajustes de valor (cantidad=0) usando CANTIDAD FAE como base
     // (ej. vendi 1000 pero descuente 500 entregados -> precio aplicado = soles / FAE)
     let _ = sqlx::query("UPDATE ventas SET precio_unitario = ROUND(soles / cantidad_fae, 4) WHERE cantidad = 0 AND cantidad_fae != 0 AND precio_unitario = 0").execute(&pool).await;
+    // Migración 2026-09-13: normalizar id_linea quitando prefijo "01"
+    // Antes: 0101, 01MA, 01AD (4 chars con prefijo) -> Después: 01, MA, AD (2 chars)
+    let lineas_migradas = sqlx::query("UPDATE ventas SET id_linea = SUBSTR(id_linea, 3) WHERE id_linea GLOB '01??'")
+        .execute(&pool)
+        .await;
+    if let Ok(affected) = lineas_migradas {
+        if affected.rows_affected() > 0 {
+            info!("Migracion id_linea: {} filas normalizadas (quitando prefijo 01)", affected.rows_affected());
+            let _ = refresh_dim_tables(&pool).await;
+        }
+    }
     info!("DB ready: {}", db.display());
     Ok(pool)
 }
@@ -133,7 +144,7 @@ pub async fn insert_ventas(pool: &SqlitePool, ventas: &[Venta]) -> Result<usize>
     let mut n = 0usize;
     for v in ventas {
         sqlx::query(
-            "INSERT INTO ventas (id_articulo,original_sku,nom_articulo,id_linea,nom_linea,id_grupo,nom_grupo, id_tipo,nom_tipo,id_familia,nom_familia, id_cliente,doc_cliente,nom_cliente,tpo_doc,serie_doc,nro_doc,referencia, moneda,cantidad,cantidad_fae,soles,dolares,precio_unitario,anho,mes,fecha_orig, fecha_ref,fecha_venc,cod_sucursal,nom_sucursal, departamento,provincia,distrito, id_vendedor, nom_vendedor,id_pedido,ord_compra,file_source,mes_ref,tipo_operacion,factura_ref_serie,factura_ref_nro,folio_unico) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            "INSERT INTO ventas (id_articulo,original_sku,nom_articulo,id_linea,nom_linea,id_grupo,nom_grupo, id_tipo,nom_tipo,id_familia,nom_familia, id_cliente,doc_cliente,nom_cliente,tpo_doc,serie_doc,nro_doc,referencia, moneda,cantidad,cantidad_fae,soles,dolares,precio_unitario,anho,mes,fecha_orig, fecha_ref,fecha_venc,cod_sucursal,nom_sucursal, departamento,provincia,distrito, id_vendedor, nom_vendedor,id_pedido,ord_compra,file_source,mes_ref,tipo_operacion,factura_ref_serie,factura_ref_nro,folio_unico) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         )
         .bind(&v.id_articulo).bind(&v.original_sku).bind(&v.nom_articulo)
         .bind(&v.id_linea).bind(&v.nom_linea).bind(&v.id_grupo).bind(&v.nom_grupo)
@@ -797,4 +808,22 @@ pub async fn recalculate_missing_checksums(pool: &SqlitePool) -> Result<usize> {
     let count = n.len();
     info!("Checksums recalculados: {} meses", count);
     Ok(count)
+}
+
+/// Exporta la BD completa a un archivo standalone (VACUUM INTO) listo para compartir.
+/// Produce un unico archivo .db sin WAL, con dims pobladas y checksums actuales.
+pub async fn export_full_db(target_path: &std::path::Path) -> Result<String> {
+    let pool = init_pool().await?;
+    // Poblar dim tables si estan vacias
+    let _ = refresh_dim_tables(&pool).await;
+    // Recalcular checksums de meses faltantes
+    let _ = recalculate_missing_checksums(&pool).await;
+    // VACUUM INTO produce un .db autocontenido (sin -wal)
+    sqlx::query("VACUUM INTO ?")
+        .bind(target_path.to_string_lossy().to_string())
+        .execute(&pool)
+        .await?;
+    let size = std::fs::metadata(target_path).map(|m| m.len()).unwrap_or(0) as f64;
+    info!("Export BD completa: {} -> {:.1} MB", target_path.display(), size / 1024.0 / 1024.0);
+    Ok(format!("Exportado: {} ({:.1} MB)", target_path.file_name().unwrap_or_default().to_string_lossy(), size / 1024.0 / 1024.0))
 }

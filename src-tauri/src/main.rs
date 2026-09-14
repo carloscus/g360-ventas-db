@@ -462,7 +462,7 @@ async fn capture_range(startDate: String, endDate: String) -> Result<CaptureStat
 
     let shared_err = shared.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = g360_db_ventas::capture::run_batch_history(&sd, &ed, false, shared, Some(CAPTURE_ABORT.clone())).await {
+        if let Err(e) = g360_db_ventas::capture::run_batch_history(&sd, &ed, false, shared, Some(CAPTURE_ABORT.clone()), 3).await {
             let mut st = shared_err.lock().unwrap();
             st.set_phase(CapturePhase::Error, &format!("Error: {e}"));
             st.update_progress(0.0, &format!("Error: {e}"));
@@ -553,7 +553,7 @@ async fn sync_from_last() -> Result<CaptureStatus, String> {
 
     let shared_err = shared.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = g360_db_ventas::capture::run_batch_history(&last_date, "", false, shared, Some(CAPTURE_ABORT.clone())).await {
+        if let Err(e) = g360_db_ventas::capture::run_batch_history(&last_date, "", false, shared, Some(CAPTURE_ABORT.clone()), 3).await {
             let mut st = shared_err.lock().unwrap();
             st.set_phase(CapturePhase::Error, &format!("Error: {e}"));
             st.update_progress(0.0, &format!("Error: {e}"));
@@ -1232,8 +1232,8 @@ async fn run_auto_sync_and_exit() -> ! {
     let yesterday = Local::now().naive_local().date() - TimeDelta::days(1);
     let yesterday_str = yesterday.to_string();
     
-    let capture_result = g360_db_ventas::capture::run_batch_history(&yesterday_str, "", false, CAPTURE_STATE.clone(), None).await;
-    
+    let capture_result = g360_db_ventas::capture::run_batch_history(&yesterday_str, "", false, CAPTURE_STATE.clone(), None, 3).await;
+
     match capture_result {
         Ok(_) => {
             println!("✓ Captura completada: {}", yesterday_str);
@@ -1385,7 +1385,7 @@ fn main() {
                 // Protección de upload
                 upload_dry_run, upload_all_with_verify,
                 // Mantenimiento DB
-                vacuum_db, backup_db, recalculate_checksums, get_db_health,
+                vacuum_db, backup_db, export_full_db, recalculate_checksums, get_db_health,
                 // Automatización diaria
                 auto_daily_pipeline, get_next_capture_time
             ])
@@ -1628,7 +1628,7 @@ async fn auto_daily_pipeline() -> Result<serde_json::Value, String> {
     let yesterday = chrono::Utc::now().date_naive() - chrono::Duration::days(1);
     let yesterday_str = yesterday.format("%Y-%m-%d").to_string();
 
-    let capture_result = g360_db_ventas::capture::run_batch_history(&yesterday_str, "", false, CAPTURE_STATE.clone(), None).await;
+    let capture_result = g360_db_ventas::capture::run_batch_history(&yesterday_str, "", false, CAPTURE_STATE.clone(), None, 3).await;
 
     match capture_result {
         Ok(_) => {
@@ -1764,6 +1764,14 @@ async fn vacuum_db() -> Result<String, String> {
 #[tauri::command]
 async fn backup_db() -> Result<String, String> {
     g360_db_ventas::db::writer::backup_db().await.map_err(|e| e.to_string())
+}
+
+/// Exporta la BD completa a un archivo standalone (VACUUM INTO) listo para compartir.
+/// Pobla dims y recalcula checksums antes de exportar.
+#[tauri::command]
+async fn export_full_db(path: String) -> Result<String, String> {
+    let target = std::path::Path::new(&path);
+    g360_db_ventas::db::writer::export_full_db(target).await.map_err(|e| e.to_string())
 }
 
 /// Calcula checksums para meses que aun no tienen hash (complementa los 105/121).

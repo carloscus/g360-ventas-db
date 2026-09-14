@@ -285,11 +285,8 @@ pub fn effective_allowed_lines() -> Vec<String> {
 }
 
 pub fn is_allowed_line(id_linea: &str) -> bool {
-    if id_linea.len() < 2 {
-        return false;
-    }
-    let suffix = &id_linea[id_linea.len() - 2..];
-    effective_allowed_lines().iter().any(|s| s == suffix)
+    // Ahora id_linea es de 2 chars sin prefijo (ej: MA, 01, 78)
+    effective_allowed_lines().contains(&id_linea.to_uppercase())
 }
 
 /// WHERE SQL obligatorio que aplica el filtro de líneas al subir a Supabase (raw-first).
@@ -314,12 +311,12 @@ pub fn supabase_line_filter_sql() -> String {
         return "1 = 0".to_string();
     }
     format!(
-        "(substr(id_linea, -2) IN ({list}) OR ((tpo_doc LIKE '%NCR%' OR tpo_doc LIKE '%NDB%') \
+        "(id_linea IN ({list}) OR ((tpo_doc LIKE '%NCR%' OR tpo_doc LIKE '%NDB%') \
          AND EXISTS (SELECT 1 FROM ventas f \
           WHERE f.serie_doc = ventas.factura_ref_serie \
             AND f.nro_doc = ventas.factura_ref_nro \
             AND (f.tpo_doc LIKE 'F01%' OR f.tpo_doc = 'F01') \
-            AND substr(f.id_linea, -2) IN ({list}))))"
+            AND f.id_linea IN ({list}))))"
     )
 }
 

@@ -70,6 +70,7 @@ async fn main() -> Result<()> {
         false,
         shared,
         None,
+        1,
     ).await;
 
     watcher.abort();

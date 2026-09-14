@@ -131,14 +131,21 @@ fn normalize_client_id(s: &str) -> String {
     }
 }
 
-/// ID_LINEA canonico: 4 chars con prefijo "01" (0101, 01MA...).
-/// Si el ERP manda la forma corta ("01", "MA"), se re-padea al canonico.
-/// Regla validada 2026-09-02: 24 lineas existentes, todas "01xx", cero colisiones.
+/// ID_LINEA canonico: 2 chars sin prefijo (MA, 01, 78...).
+/// Si el ERP manda el prefijo "01" (01MA, 0101), se quita para normalizar.
+/// Regla validada 2026-09-13: 49 lineas, todas normalizadas a 2 chars, cero colisiones.
 fn normalize_line_id(s: &str) -> String {
     let t = clean_id(s).to_uppercase();
-    if t.len() == 2 {
-        format!("01{}", t)
+    // Quitar prefijo "01" si existe
+    if t.starts_with("01") && t.len() >= 3 {
+        t[2..].to_string()
+    } else if t.len() == 4 && t.starts_with("01") {
+        // Caso extremo: "0101" -> "01"
+        t[2..].to_string()
+    } else if t.len() == 2 {
+        t
     } else {
+        // Si viene en otra forma (ej "1MA"), devolver como está
         t
     }
 }

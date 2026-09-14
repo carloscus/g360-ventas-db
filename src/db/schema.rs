@@ -78,9 +78,12 @@ pub const CREATE_INDEXES_SQL: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_venta_sku ON ventas(id_articulo);",
     "CREATE INDEX IF NOT EXISTS idx_venta_orig_sku ON ventas(original_sku);",
     "CREATE INDEX IF NOT EXISTS idx_venta_linea ON ventas(id_linea);",
-    // Sufijo de 2 chars usado por el filtro obligatorio de líneas del upload
-    // (config::supabase_line_filter_sql usa exactamente substr(id_linea, -2))
+    // Index para filtro rapido por sufijo (compatibilidad con versions anteriores)
     "CREATE INDEX IF NOT EXISTS idx_venta_linea_sufijo ON ventas(substr(id_linea, -2));",
+    // Index para filtro exacto por id_linea (normalizado sin prefijo 01)
+    "CREATE INDEX IF NOT EXISTS idx_venta_linea_exact ON ventas(id_linea);",
+    // Index para filtro exacto por id_linea (despues de normalizacion sin prefijo 01)
+    "CREATE INDEX IF NOT EXISTS idx_venta_linea_exact ON ventas(id_linea);",
     "CREATE INDEX IF NOT EXISTS idx_venta_doc ON ventas(tpo_doc, serie_doc, nro_doc);",
     "CREATE INDEX IF NOT EXISTS idx_venta_ref ON ventas(referencia);",
     "CREATE INDEX IF NOT EXISTS idx_venta_tipo_op ON ventas(tipo_operacion);",
