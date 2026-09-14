@@ -254,7 +254,7 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
     let c_nd = col("NRO_DOC");
     let _c_oc = col("ORD_COMPRA");
     let c_oc = col("ORD_COMPRA");
-    let _c_gu = col("ID_GUIA");
+    let c_ug = col("ID_GUIA");
     let c_fo = col("FECHA_ORIG");
     let c_ref = col("REFERENCIA");
     let c_fr = col("FECHA_REF");
@@ -263,10 +263,15 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
     let c_fae = col("CANTIDAD FAE");
     let c_sl = col("SOLES").or(col("TOTAL"));
     let c_do = col("DOLARES");
-    let _c_cp = col("NOM_CONDICION_PAGO");
+    let _c_div = col("DIVISION");
+    let c_div = col("DIVISION");
+    let c_ube = col("ID_LOCALIDAD_UBIGEO").or(col("UBIGEO"));
+    let c_canal = col("CANAL DE DISTRIBUCION").or(col("CANAL_DISTRIBUCION"));
+    let c_cpg = col("NOM_CONDICION_PAGO").or(col("CONDICION_PAGO"));
+    let c_est = col("ESTADO_LINEA");
+    let c_fec = col("FEC_CARGO");
     let c_ip = col("ID_PEDIDO");
     let c_fv = col("FECHA_VENC");
-    let _c_div = col("DIVISION");
     let mut raw_rows: Vec<Venta> = Vec::new();
     let mut invalid_dates = 0usize;
     for row in reader.records() {
@@ -353,6 +358,13 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
             nom_vendedor: g(c_nv),
             id_pedido: g(c_ip),
             ord_compra: g(c_oc),
+            id_ubigeo: g(c_ube),
+            canal_distribucion: g(c_canal),
+            nom_condicion_pago: g(c_cpg),
+            estado_linea: g(c_est),
+            division: g(c_div),
+            fec_cargo: g(c_fec),
+            id_guia: g(c_ug),
             file_source: path
                 .file_name()
                 .unwrap_or_default()

@@ -60,6 +60,14 @@ pub struct Venta {
     pub factura_ref_serie: String,   // serie de la factura referenciada (si NCR/NDB)
     pub factura_ref_nro: String,     // nro de la factura referenciada
     pub folio_unico: String,         // tpo_doc/serie-nro unico para dedup y lookups
+    // Columnas adicionales del ERP (no siempre presentes en export antiguo)
+    pub id_ubigeo: String,
+    pub canal_distribucion: String,
+    pub nom_condicion_pago: String,
+    pub estado_linea: String,
+    pub division: String,
+    pub fec_cargo: String,
+    pub id_guia: String,
 }
 
 impl Venta {
@@ -109,6 +117,13 @@ impl Venta {
             factura_ref_serie: String::new(),
             factura_ref_nro: String::new(),
             folio_unico: String::new(),
+            id_ubigeo: String::new(),
+            canal_distribucion: String::new(),
+            nom_condicion_pago: String::new(),
+            estado_linea: String::new(),
+            division: String::new(),
+            fec_cargo: String::new(),
+            id_guia: String::new(),
         }
     }
 }

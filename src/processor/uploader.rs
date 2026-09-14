@@ -325,6 +325,13 @@ pub async fn upload_all(
                     factura_ref_serie: row.try_get(42).unwrap_or_default(),
                     factura_ref_nro: row.try_get(43).unwrap_or_default(),
                     folio_unico: row.try_get(44).unwrap_or_default(),
+                    id_ubigeo: row.try_get(45).unwrap_or_default(),
+                    canal_distribucion: row.try_get(46).unwrap_or_default(),
+                    nom_condicion_pago: row.try_get(47).unwrap_or_default(),
+                    estado_linea: row.try_get(48).unwrap_or_default(),
+                    division: row.try_get(49).unwrap_or_default(),
+                    fec_cargo: row.try_get(50).unwrap_or_default(),
+                    id_guia: row.try_get(51).unwrap_or_default(),
                 };
                 (row.get(0), v)
             })

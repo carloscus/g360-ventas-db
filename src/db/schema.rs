@@ -22,7 +22,14 @@ pub const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS ventas (
     tipo_operacion TEXT DEFAULT 'venta',
     factura_ref_serie TEXT,
     factura_ref_nro TEXT,
-    folio_unico TEXT
+    folio_unico TEXT,
+    id_ubigeo TEXT,
+    canal_distribucion TEXT,
+    nom_condicion_pago TEXT,
+    estado_linea TEXT,
+    division TEXT,
+    fec_cargo TEXT,
+    id_guia TEXT
 )";
 
 // Tablas de auditoría e integridad
