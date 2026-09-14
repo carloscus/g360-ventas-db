@@ -328,7 +328,7 @@ async fn process_month(
                     if csv_path.exists() {
                         let pool = init_pool().await?;
                         if let Ok(ventas) = parse_export_csv_with_cross(&csv_path, &pool).await {
-                            let n = insert_ventas(&pool, &ventas).await?;
+                            let n = insert_ventas(&pool, &ventas, false).await?;
                             info!("  Normalizado: {} filas -> {}", m.label, n);
                             {
                                 let mut s = shared.lock().unwrap();
@@ -397,7 +397,7 @@ async fn process_month(
                 if merge_csvs(&parts0, &merged).is_ok() && merged.exists() && std::fs::metadata(&merged).map(|mm| mm.len()>1000).unwrap_or(false) {
                     let pool = init_pool().await?;
                     match parse_export_csv_with_cross(&merged, &pool).await {
-                        Ok(ventas) => match insert_ventas(&pool, &ventas).await {
+                        Ok(ventas) => match insert_ventas(&pool, &ventas, false).await {
                             Ok(n) => {
                                 info!("  merge directo {} filas -> {}", m.label, n);
                                 recovered = true;
@@ -459,7 +459,7 @@ async fn process_month(
                             Ok(ventas) if !ventas.is_empty() => {
                                 match init_pool().await {
                                     Ok(pool) => {
-                                        match insert_ventas(&pool, &ventas).await {
+                                        match insert_ventas(&pool, &ventas, false).await {
                                             Ok(n) => {
                                                 info!("  granular insert {} filas -> {}", m.label, n);
                                                 recovered = true;
@@ -570,7 +570,7 @@ async fn process_month(
                     let pool = init_pool().await?;
                     match parse_export_csv_with_cross(&merged, &pool).await {
                         Ok(ventas) => {
-                            match insert_ventas(&pool, &ventas).await {
+                            match insert_ventas(&pool, &ventas, false).await {
                                 Ok(n) => info!("  dia-a-dia insert {} filas -> {}", m.label, n),
                                 Err(e) => warn!("  dia-a-dia insert fail {}: {}", m.label, e),
                             }
@@ -605,7 +605,7 @@ async fn process_month(
                             let pool = init_pool().await?;
                             match parse_export_csv_with_cross(&csv, &pool).await {
                                 Ok(ventas) if !ventas.is_empty() => {
-                                    match insert_ventas(&pool, &ventas).await {
+                                    match insert_ventas(&pool, &ventas, false).await {
                                         Ok(n) => { info!("  HTML fallback insert {} filas -> {}", m.label, n); recovered = true; let _ = std::fs::remove_file(raw.join(format!("failed_{}.json", m.label))); },
                                         Err(e) => warn!("  HTML insert fail: {}", e),
                                     }
@@ -843,7 +843,7 @@ pub async fn run_batch_history(
                             if csv_path.exists() {
                                 let pool = init_pool().await?;
                                 if let Ok(ventas) = parse_export_csv_with_cross(&csv_path, &pool).await {
-                                    let n = insert_ventas(&pool, &ventas).await?;
+                                    let n = insert_ventas(&pool, &ventas, false).await?;
                                     info!("  Normalizado: {} filas -> {}", m.label, n);
                                     {
                                         let mut s = shared.lock().unwrap();
@@ -929,7 +929,7 @@ pub async fn run_batch_history(
                         if merge_csvs(&parts0, &merged).is_ok() && merged.exists() && std::fs::metadata(&merged).map(|mm| mm.len()>1000).unwrap_or(false) {
                             let pool = init_pool().await?;
                             match parse_export_csv_with_cross(&merged, &pool).await {
-                                Ok(ventas) => match insert_ventas(&pool, &ventas).await {
+                                Ok(ventas) => match insert_ventas(&pool, &ventas, false).await {
                                     Ok(n) => {
                                         info!("  merge directo {} filas -> {}", m.label, n);
                                         recovered = true;
@@ -991,7 +991,7 @@ pub async fn run_batch_history(
                                     Ok(ventas) if !ventas.is_empty() => {
                                         match init_pool().await {
                                             Ok(pool) => {
-                                                match insert_ventas(&pool, &ventas).await {
+                                                match insert_ventas(&pool, &ventas, false).await {
                                                     Ok(n) => {
                                                         info!("  granular insert {} filas -> {}", m.label, n);
                                                         recovered = true;
@@ -1102,7 +1102,7 @@ pub async fn run_batch_history(
                             let pool = init_pool().await?;
                             match parse_export_csv_with_cross(&merged, &pool).await {
                                 Ok(ventas) => {
-                                    match insert_ventas(&pool, &ventas).await {
+                                    match insert_ventas(&pool, &ventas, false).await {
                                         Ok(n) => info!("  dia-a-dia insert {} filas -> {}", m.label, n),
                                         Err(e) => warn!("  dia-a-dia insert fail {}: {}", m.label, e),
                                     }
@@ -1137,7 +1137,7 @@ pub async fn run_batch_history(
                                     let pool = init_pool().await?;
                                     match parse_export_csv_with_cross(&csv, &pool).await {
                                         Ok(ventas) if !ventas.is_empty() => {
-                                            match insert_ventas(&pool, &ventas).await {
+                                            match insert_ventas(&pool, &ventas, false).await {
                                                 Ok(n) => { info!("  HTML fallback insert {} filas -> {}", m.label, n); recovered = true; let _ = std::fs::remove_file(raw.join(format!("failed_{}.json", m.label))); },
                                                 Err(e) => warn!("  HTML insert fail: {}", e),
                                             }
@@ -1288,6 +1288,14 @@ pub async fn run_batch_history(
 
     let pool = init_pool().await?;
     let _ = dedup_ventas(&pool).await;
+    // Stats cache solo al final (evita 4 querys pesados con filtro por mes durante captura)
+    {
+        let mut s = shared.lock().unwrap();
+        s.set_phase(CapturePhase::Normalizing, "Actualizando estadisticas...");
+        s.set_current("stats");
+        s.update_progress(0.95, "Actualizando estadisticas...");
+    }
+    let _ = crate::db::writer::refresh_stats_cache(&pool).await;
 
     // Finalizacion — incluir dias faltantes en el mensaje para que UI no solo diga "fail"
     {

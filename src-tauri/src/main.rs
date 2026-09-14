@@ -860,7 +860,7 @@ async fn import_manual_day(day: String, xls_path: String) -> Result<String, Stri
     match g360_db_ventas::processor::parser::parse_export_csv(&dest_csv) {
         Ok(ventas) if !ventas.is_empty() => {
             let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
-            let n = g360_db_ventas::db::writer::insert_ventas(&pool, &ventas).await.map_err(|e| e.to_string())?;
+            let n = g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, true).await.map_err(|e| e.to_string())?;
             let _ = g360_db_ventas::db::writer::dedup_ventas(&pool).await;
             // Limpiar failed_*.json del mes
             let mes = &day[..7];
@@ -902,7 +902,7 @@ async fn import_manual_month(month: String, xls_path: String) -> Result<String, 
     match g360_db_ventas::processor::parser::parse_export_csv(&dest_csv) {
         Ok(ventas) if !ventas.is_empty() => {
             let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
-            let n = g360_db_ventas::db::writer::insert_ventas(&pool, &ventas).await.map_err(|e| e.to_string())?;
+            let n = g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, true).await.map_err(|e| e.to_string())?;
             let _ = g360_db_ventas::db::writer::dedup_ventas(&pool).await;
             // Limpiar failed json del mes
             let _ = std::fs::remove_file(raw.join(format!("failed_{}.json", month)));
@@ -1008,7 +1008,7 @@ async fn reparse_raw() -> Result<String, String> {
         for (i, csv) in files.iter().enumerate() {
             match g360_db_ventas::processor::parser::parse_export_csv_with_cross(csv, &pool).await {
                 Ok(ventas) if !ventas.is_empty() => {
-                    match g360_db_ventas::db::writer::insert_ventas(&pool, &ventas).await {
+                    match g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, true).await {
                         Ok(n) => total += n,
                         Err(e) => eprintln!("reparse insert {}: {}", csv.display(), e),
                     }

@@ -131,7 +131,7 @@ pub async fn init_pool() -> Result<SqlitePool> {
     Ok(pool)
 }
 
-pub async fn insert_ventas(pool: &SqlitePool, ventas: &[Venta]) -> Result<usize> {
+pub async fn insert_ventas(pool: &SqlitePool, ventas: &[Venta], refresh_stats: bool) -> Result<usize> {
     let mut tx = pool.begin().await?;
     if let Some(first) = ventas.first() {
         let is_daily =
@@ -183,7 +183,9 @@ pub async fn insert_ventas(pool: &SqlitePool, ventas: &[Venta]) -> Result<usize>
     }
     tx.commit().await?;
     info!("Inserted {} rows", n);
-    let _ = refresh_stats_cache(pool).await;
+    if refresh_stats {
+        let _ = refresh_stats_cache(pool).await;
+    }
     Ok(n)
 }
 
