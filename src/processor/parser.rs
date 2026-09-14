@@ -5,7 +5,7 @@ use std::path::Path;
 use tracing::info;
 
 /// Parsea un valor numerico con contexto de columna.
-/// is_quantity=true: trata '.' como decimal SIEMPRE (nunca miles).
+/// is_quantity=true: trata '.' como decimal SIEMPRE (nunca miles) y redondea a entero.
 /// is_quantity=false: detecta formato segun heuristica (miles o decimal).
 fn parse_f64(s: &str, is_quantity: bool) -> f64 {
     let s = s.trim();
@@ -13,9 +13,9 @@ fn parse_f64(s: &str, is_quantity: bool) -> f64 {
         return 0.0;
     }
     // Columnas de cantidad: punto siempre es decimal, coma se elimina
-    // Evita que "1.000" o "25.056" se confundan con miles
+    // Redondear a entero: 1.000 -> 1000 (nunca 1000.5)
     if is_quantity {
-        return s.replace(',', "").parse::<f64>().unwrap_or(0.0);
+        return s.replace(',', "").parse::<f64>().unwrap_or(0.0).round();
     }
     // Para montos: detectar formato segun contexto
     if s.contains('.') && s.contains(',') {
@@ -281,7 +281,7 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
         } else {
             0.0
         };
-        let precio_unitario = (precio_raw * 10_000.0).round() / 10_000.0;
+        let precio_unitario = (precio_raw * 100_000.0).round() / 100_000.0;
         let mut v = Venta {
             id_articulo: clean_id(&g(c_ia)),
             original_sku: g(c_ia),
