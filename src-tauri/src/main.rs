@@ -1008,7 +1008,7 @@ async fn reparse_raw() -> Result<String, String> {
         for (i, csv) in files.iter().enumerate() {
             match g360_db_ventas::processor::parser::parse_export_csv_with_cross(csv, &pool).await {
                 Ok(ventas) if !ventas.is_empty() => {
-                    match g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, true).await {
+                    match g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, false).await {
                         Ok(n) => total += n,
                         Err(e) => eprintln!("reparse insert {}: {}", csv.display(), e),
                     }
@@ -1028,7 +1028,6 @@ async fn reparse_raw() -> Result<String, String> {
                 let _ = g360_db_ventas::db::writer::refresh_stats_cache(&pool).await;
             }
         }
-        let _ = g360_db_ventas::db::writer::dedup_ventas(&pool).await;
         let _ = g360_db_ventas::db::writer::refresh_stats_cache(&pool).await;
         let mut st = shared_err.lock().unwrap();
         st.set_phase(CapturePhase::Done, &format!("Re-parse completado: {} filas", total));
