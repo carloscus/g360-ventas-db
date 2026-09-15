@@ -541,19 +541,6 @@ pub async fn detectar_entidades_duplicadas(pool: &SqlitePool) -> Result<Vec<Stri
             "🔴 CLIENTES PARTIDOS: {} grupos donde 2+ id_cliente son el mismo numero con distinto padding", n));
     }
 
-    // Vendedor: ya normalizado (sin prefijo 01), verificar integridad
-    let n: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM (
-            SELECT id_vendedor k, COUNT(DISTINCT id_vendedor) n
-            FROM ventas WHERE id_vendedor != '' GROUP BY k HAVING n > 1
-        )"
-    )
-    .fetch_one(pool)
-    .await?;
-    if n > 0 {
-        issues.push(format!("🔴 VENDEDORES PARTIDOS: {} grupos con claves duplicadas", n));
-    }
-
     // Linea: mismo codigo con/sin prefijo "01"
     let n: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM (
