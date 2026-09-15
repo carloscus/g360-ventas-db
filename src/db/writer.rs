@@ -36,7 +36,7 @@ pub async fn init_pool() -> Result<SqlitePool> {
         .foreign_keys(true)
         .busy_timeout(std::time::Duration::from_secs(30));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(5)
+        .max_connections(8)
         // Reclamo agresivo de conexiones: si un init falla, no quedan conos vivos
         // filtrando RAM durante minutos (bug real 2026-09-09: 4.5 GB de RAM)
         .idle_timeout(std::time::Duration::from_secs(60))
