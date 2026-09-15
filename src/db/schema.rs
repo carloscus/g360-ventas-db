@@ -91,6 +91,8 @@ pub const CREATE_INDEXES_SQL: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_venta_linea_exact ON ventas(id_linea);",
     // Index para dedup y lookups por folio+articulo
     "CREATE INDEX IF NOT EXISTS idx_venta_folio_articulo ON ventas(folio_unico, id_articulo);",
+    // Index para verificacion de RUC duplicados (doc_cliente + id_cliente)
+    "CREATE INDEX IF NOT EXISTS idx_venta_doc_cliente_id ON ventas(doc_cliente, id_cliente);",
     "CREATE INDEX IF NOT EXISTS idx_venta_doc ON ventas(tpo_doc, serie_doc, nro_doc);",
     "CREATE INDEX IF NOT EXISTS idx_venta_ref ON ventas(referencia);",
     "CREATE INDEX IF NOT EXISTS idx_venta_tipo_op ON ventas(tipo_operacion);",

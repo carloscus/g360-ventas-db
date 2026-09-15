@@ -572,11 +572,11 @@ pub async fn detectar_entidades_duplicadas(pool: &SqlitePool) -> Result<Vec<Stri
 
     // Mismo RUC (doc_cliente) apuntando a 2+ id_cliente — excluye anomalias ERP conocidas
     let n: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM (
-            SELECT doc_cliente k, COUNT(DISTINCT id_cliente) n
+        "SELECT COUNT(DISTINCT doc_cliente) FROM (
+            SELECT doc_cliente, COUNT(DISTINCT id_cliente) as n
             FROM ventas
             WHERE doc_cliente NOT IN ('', '00') AND LENGTH(doc_cliente) >= 10
-            GROUP BY k HAVING n > 1
+            GROUP BY doc_cliente HAVING n > 1
         )"
     )
     .fetch_one(pool)
