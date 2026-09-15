@@ -8,7 +8,7 @@ use tracing::{info, warn};
 
 use crate::browser::captor::MonthRange;
 use crate::config::{raw_dir, SLEEP_BETWEEN_MONTHS};
-use crate::db::writer::{dedup_ventas, init_pool, insert_ventas};
+use crate::db::writer::{init_pool, insert_ventas};
 use crate::processor::parser::parse_export_csv_with_cross;
 use crate::capture_state::{CapturePhase, SharedProgress, now_secs};
 
@@ -1278,17 +1278,8 @@ pub async fn run_batch_history(
     let elapsed_min = elapsed.as_secs() / 60;
     let elapsed_sec = elapsed.as_secs() % 60;
 
-    // Dedup final
-    {
-        let mut s = shared.lock().unwrap();
-        s.set_phase(CapturePhase::Normalizing, "Eliminando duplicados...");
-        s.set_current("dedup");
-        s.update_progress(0.92, "Eliminando duplicados...");
-    }
-
     let pool = init_pool().await?;
-    let _ = dedup_ventas(&pool).await;
-    // Stats cache solo al final (evita 4 querys pesados con filtro por mes durante captura)
+    // Stats cache al final (evita 4 querys pesados con filtro por mes durante captura)
     {
         let mut s = shared.lock().unwrap();
         s.set_phase(CapturePhase::Normalizing, "Actualizando estadisticas...");
