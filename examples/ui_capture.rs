@@ -21,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
         g360_db_ventas::capture_state::ProgressState::new(),
     ));
 
-    match g360_db_ventas::capture::run_batch_history(&sd, &ed, false, shared.clone(), None).await {
+    match g360_db_ventas::capture::run_batch_history(&sd, &ed, false, shared.clone(), None, 3).await {
         Ok(_) => {
             let st = shared.lock().unwrap();
             println!("OK fase={} msg={}", st.phase, st.message);

@@ -10,7 +10,7 @@ async fn main() -> anyhow::Result<()> {
     let ventas = parse_export_csv(&csv)?;
     println!("parse_export: {} filas filtradas (de 15497 crudas)", ventas.len());
     let pool = init_pool().await?;
-    let n = insert_ventas(&pool, &ventas).await?;
+    let n = insert_ventas(&pool, &ventas, true).await?;
     println!("insert_ventas: {} filas insertadas", n);
     // dedup
     let d = g360_db_ventas::db::writer::dedup_ventas(&pool).await?;

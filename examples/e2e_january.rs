@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
     println!("(referencia cruda: 12419650.04/3422659.84 - filtrado debe ser menor)");
 
     let pool = g360_db_ventas::db::writer::init_pool().await?;
-    let n = g360_db_ventas::db::writer::insert_ventas(&pool, &ventas).await?;
+    let n = g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, true).await?;
     let _ = g360_db_ventas::db::writer::dedup_ventas(&pool).await;
     use sqlx::Row;
     let r: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM ventas WHERE mes_ref=?").bind(&label).fetch_one(&pool).await?;

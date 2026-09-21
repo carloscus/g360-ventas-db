@@ -24,34 +24,38 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .header{display:flex;align-items:center;gap:8px;padding-bottom:2px}
 .header img{height:18px;}
 .header h1{font-size:14px;font-weight:700;color:#fff;letter-spacing:0.02em}
-.header h1 span{color:#00d48c}
+.header h1 span{color:#7dd3fc}
 .dot{margin-left:auto;width:9px;height:9px;border-radius:50%;background:#25d884;box-shadow:0 0 0 1px rgba(37,216,132,0.35)}
 .dot.syncing{background:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,0.45);animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.3);opacity:.8}}
 .settings-btn{background:none;border:none;cursor:pointer;color:#5a7a9a;font-size:14px;padding:2px 6px;border-radius:6px;line-height:1;margin-left:6px}
-.settings-btn:hover{color:#00d48c;background:rgba(0,212,140,0.1)}
+.settings-btn:hover{color:#38bdf8;background:rgba(56,189,248,0.1)}
 .widget-alert{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 10px;border-radius:10px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);font-size:13px;color:#9fb6cb}
 .widget-alert strong{color:#dfeaf6;font-weight:700}
-.widget-alert.ok{border-color:rgba(37,216,132,0.25);background:rgba(37,216,132,0.08);color:#9feec8}
+.widget-alert.ok{border-color:rgba(34,197,94,0.25);background:rgba(34,197,94,0.08);color:#86efac}
 .widget-alert.warn{border-color:rgba(245,158,11,0.25);background:rgba(245,158,11,0.08);color:#f9d58a}
 .widget-alert.err{border-color:rgba(248,113,113,0.25);background:rgba(248,113,113,0.08);color:#f9b0b0}
 .db-process{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:8px 9px}
 .db-process-head{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#6a829e;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.08em}
 .db-process-head strong{color:#dfeaf6;letter-spacing:0.04em}
 .progress{height:8px;border-radius:999px;background:rgba(148,163,184,0.12);overflow:hidden}
-.progress-bar{height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#00d48c,#6ee7b7);transition:transform .35s ease;transform-origin:left}
+.progress-bar{height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#0ea5e9,#7dd3fc);transition:transform .35s ease;transform-origin:left}
 .db-meta{display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:11px;color:#7e96ad}
 .kpis{display:grid;grid-template-columns:1fr 1fr;gap:5px}
 .kpi{background:rgba(255,255,255,0.03);border-radius:10px;padding:6px;text-align:center;border:1px solid rgba(255,255,255,0.06)}
-.kpi-v{font-size:16px;font-weight:800;color:#00d48c;letter-spacing:-0.02em}
+.kpi-v{font-size:16px;font-weight:800;color:#7dd3fc;letter-spacing:-0.02em}
 .kpi-l{font-size:11px;color:#5a7a9a;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;font-weight:700}
 .info{display:grid;grid-template-columns:1fr 1fr;gap:5px}
 .info-item{background:rgba(255,255,255,0.02);border-radius:6px;padding:5px;text-align:center;border:1px solid rgba(255,255,255,0.04)}
 .info-v{font-size:12px;font-weight:700;color:#e8f4fd;word-break:break-all}
 .info-l{font-size:11px;color:#4a6a8a;margin-top:1px}
+.sec{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:9px;display:flex;flex-direction:column;gap:6px}
+.sec-head{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:800;color:#cfe4f7;text-transform:uppercase;letter-spacing:.09em}
+.sec-num{display:inline-grid;place-items:center;width:17px;height:17px;border-radius:5px;background:rgba(56,189,248,.16);color:#7dd3fc;font-size:10px;font-weight:800}
+.sec-sub{font-size:10px;color:#6a829e;line-height:1.35;margin-top:-4px}
 .task-flow{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
 .task{padding:6px 5px;border-radius:7px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);font-size:11px;color:#5a7a9a;font-weight:700;text-align:center;letter-spacing:0.04em;text-transform:uppercase;transition:all .2s ease}
-.task.active{background:rgba(0,212,140,0.12);color:#9feec8;border-color:rgba(0,212,140,0.18)}
+.task.active{background:rgba(56,189,248,0.12);color:#bae6fd;border-color:rgba(56,189,248,0.18)}
 .task.done{background:rgba(96,165,250,0.12);color:#bfdbfe;border-color:rgba(96,165,250,0.2)}
 .ctrl{background:rgba(255,255,255,0.03);border-radius:9px;padding:7px;border:1px solid rgba(255,255,255,0.06)}
 .btn-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px}
@@ -59,9 +63,9 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .row{display:flex;gap:6px;margin-bottom:6px}
 .row label{font-size:11px;color:#5a7a9a;flex:1;display:flex;flex-direction:column;gap:2px}
 .row input{width:100%;padding:5px 6px;border-radius:4px;border:1px solid rgba(255,255,255,0.1);background:rgba(10,20,35,0.6);color:#fff;font-size:13px;font-family:inherit}
-.row input:focus{outline:none;border-color:#00d48c}
+.row input:focus{outline:none;border-color:#0ea5e9}
 .btn{width:100%;padding:7px 6px;border:none;border-radius:5px;font-weight:700;font-size:12px;cursor:pointer;margin-top:3px;font-family:inherit;transition:all 0.2s}
-.btn-p{background:#00d48c;color:#061220}
+.btn-p{background:#0ea5e9;color:#061220}
 .btn-p:hover{background:#00b377}
 .btn-s{background:rgba(255,255,255,0.06);color:#a8c8e0;border:1px solid rgba(255,255,255,0.08)}
 .btn-s:hover{background:rgba(255,255,255,0.1)}
@@ -72,7 +76,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .btn-blue{background:rgba(59,130,246,0.2);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)}
 .btn-blue:hover{background:rgba(59,130,246,0.3)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
-.status{background:rgba(0,212,140,0.08);border-radius:6px;padding:7px 9px;font-size:12px;line-height:1.45;color:#6ee7b7;display:none;margin-top:6px;align-items:flex-start;gap:5px;border:1px solid rgba(0,212,140,0.15);white-space:pre-line;max-height:140px;overflow-y:auto}
+.status{background:rgba(56,189,248,0.08);border-radius:6px;padding:7px 9px;font-size:12px;line-height:1.45;color:#7dd3fc;display:none;margin-top:6px;align-items:flex-start;gap:5px;border:1px solid rgba(56,189,248,0.15);white-space:pre-line;max-height:140px;overflow-y:auto}
 .status .dot-sm{margin-top:6px}
 .status.act{display:flex}
 .status.err{background:rgba(248,113,113,0.08);color:#fca5a5;border-color:rgba(248,113,113,0.15)}
@@ -84,13 +88,13 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .est .eta{color:#fbbf24;font-weight:600}
 .est .elapsed{color:#9fb6cb;font-weight:400}
 .footer{text-align:center;margin-top:6px;font-size:10px;color:#3a5a7a}
-.footer span{color:#00d48c}
+.footer span{color:#00d084}
 .table-container{background:rgba(255,255,255,0.02);border-radius:8px;padding:8px;margin-top:8px;border:1px solid rgba(255,255,255,0.06);max-height:180px;overflow-y:auto}
 .table-container h3{font-size:11px;color:#5a7a9a;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em}
 .data-table{width:100%;border-collapse:collapse;font-size:11px}
 .data-table th{text-align:left;color:#5a7a9a;font-weight:600;padding:4px;border-bottom:1px solid rgba(255,255,255,0.08);font-size:10px;text-transform:uppercase}
 .data-table td{padding:3px 4px;color:#d4e6f7;border-bottom:1px solid rgba(255,255,255,0.04)}
-.data-table tr:hover td{background:rgba(0,212,140,0.04)}
+.data-table tr:hover td{background:rgba(56,189,248,0.04)}
 .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:20px;color:#4a6a8a;text-align:center}
 .empty-state .icon{font-size:24px;opacity:0.6}
 .empty-state p{font-size:11px;max-width:220px;line-height:1.4}
@@ -99,34 +103,34 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .modal-overlay.open{display:flex}
 .modal{background:#0d1a2d;border:1px solid rgba(255,255,255,0.12);border-radius:10px;padding:14px;width:420px;max-width:90vw;max-height:90vh;overflow-y:auto}
 .modal h2{font-size:13px;font-weight:700;color:#fff;margin-bottom:10px;display:flex;align-items:center;gap:6px}
-.modal h2 span{color:#00d48c}
+.modal h2 span{color:#7dd3fc}
 .field{margin-bottom:8px}
 .field label{font-size:11px;color:#5a7a9a;display:block;margin-bottom:3px}
 .field input{width:100%;padding:6px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(10,20,35,0.8);color:#fff;font-size:13px;font-family:inherit}
-.field input:focus{outline:none;border-color:#00d48c}
+.field input:focus{outline:none;border-color:#0ea5e9}
 .modal-actions{display:flex;gap:6px;margin-top:10px}
 .modal-actions button{flex:1;padding:7px;border:none;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit}
-.btn-save{background:#00d48c;color:#061220}
+.btn-save{background:#0ea5e9;color:#061220}
 .btn-cancel{background:rgba(255,255,255,0.08);color:#a8c8e0}
 .btn-test{background:rgba(59,130,246,0.2);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)}
 .test-result{margin-top:8px;padding:6px 8px;border-radius:5px;font-size:11px;display:none}
-.test-result.ok{display:block;background:rgba(0,212,140,0.1);color:#6ee7b7}
+.test-result.ok{display:block;background:rgba(34,197,94,0.1);color:#86efac}
 .test-result.err{display:block;background:rgba(248,113,113,0.1);color:#fca5a5}
 .btn-warn{background:rgba(245,158,11,0.15);color:#fbbf24;border:1px solid rgba(245,158,11,0.3)}
 .btn-warn:hover{background:rgba(245,158,11,0.25)}
 .month-list{max-height:280px;overflow-y:auto;margin:8px 0}
 .month-item{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);margin-bottom:4px;font-size:12px;transition:all 0.15s}
 .month-item:hover{background:rgba(255,255,255,0.04)}
-.month-item input[type=checkbox]{accent-color:#00d48c;width:14px;height:14px}
+.month-item input[type=checkbox]{accent-color:#0ea5e9;width:14px;height:14px}
 .month-item .month-label{flex:1;color:#dfeaf6;font-weight:600}
 .month-item .month-rows{color:#7e96ad;font-size:11px}
-.month-item .month-sales{color:#9feec8;font-size:11px;font-weight:600}
+.month-item .month-sales{color:#bae6fd;font-size:11px;font-weight:600}
 .month-select-bar{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.08);margin-bottom:6px;font-size:11px;color:#5a7a9a}
 .month-select-bar label{cursor:pointer;display:flex;align-items:center;gap:4px}
 .month-summary{display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid rgba(255,255,255,0.08);font-size:11px;color:#7e96ad}
 /* ── UI simplificada: pill, menu, dropzone ── */
 .pill{display:flex;align-items:center;gap:6px;border-radius:8px;padding:8px 11px;font-size:12px;font-weight:700;flex:1}
-.pill.ok{background:rgba(0,212,140,.1);color:#6ee7b7;border:1px solid rgba(0,212,140,.2)}
+.pill.ok{background:rgba(34,197,94,.1);color:#86efac;border:1px solid rgba(34,197,94,.2)}
 .pill.sync{background:rgba(59,130,246,.12);color:#93c5fd;border:1px solid rgba(59,130,246,.25)}
 .pill.warn{background:rgba(245,158,11,.12);color:#fbbf24;border:1px solid rgba(245,158,11,.28)}
 .pill.err{background:rgba(248,113,113,.1);color:#fca5a5;border:1px solid rgba(248,113,113,.2)}
@@ -141,27 +145,31 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .menu .msec:first-child{padding-top:4px}
 .warn-chip{display:inline-flex;align-items:center;background:rgba(245,158,11,.15);color:#fbbf24;border-radius:9px;padding:1px 6px;font-size:10px;font-weight:800;cursor:pointer;border:1px solid rgba(245,158,11,.3);margin-left:5px}
 .warn-chip:hover{background:rgba(245,158,11,.28)}
-.dropzone{border:2px dashed rgba(0,212,140,.35);border-radius:8px;padding:20px 10px;text-align:center;color:#7e96ad;font-size:11px;margin:8px 0;transition:.15s;cursor:pointer;line-height:1.5}
-.dropzone.over{background:rgba(0,212,140,.08);border-color:#00d48c;color:#00d48c}
+.dropzone{border:2px dashed rgba(56,189,248,.35);border-radius:8px;padding:20px 10px;text-align:center;color:#7e96ad;font-size:11px;margin:8px 0;transition:.15s;cursor:pointer;line-height:1.5}
+.dropzone.over{background:rgba(56,189,248,.08);border-color:#0ea5e9;color:#0ea5e9}
 .field select{width:100%;padding:6px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(10,20,35,0.8);color:#fff;font-size:13px;font-family:inherit}
 .retention-note{margin:5px 0 9px;padding:7px 8px;border-radius:6px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.2);color:#a8c8e0;font-size:10px;line-height:1.45}
 .retention-note strong{color:#dbeafe}
 .config-help{font-size:10px;color:#7e96ad;line-height:1.45;margin:-3px 0 8px}
+.cfg-sec{font-size:10px;color:#5a7a9a;text-transform:uppercase;letter-spacing:.08em;margin:10px 0 5px;padding-top:9px;border-top:1px solid rgba(255,255,255,0.07)}
+.cfg-sec:first-of-type{border-top:none;padding-top:0;margin-top:0}
+.cfg-sec-warn{color:#fbbf24}
+.cfg-status{font-size:10px;line-height:1.4;margin:3px 0 2px}
 .welcome-overlay{position:fixed;inset:0;background:rgba(3,9,18,.86);display:none;align-items:center;justify-content:center;z-index:120;padding:16px}
 .welcome-overlay.open{display:flex}
-.welcome-card{width:min(100%,460px);background:#0d1a2d;border:1px solid rgba(0,212,140,.28);border-radius:14px;padding:20px;box-shadow:0 20px 55px rgba(0,0,0,.45)}
+.welcome-card{width:min(100%,460px);background:#0d1a2d;border:1px solid rgba(56,189,248,.28);border-radius:14px;padding:20px;box-shadow:0 20px 55px rgba(0,0,0,.45)}
 .welcome-card h2{font-size:19px;line-height:1.2;color:#fff;margin-bottom:8px}
-.welcome-card h2 span{color:#00d48c}
+.welcome-card h2 span{color:#7dd3fc}
 .welcome-lead{font-size:12px;line-height:1.55;color:#a8c8e0;margin-bottom:14px}
 .welcome-steps{display:grid;gap:7px;margin:12px 0 16px}
 .welcome-step{display:grid;grid-template-columns:24px 1fr;gap:9px;align-items:start;padding:9px 10px;border-radius:9px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.07)}
 .welcome-step strong{display:block;color:#e8f4fd;font-size:12px;margin-bottom:2px}
 .welcome-step p{color:#7e96ad;font-size:11px;line-height:1.4}
-.welcome-step-mark{width:22px;height:22px;border-radius:7px;background:rgba(0,212,140,.14);color:#6ee7b7;font-size:11px;font-weight:800;display:grid;place-items:center}
+.welcome-step-mark{width:22px;height:22px;border-radius:7px;background:rgba(56,189,248,.14);color:#7dd3fc;font-size:11px;font-weight:800;display:grid;place-items:center}
 .welcome-note{font-size:10px;color:#7e96ad;line-height:1.45;margin-bottom:12px}
 .welcome-actions{display:flex;gap:7px}
 .welcome-actions button{flex:1;padding:9px 8px;border:0;border-radius:6px;font:700 12px inherit;cursor:pointer}
-.welcome-primary{background:#00d48c;color:#061220}
+.welcome-primary{background:#0ea5e9;color:#061220}
 .welcome-secondary{background:rgba(255,255,255,.08);color:#a8c8e0}
 .welcome-actions button:disabled{opacity:.45;cursor:not-allowed}
 .welcome-stop{display:none!important;background:rgba(248,113,113,.12);color:#fca5a5!important;border:1px solid rgba(248,113,113,.25)!important}
@@ -172,7 +180,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .welcome-result.warn{background:rgba(245,158,11,.1);color:#fcd68a;border-color:rgba(245,158,11,.25)}
 .welcome-progress{height:6px;border-radius:99px;background:rgba(148,163,184,.12);overflow:hidden;margin-top:9px;display:none}
 .welcome-progress.show{display:block}
-.welcome-progress-bar{height:100%;width:0;background:linear-gradient(90deg,#00d48c,#60a5fa);transition:width .4s ease}
+.welcome-progress-bar{height:100%;width:0;background:linear-gradient(90deg,#0ea5e9,#60a5fa);transition:width .4s ease}
 .welcome-timer{display:none;margin-top:7px;color:#7e96ad;font-size:10px;line-height:1.4}
 .welcome-timer.show{display:block}
 </style>
@@ -195,33 +203,39 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <div id="failedStrip" style="display:none;flex-wrap:wrap;gap:4px;margin-top:5px;max-height:64px;overflow-y:auto"></div>
 <div id="currentItem" class="est hid" style="margin-top:4px;font-size:10px;">⏱ <span id="currentItemText">-</span></div>
 </div>
-<div class="kpis">
-<div class="kpi"><div class="kpi-v" id="k1">-</div><div class="kpi-l">registros</div></div>
-<div class="kpi"><div class="kpi-v" id="k2">-</div><div class="kpi-l">ventas s/</div></div>
-<div class="kpi"><div class="kpi-v" id="k3">-</div><div class="kpi-l">clientes</div></div>
-<div class="kpi"><div class="kpi-v" id="k4">-</div><div class="kpi-l">skus</div></div>
-</div>
-<div class="info">
-<div class="info-item"><div class="info-v" id="k5">-</div><div class="info-l">últ. carga</div></div>
-<div class="info-item"><div class="info-v" id="k6">-</div><div class="info-l">tamaño BD</div></div>
-</div>
-<div id="supabaseStatus" class="info" style="margin-top:2px">
-<div class="info-item" style="grid-column:span 2;border-left:2px solid rgba(0,212,140,0.2);padding-left:8px"><div class="info-v" id="sbStatus">—</div><div class="info-l" style="font-size:10px" id="sbSub">últ. sync Supabase</div></div>
-</div>
 <div class="task-flow">
   <div class="task active" data-task="download">captura</div>
   <div class="task" data-task="parse">proceso</div>
   <div class="task" data-task="local">local</div>
+</div>
+
+<!-- ═══ SECCIÓN 1: DB LOCAL ═══ -->
+<div class="sec">
+<div class="sec-head"><span class="sec-num">1</span> DB Local</div>
+<div class="sec-sub">Derivado de la intranet (fuente original) · histórico completo con TODAS las líneas.</div>
+<div class="info" style="grid-template-columns:1fr 1fr 1fr">
+<div class="info-item"><div class="info-v" id="k1">—</div><div class="info-l">registros</div></div>
+<div class="info-item"><div class="info-v" id="lmDesde">—</div><div class="info-l">dato desde</div></div>
+<div class="info-item"><div class="info-v" id="lmHasta">—</div><div class="info-l">dato hasta</div></div>
+<div class="info-item"><div class="info-v" id="lmMeses">—</div><div class="info-l">meses</div></div>
+<div class="info-item"><div class="info-v" id="lmDocs">—</div><div class="info-l">documentos</div></div>
+<div class="info-item"><div class="info-v" id="k6">—</div><div class="info-l">tamaño BD</div></div>
+</div>
+<div class="info" style="margin-top:2px;grid-template-columns:1fr 1fr 1fr">
+<div class="info-item"><div class="info-v" id="lmNcTotal">—</div><div class="info-l">NC/NDB</div></div>
+<div class="info-item"><div class="info-v" id="lmNcLinked">—</div><div class="info-l">asociadas a factura</div></div>
+<div class="info-item"><div class="info-v" id="lmNcOrf">—</div><div class="info-l">huérfanas</div></div>
+</div>
+<div class="info" style="margin-top:2px;grid-template-columns:1fr 1fr">
+<div class="info-item"><div class="info-v" id="k5">—</div><div class="info-l">últ. captura</div></div>
+<div class="info-item"><div class="info-v" id="lmVerif">—</div><div class="info-l">últ. verificación</div></div>
 </div>
 <div class="ctrl">
 <div class="row">
 <label>desde<input type="date" id="sd"/></label>
 <label>hasta<input type="date" id="ed"/></label>
 </div>
-<div class="btn-grid">
-  <button class="btn btn-p" id="cap" style="margin-top:0">⟳ Capturar rango</button>
-  <button class="btn btn-blue" id="uploadBtn" style="margin-top:0">☁ Subir</button>
-</div>
+<button class="btn btn-p" id="cap">⟳ Capturar rango</button>
 <button class="btn btn-s" id="sync" title="Captura incremental desde la última fecha capturada">↻ Sync última fecha</button>
 <div class="btn-grid">
   <button class="btn btn-ghost" id="verifyBtn" title="Verifica duplicados, folios y consistencia de la BD local">🔍 Verificar BD</button>
@@ -237,6 +251,8 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
     <button id="manageMonths" title="Revisar o borrar meses específicos de la BD local">📅 Gestionar meses</button>
     <div class="msec">Diagnóstico (opcional)</div>
     <button id="previewBtn" title="Muestra las primeras filas de la BD local">👁 Vista previa CSV</button>
+    <button id="qualityBtn" title="Reporte de calidad de datos: críticos, warnings e info">🚦 Calidad de datos</button>
+    <button id="monitorBtn" title="Tabla mes · unidades · total soles para comparar con la intranet">📊 Monitor mensual</button>
     <div class="msec">Mantenimiento</div>
     <button id="clr" class="btn-ghost" title="Borra XLS temporales descargados">🧹 Limpiar caché XLS</button>
   </div>
@@ -244,17 +260,36 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <div id="est" class="est hid">⏱ ~<span id="estm">0</span> min</div>
 <div class="status" id="st"><div class="dot-sm"></div><span id="stxt">listo</span></div>
 </div>
-<div class="table-container" id="monthsTable" style="display:none">
-<h3>📊 Ultimos meses capturados</h3>
-<table class="data-table">
-<thead><tr><th>mes</th><th>registros</th><th>ventas s/</th><th>clientes</th></tr></thead>
-<tbody id="monthsBody"></tbody>
-</table>
-</div>
-<div id="emptyState" class="empty-state" style="display:none">
+<div class="empty-state" id="emptyState" style="display:none">
 <div class="icon">📦</div>
-<p>No hay datos capturados todavia.<br>Ejecute una captura para ver los meses aqui.</p>
+<p>No hay datos capturados todavía.<br>Ejecute una captura por rango para comenzar.</p>
 </div>
+</div><!-- /SECCIÓN 1 -->
+
+<!-- ═══ SECCIÓN 2: SUPABASE ═══ -->
+<div class="sec">
+<div class="sec-head"><span class="sec-num">2</span> Supabase</div>
+<div class="sec-sub" id="sbWindowNote">Ventana vigente (retención) · solo líneas válidas + NC/NDB referenciadas.</div>
+<div id="supabaseStatus" class="info">
+<div class="info-item" style="grid-column:span 2;border-left:2px solid rgba(56,189,248,0.2);padding-left:8px"><div class="info-v" id="sbStatus">—</div><div class="info-l" style="font-size:10px" id="sbSub">últ. sync Supabase</div></div>
+</div>
+<div id="sbCoverage" class="info" style="margin-top:2px;grid-template-columns:1fr 1fr 1fr 1fr">
+<div class="info-item"><div class="info-v" id="sbMinDate">—</div><div class="info-l">dato desde</div></div>
+<div class="info-item"><div class="info-v" id="sbMaxDate">—</div><div class="info-l">dato hasta</div></div>
+<div class="info-item"><div class="info-v" id="sbRows">—</div><div class="info-l">filas</div></div>
+<div class="info-item"><div class="info-v" id="sbDocs">—</div><div class="info-l">documentos</div></div>
+</div>
+<button class="btn btn-warn" id="reconcileBtn" style="margin-top:6px" title="Sincroniza Supabase con la BD local, mes por mes">🔄 Reconciliar ahora</button>
+</div>
+
+<!-- ═══ SECCIÓN 3: FLUJO AUTOMATIZADO ═══ -->
+<div class="sec">
+<div class="sec-head"><span class="sec-num">3</span> Flujo automatizado</div>
+<div class="config-help" style="margin:0">Descarga desde la intranet → crea/actualiza SQLite → reconcilia Supabase (sin datos repetidos).</div>
+<div class="config-help" style="margin:0">Usa el rango desde/hasta definido en la sección 1.</div>
+<button class="btn btn-p" id="fullFlowBtn">▶ Ejecutar flujo completo</button>
+</div>
+
 <div class="footer">powered by <span>g360</span></div>
 </div>
 
@@ -297,7 +332,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <div class="field"><label>Mes a cubrir</label><select id="impMonthSel"></select></div>
 <div class="dropzone" id="dropZone">⬇ Arrastra el archivo .xls aquí<br><span style="font-size:10px;opacity:.7">o haz clic para buscarlo</span></div>
 <input type="file" id="impFile" accept=".xls,.xlsx" class="hid">
-<div id="impFileName" style="font-size:11px;color:#6ee7b7;margin:-2px 0 6px;min-height:14px"></div>
+<div id="impFileName" style="font-size:11px;color:#7dd3fc;margin:-2px 0 6px;min-height:14px"></div>
 <div id="impPreview" style="font-size:10px;color:#94a3b8;background:rgba(15,23,42,.6);border-radius:6px;padding:8px;margin:6px 0;display:none;max-height:120px;overflow-y:auto"></div>
 <div class="modal-actions">
 <button class="btn-cancel" id="impCancel">Cancelar</button>
@@ -311,7 +346,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <div class="modal">
 <h2>&#9881; <span>Configuracion</span></h2>
 
-<div style="font-size:10px;color:#5a7a9a;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Intranet CIPSA</div>
+<div class="cfg-sec">Intranet CIPSA</div>
 <div class="field">
   <label>Usuario</label>
   <input type="text" id="cfgIntUser" placeholder="ccusi">
@@ -320,14 +355,19 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
   <label>Clave</label>
   <input type="password" id="cfgIntPass" placeholder="">
 </div>
+<div class="cfg-status" id="cfgIntStatus">—</div>
 
-<div style="font-size:10px;color:#5a7a9a;text-transform:uppercase;letter-spacing:.08em;margin:8px 0 4px">Reporte</div>
+<div class="cfg-sec">Reporte</div>
 <div class="field">
   <label>Generado por</label>
   <input type="text" id="cfgGenPor" placeholder="Nombre del responsable">
 </div>
 
-<div style="font-size:10px;color:#5a7a9a;text-transform:uppercase;letter-spacing:.08em;margin:8px 0 4px">Destino Supabase</div>
+<div class="cfg-sec">Destino Supabase</div>
+<div class="field">
+  <label><input type="checkbox" id="cfgSupabaseEnabled" style="margin-right:6px"> Supabase habilitado</label>
+  <div style="font-size:9px;color:#5a7a9a;margin-top:2px">Si está desactivado, la app es 100% local: captura y guarda en SQLite, sin tocar Supabase.</div>
+</div>
 <div class="field">
   <label>URL</label>
   <input type="text" id="cfgUrl" placeholder="https://xxx.supabase.co">
@@ -341,18 +381,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
   <input type="password" id="cfgSvcKey" placeholder="eyJ... (service_role)">
   <div style="font-size:9px;color:#5a7a9a;margin-top:2px">Este valor se guarda internamente y NO se expone al frontend ni a otras apps.</div>
 </div>
-<div class="field">
-  <label>Tabla</label>
-  <span style="display:inline-block;padding:6px 10px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(10,20,35,0.8);color:#94a3b8;font-size:13px;font-family:inherit">ventas</span>
-</div>
-
-<div style="font-size:10px;color:#5a7a9a;text-transform:uppercase;letter-spacing:.08em;margin:8px 0 4px">Lineas permitidas (avanzado)</div>
-<div class="field">
-  <label>Sufijos separados por coma</label>
-  <input type="text" id="cfgLines" placeholder="01, 02, 09, 11, 14, ...">
-</div>
-
-<div style="font-size:10px;color:#5a7a9a;text-transform:uppercase;letter-spacing:.08em;margin:8px 0 4px">Comportamiento</div>
+<div class="cfg-sec">Comportamiento</div>
 <div class="field">
   <label><input type="checkbox" id="cfgAutoSync" style="margin-right:6px"> Auto-sync al abrir app</label>
 </div>
@@ -367,11 +396,17 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
   <input type="number" id="cfgRetentionApp" min="0" max="10" step="1" inputmode="numeric" value="3">
 </div>
 
-<div style="font-size:10px;color:#fbbf24;text-transform:uppercase;letter-spacing:.08em;margin:10px 0 4px">Operaciones avanzadas</div>
+<div class="cfg-sec">Lineas permitidas</div>
+<div class="field">
+  <label>Sufijos separados por coma</label>
+  <input type="text" id="cfgLines" placeholder="01, 02, 09, 11, 14, ...">
+</div>
+
+<div class="cfg-sec cfg-sec-warn">Operaciones avanzadas</div>
 <div class="config-help">Estas acciones pueden reemplazar datos locales o reconstruir la ventana completa de Supabase. Requieren confirmación.</div>
 <div class="btn-grid">
   <button class="btn btn-warn" id="reparse" title="Reprocesa todos los CSV locales">⚡ Reprocesar raw</button>
-  <button class="btn btn-warn" id="resetSyncBtn" title="Purga y reconstruye la ventana de Supabase">🔄 Full Sync</button>
+  <button class="btn btn-warn" id="resetSyncBtn" title="Reconcilia Supabase con la BD local, mes por mes">🔄 Reconciliar</button>
 </div>
 <button class="btn btn-d" id="dbclr" title="Borra la BD y archivos locales; no afecta Supabase">🗑 Recrear BD local</button>
 
@@ -416,6 +451,18 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 </div>
 </div>
 
+<div class="modal-overlay" id="monitorOverlay">
+<div class="modal" style="width:520px;max-height:82vh;overflow:auto">
+<h2>📊 <span>Monitor mensual</span></h2>
+<div class="config-help" style="margin:0 0 6px">mes · filas · unidades · total soles (mismo filtro de líneas). Para comparar contra la intranet.</div>
+<div id="monitorContent" style="font-size:11px;overflow-x:auto"></div>
+<div class="modal-actions">
+  <button class="btn-test" id="monitorXlsx">⬇ Exportar XLSX</button>
+  <button class="btn-cancel" id="monitorClose">cerrar</button>
+</div>
+</div>
+</div>
+
 <script>
 const invokeApi = window.__TAURI__?.core ?? window.__tauri__?.core;
 const invoke = (...args) => {
@@ -429,7 +476,7 @@ function setAppUnavailable(message){
   textEl.textContent=message;
   document.getElementById('st').className='status act err';
   document.getElementById('stxt').textContent='sin entorno tauri';
-  ['cap','sync','clr','uploadBtn','shareDbBtn','dbclr','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','previewBtn','moreBtn'].forEach(id=>{
+  ['cap','sync','clr','shareDbBtn','dbclr','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','previewBtn','qualityBtn','monitorBtn','reconcileBtn','fullFlowBtn','moreBtn'].forEach(id=>{
     const el=document.getElementById(id);
     if (el) el.disabled=true;
   });
@@ -461,11 +508,8 @@ async function load(){
   try{
   const h=await invoke('get_health');
   const d=await invoke('get_dashboard');
-   totalRegistros=h.total_records||0;
-  document.getElementById('k1').textContent=fn(h.total_records);
-  document.getElementById('k2').textContent=fmtMoney(d.total_sales);
-  document.getElementById('k3').textContent=fn(d.total_clients);
-  document.getElementById('k4').textContent=fn(d.total_skus);
+   totalRegistros=d.total_records||0;
+  document.getElementById('k1').textContent=fn(d.total_records);
   document.getElementById('k5').textContent=h.last_capture||'-';
   document.getElementById('k6').textContent=(h.db_size_mb||0).toFixed(1)+' mb';
   // Preserve user selection: only set inputs if they are empty.
@@ -487,6 +531,12 @@ async function load(){
   else if(h.status==='STALE_LOCK'){wA.style.display='flex';wA.className='widget-alert err';document.getElementById('widgetAlertText').textContent='Lock huerfano — use Limpiar cache o ⏹ detener';}
   else if(h.status==='SYNCING'){wA.style.display='none';}
   else {wA.style.display='none';}
+  // Si faltan credenciales, su aviso tiene prioridad (persistente).
+  if(window.credsMissing){
+    wA.style.display='flex';wA.className='widget-alert err';wA.style.cursor='pointer';
+    document.getElementById('widgetAlertText').textContent='Faltan credenciales del intranet — abre ⚙ Configuración';
+    wA.onclick=()=>document.getElementById('cfgBtn').click();
+  }
    updateDbProgress(h.status);
    // NO resetear badges si hay captura activa (lo maneja updateTaskFlowPhase)
    if(lastCaptureState==='idle'){
@@ -504,40 +554,52 @@ async function load(){
      } else if(cfg.last_supabase_sync){
        const role=cfg.supabase_service_role_configured?' · ✅ escritura':' · ⚠ sin service role';
        sbEl.textContent=utcToPeru(cfg.last_supabase_sync)+role;
-       sbEl.style.color=cfg.supabase_service_role_configured?'#6ee7b7':'#fbbf24';
+       sbEl.style.color=cfg.supabase_service_role_configured?'#7dd3fc':'#fbbf24';
        sbSub.textContent='últ. sync Supabase';
-     }else{
-       sbEl.textContent='nunca sincronizado';
-       sbEl.style.color='#fbbf24';
-       sbSub.textContent=cfg.supabase_service_role_configured?'☁ falta subir':'☁ falta subir · sin service role';
-     }
+      }else{
+        sbEl.textContent='pendiente de sync';
+        sbEl.style.color='#fbbf24';
+        sbSub.textContent='▶ Reconciliar ahora';
+      }
+      // Ventana vigente de la sección Supabase (retención configurada)
+      const days=cfg.supabase_retention_days||(cfg.supabase_retention_years?cfg.supabase_retention_years*365:1277);
+      const cut=new Date(Date.now()-days*86400000).toISOString().slice(0,7);
+      document.getElementById('sbWindowNote').textContent=
+        'Ventana vigente: últimos '+(days/365).toFixed(1)+' años (desde '+cut+') · solo líneas válidas + NC/NDB referenciadas.';
+    }catch(e){}
+   // Cobertura Supabase: fecha desde/hasta + filas + documentos
+   try{
+     const info=await invoke('get_supabase_info');
+     const fD=v=>v?String(v).slice(0,10):'—';
+     document.getElementById('sbMinDate').textContent=fD(info.min_date);
+     document.getElementById('sbMaxDate').textContent=fD(info.max_date);
+     document.getElementById('sbRows').textContent=info.total_rows?fn(info.total_rows):'—';
+     document.getElementById('sbDocs').textContent=(info.total_documents!=null)?fn(info.total_documents):'—';
+   }catch(e){
+     document.getElementById('sbMinDate').textContent='—';
+     document.getElementById('sbMaxDate').textContent='—';
+     document.getElementById('sbRows').textContent='—';
+     document.getElementById('sbDocs').textContent='—';
+   }
+   // Métricas DB local (sección 1) + defaults del flujo (sección 3)
+   try{
+     const lm=await invoke('get_local_metrics');
+     const fD=v=>v?String(v).slice(0,10):'—';
+     document.getElementById('lmDesde').textContent=fD(lm.min_date);
+     document.getElementById('lmHasta').textContent=fD(lm.max_date);
+     document.getElementById('lmMeses').textContent=fn(lm.total_months);
+     document.getElementById('lmDocs').textContent=fn(lm.total_documents);
+     document.getElementById('lmVerif').textContent=lm.last_checksum?utcToPeru(lm.last_checksum).slice(0,16):'—';
+     document.getElementById('lmNcTotal').textContent=fn(lm.ncndb_total);
+     document.getElementById('lmNcLinked').textContent=fn(lm.ncndb_linked);
+     document.getElementById('lmNcOrf').textContent=fn(lm.ncndb_orphans);
    }catch(e){}
     
-  const monthsBody=document.getElementById('monthsBody');
-  const monthsTable=document.getElementById('monthsTable');
-  const emptyState=document.getElementById('emptyState');
-   
-  if(d.months.length>0){
-    monthsTable.style.display='block';
-    emptyState.style.display='none';
-    monthsBody.innerHTML=d.months.slice(-8).reverse().map(m=>{
-      const miss=window.failedMap&&window.failedMap[m.mes_ref];
-      return `
-      <tr>
-        <td><strong>${m.mes_ref}</strong>${miss?`<span class="warn-chip" data-m="${m.mes_ref}" title="${miss} días sin capturar — clic para importar XLS mensual">⚠ ${miss}</span>`:''}</td>
-        <td>${fn(m.rows)}</td>
-        <td>${fmtMoney(m.sales)}</td>
-        <td>${fn(m.clients)}</td>
-      </tr>`;
-    }).join('');
-  } else {
-    monthsTable.style.display='none';
-    emptyState.style.display='flex';
-  }
+   // Estado vacío (ya no hay tabla de meses)
+   document.getElementById('emptyState').style.display=(totalRegistros>0)?'none':'flex';
 }catch(e){
   show('error carga: '+String(e),true);
   document.getElementById('emptyState').style.display='flex';
-  document.getElementById('monthsTable').style.display='none';
 }}
 
 // Convierte ISO (UTC) a hora Peru (UTC-5, sin DST): 'YYYY-MM-DD HH:MM'
@@ -578,7 +640,7 @@ function renderPill(healthStatus){
   const n=Object.keys(window.failedMap||{}).length;
   if(n>0){pill.className='pill warn';pill.textContent=n+' mes'+(n>1?'es':'')+' incomplet'+(n>1?'os':'');}
   else if(healthStatus==='EMPTY'){pill.className='pill err';pill.textContent='BD vacía — ejecuta una captura';}
-  else{pill.className='pill ok';pill.textContent=(totalRegistros?fn(totalRegistros)+' registros':'sin datos');}
+  else{pill.className='pill ok';pill.textContent='BD lista';}
 }
 function rangoValido(s,e){if(!s||!e)return false;const[sy,sm,sd]=s.split('-').map(Number),[ey,em,ed]=e.split('-').map(Number);if(sy>ey)return false;if(sy===ey&&sm>em)return false;if(sy===ey&&sm===em&&sd>ed)return false;return true}
 function est(s,e){if(!s||!e)return 0;const[sy,sm,sd]=s.split('-').map(Number),[ey,em,ed]=e.split('-').map(Number);const d1=new Date(sy,sm-1,sd),d2=new Date(ey,em-1,ed);return Math.max(1,Math.round(Math.ceil((d2-d1)/(30.44*24*3600*1000))*0.5))}
@@ -594,6 +656,7 @@ const ERR_HINTS=[
   [/lock ocupado|Otra captura/i,'Hay una operación en curso. Espera o pulsa ⏹ detener.'],
   [/duplicados/i,'Ejecuta ⋯ → ⚡ Reprocesar raw y vuelve a intentar.'],
   [/Supabase no configurado/i,'Abre ⚙ Configuración y completa URL y claves.'],
+  [/credencial|login|intranet|unauthorized|usuario/i,'Revisa usuario/clave en ⚙ Configuración → test intranet.'],
   [/statement timeout|57014|Internal Server Error/i,'Supabase está saturado (timeout). Reintenta en unos minutos; si persiste, corre VACUUM en el SQL Editor.'],
   [/rls|row.level|permission denied|401|403/i,'Problema de permisos en Supabase. Verifica la service role key en ⚙ Configuración.'],
   [/failed|network|red|timeout/i,'Fallo de red. Verifica tu conexión e reintenta.'],
@@ -648,7 +711,7 @@ function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInter
 
     // 5) Deshabilitar TODO botón de acción durante operación (P2 critique:
     //    el menú quedaba activo y permitia reparse/upload en paralelo)
-    ['cap','uploadBtn','sync','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','clr','dbclr','previewBtn','moreBtn'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=true;}});
+    ['cap','sync','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','clr','dbclr','previewBtn','qualityBtn','monitorBtn','reconcileBtn','fullFlowBtn','moreBtn'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=true;}});
     document.getElementById('stopBtn').classList.remove('hid');
 
     // 6) Mensaje en barra de estado
@@ -664,7 +727,7 @@ function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInter
       document.getElementById('pctLabel').textContent='';
       document.getElementById('dbProgressBar').style.transform='scaleX(0)';
       // Reactivar acciones, ocultar detener
-      ['cap','uploadBtn','sync','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','clr','dbclr','previewBtn','moreBtn'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=false;}});
+      ['cap','sync','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','clr','dbclr','previewBtn','qualityBtn','monitorBtn','reconcileBtn','fullFlowBtn','moreBtn'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=false;}});
       document.getElementById('stopBtn').classList.add('hid');
       // Resetear badges a estado idle
       updateTaskFlow(r.state==='error'?'error':'DB lista');
@@ -713,9 +776,17 @@ document.getElementById('cfgBtn').addEventListener('click',async()=>{
   document.getElementById('cfgGenPor').value=cfg.generado_por||'';
   document.getElementById('cfgLines').value=cfg.allowed_lines||'';
   document.getElementById('cfgAutoSync').checked=cfg.auto_sync||false;
+  document.getElementById('cfgSupabaseEnabled').checked=cfg.supabase_enabled!==false;
   document.getElementById('cfgRetentionSupa').value=cfg.supabase_retention_days||cfg.supabase_retention_years||1277;
   document.getElementById('cfgRetentionApp').value=cfg.app_retention_years??3;
   updateRetentionNote();
+  // Estado de credenciales del intranet
+  try{
+    const cs=await invoke('get_credentials_status');
+    const st=document.getElementById('cfgIntStatus');
+    if(cs.intranet_configured){st.textContent='Credenciales configuradas ('+cs.intranet_user+'). Usa "test intranet" para validarlas.';st.style.color='#7dd3fc';}
+    else{st.textContent='⚠ Faltan credenciales del intranet.';st.style.color='#fbbf24';}
+  }catch(e){}
   document.getElementById('modalOverlay').classList.add('open');
   document.getElementById('cfgTestResult').className='test-result';
   document.getElementById('cfgTestResult').textContent='';
@@ -749,6 +820,7 @@ document.getElementById('cfgSave').addEventListener('click',async()=>{
   const gp=document.getElementById('cfgGenPor').value.trim();
   const al=document.getElementById('cfgLines').value.trim();
   const as=document.getElementById('cfgAutoSync').checked;
+  const sbEnabled=document.getElementById('cfgSupabaseEnabled').checked;
   const retSupa=Number(document.getElementById('cfgRetentionSupa').value);
   const retApp=Number(document.getElementById('cfgRetentionApp').value);
   if(!updateRetentionNote()||!Number.isInteger(retApp)||retApp<0||retApp>10){
@@ -759,7 +831,7 @@ document.getElementById('cfgSave').addEventListener('click',async()=>{
   try{
     document.getElementById('cfgSave').disabled=true;
     if(svcKey){await invoke('save_service_role_key',{serviceRoleKey:svcKey});}
-    await invoke('save_settings',{supabaseUrl:url,supabaseKey:key,intranetUser:iu,intranetPass:ip,generadoPor:gp,allowedLines:al,autoSync:as,appRetentionYears:retApp,supabaseRetentionYears:0,supabaseRetentionDays:retSupa,autoDailyCapture:false,captureTimes:['12:00','20:00']});
+    await invoke('save_settings',{supabaseUrl:url,supabaseKey:key,intranetUser:iu,intranetPass:ip,generadoPor:gp,allowedLines:al,autoSync:as,appRetentionYears:retApp,supabaseRetentionYears:0,supabaseRetentionDays:retSupa,autoDailyCapture:false,captureTimes:['12:00','20:00'],supabaseEnabled:sbEnabled});
     show('Configuracion guardada');document.getElementById('modalOverlay').classList.remove('open');
   }catch(e){show('Error al guardar: '+e,true)}
   finally{document.getElementById('cfgSave').disabled=false;}
@@ -800,10 +872,6 @@ document.getElementById('clr').addEventListener('click',async()=>{
   if(!confirm('Limpiar XLS temporales?'))return;
   try{const r=await invoke('clear_cache');show(r.message);load();}catch(e){show(humanizeError(e),true)}
 });
-document.getElementById('uploadBtn').addEventListener('click',async()=>{
-  show('subiendo a supabase...');stopPolling();
-  try{const r=await invoke('upload_all_with_verify');show(r.message||r);load();startPolling();}catch(err){show(humanizeError(err),true);startPolling();}
-});
 document.getElementById('shareDbBtn').addEventListener('click',async()=>{
   try{
     const path=await invoke('open_data_folder');
@@ -812,8 +880,8 @@ document.getElementById('shareDbBtn').addEventListener('click',async()=>{
 });
 document.getElementById('resetSyncBtn').addEventListener('click',async()=>{
   let years=4; try{const c=await invoke('get_settings'); years=Math.max(1,Math.round((c.supabase_retention_days||1277)/365));}catch(e){}
-  if(!confirm('¿Forzar re-subida completa (Full Sync) a Supabase?\n\n- Purga la ventana de retención en Supabase y re-sube TODO con el filtro de líneas actual\n- Si cambiaste las Líneas permitidas, aquí se aplican SIN re-capturar ni reprocesar\n- Cobertura: últimos '+years+' años'))return;
-  show('reseteando marcador y subiendo...');stopPolling();
+  if(!confirm('¿Reconciliar Supabase con la BD local?\n\n- Compara cada mes por checksum y solo re-sube los meses que cambiaron\n- Purga + re-sube MES POR MES (sin purgar toda la ventana de golpe)\n- Es resumible: si se corta, se reanuda en la próxima\n- Aplica cambios de Líneas permitidas SIN re-capturar\n- Cobertura: últimos '+years+' años'))return;
+  show('reconciliando Supabase mes por mes...');stopPolling();
   try{
     await invoke('reset_sync_marker');
     const r=await invoke('upload_all_with_verify');
@@ -881,11 +949,67 @@ document.getElementById('previewBtn').addEventListener('click',async()=>{
 });
 document.getElementById('previewClose').addEventListener('click',()=>document.getElementById('previewOverlay').classList.remove('open'));
 document.getElementById('previewOverlay').addEventListener('click',(e)=>{if(e.target===e.currentTarget)document.getElementById('previewOverlay').classList.remove('open')});
+document.getElementById('qualityBtn').addEventListener('click',async()=>{
+  try{
+    show('analizando calidad de datos...');
+    const r=await invoke('get_data_quality');
+    const c=r.critical||[],w=r.warn||[],i=r.info||[];
+    let msg='🚦 Calidad de datos ('+(r.generated_at||'')+')\n\n';
+    msg+='🔴 CRÍTICOS ('+c.length+'):\n'+(c.length?c.map(x=>'• '+x).join('\n'):'• ninguno')+'\n\n';
+    if(w.length)msg+='🟠 WARNINGS ('+w.length+'):\n'+w.map(x=>'• '+x).join('\n')+'\n\n';
+    if(i.length)msg+='🔵 INFO:\n'+i.map(x=>'• '+x).join('\n');
+    show(msg,c.length>0);
+  }catch(e){show(humanizeError(e),true)}
+});
+document.getElementById('monitorBtn').addEventListener('click',async()=>{
+  moreMenu.classList.remove('open');
+  const el=document.getElementById('monitorContent');
+  el.innerHTML='<p style="color:#5a7a9a">cargando…</p>';
+  document.getElementById('monitorOverlay').classList.add('open');
+  try{
+    const rows=await invoke('get_monthly_monitor');
+    if(!rows||!rows.length){el.innerHTML='<p style="color:#5a7a9a">Sin datos.</p>';return;}
+    let totU=0,totS=0;
+    let html='<table class="data-table"><thead><tr><th>mes</th><th>filas</th><th>unidades</th><th>total s/</th></tr></thead><tbody>';
+    for(const r of rows){totU+=r.unidades;totS+=r.soles;
+      html+='<tr><td><strong>'+r.mes+'</strong></td><td>'+fn(r.filas)+'</td><td>'+fn(Math.round(r.unidades))+'</td><td>'+fmtMoney(r.soles)+'</td></tr>';
+    }
+    html+='</tbody><tfoot><tr><td><strong>total</strong></td><td></td><td><strong>'+fn(Math.round(totU))+'</strong></td><td><strong>'+fmtMoney(totS)+'</strong></td></tr></tfoot></table>';
+    el.innerHTML=html;
+  }catch(e){el.innerHTML='<p style="color:#fca5a5">'+humanizeError(e)+'</p>';}
+});
+document.getElementById('monitorXlsx').addEventListener('click',async()=>{
+  try{
+    show('exportando monitor a XLSX...');
+    const path=await invoke('export_monitor_xlsx');
+    show('Monitor exportado:\n• '+path);
+  }catch(e){show(humanizeError(e),true)}
+});
+document.getElementById('monitorClose').addEventListener('click',()=>document.getElementById('monitorOverlay').classList.remove('open'));
+document.getElementById('reconcileBtn').addEventListener('click',async()=>{
+  show('reconciliando Supabase mes por mes...');stopPolling();
+  try{
+    const r=await invoke('upload_all_with_verify');
+    show(r.message||r);
+    load();startPolling();
+  }catch(err){show(humanizeError(err),true);startPolling();}
+});
+document.getElementById('fullFlowBtn').addEventListener('click',async()=>{
+  const d=document.getElementById('sd').value, h=document.getElementById('ed').value;
+  if(!d||!h){show('Complete desde y hasta en la sección 1',true);return;}
+  if(!confirm('¿Ejecutar flujo completo '+d+' → '+h+'?\n\n- Descarga desde la intranet (si falta el mes)\n- Crea/actualiza SQLite local\n- Reconcilia Supabase (sin datos repetidos)'))return;
+  show('iniciando flujo completo...');stopPolling();
+  try{
+    const r=await invoke('run_full_flow',{desde:d,hasta:h});
+    show(r.message||'Flujo iniciado');
+    startPolling();
+  }catch(err){show(humanizeError(err),true);startPolling();}
+});
 
 // ── TECLADO: Esc cierra cualquier modal abierto (P2 critique) ────
 document.addEventListener('keydown',e=>{
   if(e.key!=='Escape')return;
-  ['importOverlay','modalOverlay','monthOverlay','previewOverlay'].forEach(id=>{
+  ['importOverlay','modalOverlay','monthOverlay','previewOverlay','monitorOverlay'].forEach(id=>{
     const el=document.getElementById(id);if(el)el.classList.remove('open');
   });
 });
@@ -924,15 +1048,11 @@ function stageFile(f){
         html += `Refs NC/ND: ${Object.entries(p.referencia_status).map(([k,v])=>k+':'+v).join(', ')}<br>`;
       }
       if(p.warnings.length) html += `<span style="color:#fbbf24">${p.warnings.join('; ')}</span><br>`;
-      html += `<span style="color:#6ee7b7">Listo para importar — revisa y haz clic en Importar</span>`;
+      html += `<span style="color:#7dd3fc">Listo para importar — revisa y haz clic en Importar</span>`;
       prevEl.innerHTML=html;
     }).catch(e=>{ prevEl.innerHTML=`<span style="color:#f87171">Preview fallo: ${e}</span>`; });
   }
 }
-document.getElementById('monthsBody').addEventListener('click',(e)=>{
-  const c=e.target.closest('.warn-chip');
-  if(c){openImport(c.dataset.m);}
-});
 document.getElementById('failedStrip').addEventListener('click',(e)=>{
   const c=e.target.closest('.warn-chip');
   if(c){openImport(c.dataset.m);}
@@ -1215,10 +1335,23 @@ async function checkAutoSync(){
     const cfg=await invoke('get_settings');
     const onboardingSeen=(()=>{try{return localStorage.getItem('g360_onboarding_seen')==='1';}catch(e){return false;}})();
     if(cfg.auto_sync&&onboardingSeen){
-      show('auto-sync: verificando ultima captura...');
-      const r=await invoke('sync_from_last');
+      show('auto-sync: capturando y comprobando cambios en Supabase...');
+      const r=await invoke('sync_smart');
       show(r.message);
       startPolling();
+    }
+  }catch(e){}
+}
+// Credenciales del intranet: si faltan, avisa y ofrece abrir configuración.
+async function checkCredentials(){
+  try{
+    const cs=await invoke('get_credentials_status');
+    window.credsMissing=!cs.intranet_configured;
+    if(window.credsMissing){
+      const wA=document.getElementById('widgetAlert');
+      wA.style.display='flex';wA.className='widget-alert err';wA.style.cursor='pointer';
+      document.getElementById('widgetAlertText').textContent='Faltan credenciales del intranet — abre ⚙ Configuración';
+      wA.onclick=()=>document.getElementById('cfgBtn').click();
     }
   }catch(e){}
 }
@@ -1229,6 +1362,7 @@ try{
   if(localStorage.getItem('g360_onboarding_seen')!=='1')showWelcome();
 }catch(e){showWelcome();}
 checkAutoSync();
+checkCredentials();
 setInterval(loadFailedDays, 10000);
 </script>
 </body>

@@ -113,10 +113,25 @@ fn acquire_lock(raw: &std::path::Path) -> Result<LockGuard> {
 /// Returns a JoinHandle that can be aborted when the capture finishes.
 async fn spawn_progress_writer(shared: SharedProgress) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        // Evita inundar el log repitiendo el mismo estado terminal (Error/Done/Idle)
+        // cada 2s: solo se registra cuando cambia.
+        let mut last_terminal: Option<(String, String)> = None;
         loop {
             sleep(StdDuration::from_secs(2)).await;
-            let s = shared.lock().unwrap();
-            let elapsed = if let Some(start) = s.started_at {
+            let (phase, progress, message, current, started_at) = {
+                let s = shared.lock().unwrap();
+                (s.phase.clone(), s.progress, s.message.clone(), s.current_item.clone(), s.started_at)
+            };
+            let terminal = matches!(
+                phase,
+                CapturePhase::Error | CapturePhase::Done | CapturePhase::Idle
+            );
+            let snapshot = (phase.to_string(), message.clone());
+            if terminal && last_terminal.as_ref() == Some(&snapshot) {
+                continue;
+            }
+            last_terminal = Some(snapshot);
+            let elapsed = if let Some(start) = started_at {
                 now_secs().saturating_sub(start)
             } else {
                 0
@@ -125,7 +140,7 @@ async fn spawn_progress_writer(shared: SharedProgress) -> tokio::task::JoinHandl
             let elapsed_sec = elapsed % 60;
             info!(
                 "[PROGRESS] phase={} progress={:.1}% msg=\"{}\" current=\"{}\" elapsed={:02}:{:02}",
-                s.phase, s.progress * 100.0, s.message, s.current_item, elapsed_min, elapsed_sec
+                phase, progress * 100.0, message, current, elapsed_min, elapsed_sec
             );
         }
     })
@@ -310,7 +325,10 @@ async fn process_month(
                 Ok(xls) => {
                     info!("  Descargado: {}", xls.display());
                     let csv_path = raw.join(format!("ventas_{}.csv", m.label));
-                    if xls.exists() && !csv_path.exists() {
+                    // El .xls recien descargado SIEMPRE se reconvierte (aunque exista un CSV
+                    // viejo): el mes actual se re-descarga a diario y el CSV previo quedaria
+                    // desactualizado (bug: Supabase quedaba en una fecha anterior).
+                    if xls.exists() {
                         if let Err(e) = crate::processor::xls::xls_to_csv(&xls, &csv_path) {
                             let msg = format!("Error convirtiendo {}: {e:#}", m.label);
                             warn!("  {msg}");
@@ -825,7 +843,9 @@ pub async fn run_batch_history(
                         Ok(xls) => {
                             info!("  Descargado: {}", xls.display());
                             let csv_path = raw.join(format!("ventas_{}.csv", m.label));
-                            if xls.exists() && !csv_path.exists() {
+                            // El .xls recien descargado SIEMPRE se reconvierte (aunque exista un
+                            // CSV viejo): el mes actual se re-descarga a diario.
+                            if xls.exists() {
                                 if let Err(e) = crate::processor::xls::xls_to_csv(&xls, &csv_path) {
                                     let msg = format!("Error convirtiendo {}: {e:#}", m.label);
                                     warn!("  {msg}");
@@ -1287,6 +1307,8 @@ pub async fn run_batch_history(
         s.update_progress(0.95, "Actualizando estadisticas...");
     }
     let _ = crate::db::writer::refresh_stats_cache(&pool).await;
+    // Estadisticas del planner al dia tras la carga (mejora los planes de consulta).
+    let _ = crate::db::writer::analyze_db(&pool).await;
 
     // Finalizacion — incluir dias faltantes en el mensaje para que UI no solo diga "fail"
     {

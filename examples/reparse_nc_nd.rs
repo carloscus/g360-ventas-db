@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
             .replace("ventas_", "");
         match parse_export_csv_with_cross(csv, &pool).await {
             Ok(ventas) => {
-                let n = insert_ventas(&pool, &ventas).await?;
+                let n = insert_ventas(&pool, &ventas, true).await?;
                 println!("  {label}: {n} filas insertadas");
                 total_despues += n;
             }

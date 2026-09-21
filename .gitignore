@@ -34,3 +34,19 @@ __pycache__/
 # Artefactos del entorno del agente (no son parte del proyecto)
 .agents/
 skills-lock.json
+.impeccable/
+.kombai/
+
+# Secretos locales (contienen claves reales; NO versionar)
+config.json
+
+# Distribución local (binarios pesados; se generan con cargo tauri build)
+/dist/
+
+# Base de datos local (se regenera capturando; no versionar)
+historial.db
+historial.db-wal
+historial.db-shm
+
+# Temp de Supabase CLI
+supabase/.temp/

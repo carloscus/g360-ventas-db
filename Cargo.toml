@@ -17,6 +17,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 reqwest = { version = "0.12", features = ["json", "stream", "cookies"] }
 csv = "1"
 calamine = "0.26"
+zip = "2"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "chrono", "sqlite"] }
 dirs = "5"
 url = "2"
@@ -39,3 +40,11 @@ path = "src/bin/query.rs"
 [[bin]]
 name = "recapture"
 path = "src/bin/recapture.rs"
+
+[[bin]]
+name = "reparse"
+path = "src/bin/reparse.rs"
+
+[[bin]]
+name = "importxls"
+path = "src/bin/importxls.rs"

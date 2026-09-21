@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use std::env;
 
 use g360_db_ventas::capture_state::{CapturePhase, ProgressState, SharedProgress, now_secs};
@@ -16,7 +16,7 @@ static CAPTURE_STATE: LazyLock<SharedProgress> =
 static CAPTURE_ABORT: LazyLock<Arc<AtomicBool>> =
     LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DashboardStats {
     pub total_records: i64,
     pub total_sales: f64,
@@ -25,12 +25,37 @@ pub struct DashboardStats {
     pub months: Vec<MonthStats>,
 }
 
-#[derive(Debug, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Serialize, Deserialize, FromRow, Clone)]
 pub struct MonthStats {
     pub mes_ref: String,
     pub rows: i64,
     pub sales: f64,
     pub clients: i64,
+}
+
+/// Cache TTL para las consultas pesadas del dashboard (GROUP BY sobre 2.8M filas).
+/// El UI hace polling cada ~2s: sin cache, la query tarda 4-24s y satura el pool.
+static DASHBOARD_CACHE: LazyLock<std::sync::Mutex<Option<(Instant, DashboardStats)>>> =
+    LazyLock::new(|| std::sync::Mutex::new(None));
+const DASHBOARD_CACHE_TTL_SECS: u64 = 60;
+
+/// Cache TTL para los conteos crudos de get_health (`COUNT(*)` sobre 2.8M filas).
+static HEALTH_CACHE: LazyLock<std::sync::Mutex<Option<(Instant, i64, String, String)>>> =
+    LazyLock::new(|| std::sync::Mutex::new(None));
+const HEALTH_CACHE_TTL_SECS: u64 = 60;
+
+/// Cache de la info de Supabase (min/max, filas, documentos). Evita pegarle al
+/// proyecto en cada poll: se refresca cada 60s.
+static SUPABASE_INFO_CACHE: LazyLock<
+    std::sync::Mutex<Option<(Instant, g360_db_ventas::processor::uploader::SupabaseInfo)>>,
+> = LazyLock::new(|| std::sync::Mutex::new(None));
+const SUPABASE_INFO_TTL_SECS: u64 = 60;
+
+/// Invalida las caches del dashboard tras una captura/upload para refrescar el UI.
+fn invalidate_dashboard_caches() {
+    *DASHBOARD_CACHE.lock().unwrap() = None;
+    *HEALTH_CACHE.lock().unwrap() = None;
+    *SUPABASE_INFO_CACHE.lock().unwrap() = None;
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -74,6 +99,7 @@ pub struct AppSettings {
     pub supabase_service_role_configured: bool,
     pub supabase_table: String,
     pub supabase_configured: bool,
+    pub supabase_enabled: bool,
     pub intranet_user: String,
     pub intranet_pass: String,
     pub generado_por: String,
@@ -123,6 +149,15 @@ fn phase_to_state(phase: &CapturePhase) -> &'static str {
 // ── Dashboard y Health ─────────────────────────────────────────────────
 #[tauri::command]
 async fn get_dashboard() -> Result<DashboardStats, String> {
+    // Cache TTL: el UI hace polling cada ~2s y la query GROUP BY tarda 4-24s.
+    {
+        let c = DASHBOARD_CACHE.lock().unwrap();
+        if let Some((t, stats)) = c.as_ref() {
+            if t.elapsed().as_secs() < DASHBOARD_CACHE_TTL_SECS {
+                return Ok(stats.clone());
+            }
+        }
+    }
     let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
     // Stats cache: evita full-scan de 1.1M filas en queries lentas.
     // La columna value es REAL -> leer como f64 y castear (REAL->i64 falla en sqlx).
@@ -134,17 +169,34 @@ async fn get_dashboard() -> Result<DashboardStats, String> {
         .fetch_one(&pool).await.map_err(|e| e.to_string()).unwrap_or(0.0) as i64;
     let total_skus: i64 = sqlx::query_scalar("SELECT value FROM stats_cache WHERE key='total_skus'")
         .fetch_one(&pool).await.map_err(|e| e.to_string()).unwrap_or(0.0) as i64;
-    let months: Vec<MonthStats> = sqlx::query_as("SELECT mes_ref, COUNT(*) as rows, COALESCE(SUM(soles), 0.0) as sales, COUNT(DISTINCT id_cliente) as clients FROM ventas GROUP BY mes_ref ORDER BY mes_ref").fetch_all(&pool).await.map_err(|e| e.to_string())?;
-    Ok(DashboardStats { total_records, total_sales, total_clients, total_skus, months })
+    // Agregado precomputado en stats_por_mes (instantaneo). Fallback a calculo en
+    // vivo solo si la tabla esta vacia (BD recien creada).
+    let mut months: Vec<MonthStats> = sqlx::query_as(
+        "SELECT mes_ref, filas AS rows, ventas_soles AS sales, clientes AS clients \
+         FROM stats_por_mes ORDER BY mes_ref",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    if months.is_empty() {
+        months = sqlx::query_as("SELECT mes_ref, COUNT(*) as rows, COALESCE(SUM(soles), 0.0) as sales, COUNT(DISTINCT id_cliente) as clients FROM ventas GROUP BY mes_ref ORDER BY mes_ref")
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    let stats = DashboardStats { total_records, total_sales, total_clients, total_skus, months };
+    *DASHBOARD_CACHE.lock().unwrap() = Some((Instant::now(), stats.clone()));
+    Ok(stats)
 }
 
-/// Unix secs -> "dd/mm/yyyy HH:MM:SS" en hora Peru (GMT-5)
+/// Unix secs -> "YYYY-MM-DD HH:MM" en hora Peru (GMT-5). Formato unificado con el
+/// resto de fechas de la UI (ISO).
 fn fmt_hora_local(secs: u64) -> String {
     // Peru: UTC-5 sin horario de verano
     let secs_pe = secs.saturating_sub(5 * 3600);
     let days = (secs_pe / 86400) as i64;
     let rem = secs_pe % 86400;
-    let (h, mi, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let (h, mi, _s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
     let z = days + 719468;
     let era = if z >= 0 { z } else { z - 146096 } / 146097;
     let doe = (z - era * 146097) as i64;
@@ -155,15 +207,36 @@ fn fmt_hora_local(secs: u64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     if m <= 2 { y += 1; }
-    format!("{:02}/{:02}/{:04} {:02}:{:02}:{:02}", d, m, y, h, mi, s)
+    format!("{:04}-{:02}-{:02} {:02}:{:02}", y, m, d, h, mi)
 }
 
 #[tauri::command]
 async fn get_health() -> Result<HealthStats, String> {
     let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
-    let total_records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas").fetch_one(&pool).await.map_err(|e| e.to_string())?;
-    let min_date: Option<String> = sqlx::query_scalar("SELECT MIN(fecha_orig) FROM ventas").fetch_one(&pool).await.map_err(|e| e.to_string())?;
-    let max_date: Option<String> = sqlx::query_scalar("SELECT MAX(fecha_orig) FROM ventas").fetch_one(&pool).await.map_err(|e| e.to_string())?;
+    // Cache TTL de los conteos crudos (COUNT(*) tarda ~2s; el UI hace polling cada ~2s).
+    let (total_records, min_date_s, max_date_s) = {
+        let cached = {
+            let c = HEALTH_CACHE.lock().unwrap();
+            c.as_ref().and_then(|(t, n, mn, mx)| {
+                if t.elapsed().as_secs() < HEALTH_CACHE_TTL_SECS {
+                    Some((*n, mn.clone(), mx.clone()))
+                } else {
+                    None
+                }
+            })
+        };
+        match cached {
+            Some(v) => v,
+            None => {
+                let total_records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas").fetch_one(&pool).await.map_err(|e| e.to_string())?;
+                let min_date: Option<String> = sqlx::query_scalar("SELECT MIN(fecha_orig) FROM ventas").fetch_one(&pool).await.map_err(|e| e.to_string())?;
+                let max_date: Option<String> = sqlx::query_scalar("SELECT MAX(fecha_orig) FROM ventas").fetch_one(&pool).await.map_err(|e| e.to_string())?;
+                let v = (total_records, min_date.unwrap_or_default(), max_date.unwrap_or_default());
+                *HEALTH_CACHE.lock().unwrap() = Some((Instant::now(), v.0, v.1.clone(), v.2.clone()));
+                v
+            }
+        }
+    };
     let db_path = g360_db_ventas::config::db_path();
     let db_exists = db_path.exists();
     let db_size_mb = std::fs::metadata(&db_path).map(|m| m.len() as f64 / 1024.0 / 1024.0).unwrap_or(0.0);
@@ -198,7 +271,7 @@ async fn get_health() -> Result<HealthStats, String> {
     } else {
         "OK".to_string()
     };
-    Ok(HealthStats { total_records, min_date: min_date.unwrap_or_default(), max_date: max_date.unwrap_or_default(), last_capture, db_size_mb, status, db_path: db_path.to_string_lossy().to_string(), db_exists, dim_cliente: 0, dim_vendedor: 0, dim_articulo: 0, dim_documento: 0, dim_linea: 0, checksum_months: 0, total_months: 0, foreign_keys_on: false })
+    Ok(HealthStats { total_records, min_date: min_date_s, max_date: max_date_s, last_capture, db_size_mb, status, db_path: db_path.to_string_lossy().to_string(), db_exists, dim_cliente: 0, dim_vendedor: 0, dim_articulo: 0, dim_documento: 0, dim_linea: 0, checksum_months: 0, total_months: 0, foreign_keys_on: false })
 }
 
 // ── Settings y Supabase ────────────────────────────────────────────────
@@ -213,6 +286,7 @@ async fn get_settings() -> Result<AppSettings, String> {
         supabase_service_role_configured: !cfg.supabase.service_role_key.is_empty(),
         supabase_table: g360_db_ventas::config::SUPABASE_TABLE.to_string(),
         supabase_configured: cfg.supabase.is_configured(),
+        supabase_enabled: cfg.supabase_enabled,
         intranet_user: if cfg.intranet.user.is_empty() {
             std::env::var("G360_INTRANET_USER").unwrap_or_default()
         } else { cfg.intranet.user },
@@ -244,6 +318,7 @@ async fn save_settings(
     supabase_retention_days: u32,
     auto_daily_capture: bool,
     capture_times: Vec<String>,
+    supabase_enabled: Option<bool>,
 ) -> Result<AppSettings, String> {
     let mut cfg = g360_db_ventas::config::load_config();
     cfg.supabase.url = supabase_url;
@@ -265,6 +340,9 @@ async fn save_settings(
      cfg.supabase_retention_years = supabase_retention_years;
      cfg.supabase_retention_days = supabase_retention_days;
      cfg.auto_daily_capture = auto_daily_capture;
+     if let Some(en) = supabase_enabled {
+         cfg.supabase_enabled = en;
+     }
      if !capture_times.is_empty() {
          cfg.capture_times = capture_times;
      }
@@ -277,6 +355,7 @@ async fn save_settings(
         supabase_service_role_configured: !cfg.supabase.service_role_key.is_empty(),
         supabase_table: g360_db_ventas::config::SUPABASE_TABLE.to_string(),
         supabase_configured: cfg.supabase.is_configured(),
+        supabase_enabled: cfg.supabase_enabled,
         intranet_user: cfg.intranet.user,
         intranet_pass: String::new(),
         generado_por: cfg.generado_por,
@@ -298,12 +377,103 @@ async fn test_supabase(url: String, key: String) -> Result<String, String> {
     Ok(res)
 }
 
+/// Cobertura de Supabase: fecha mas antigua, mas nueva, filas y documentos.
+#[tauri::command]
+async fn get_supabase_info() -> Result<g360_db_ventas::processor::uploader::SupabaseInfo, String> {
+    {
+        let c = SUPABASE_INFO_CACHE.lock().unwrap();
+        if let Some((t, info)) = c.as_ref() {
+            if t.elapsed().as_secs() < SUPABASE_INFO_TTL_SECS {
+                return Ok(info.clone());
+            }
+        }
+    }
+    let info = g360_db_ventas::processor::uploader::get_supabase_info()
+        .await
+        .map_err(|e| e.to_string())?;
+    *SUPABASE_INFO_CACHE.lock().unwrap() = Some((Instant::now(), info.clone()));
+    Ok(info)
+}
+
+/// Metricas de la BD local para la seccion "DB Local".
+#[tauri::command]
+async fn get_local_metrics() -> Result<serde_json::Value, String> {
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    g360_db_ventas::db::writer::local_metrics(&pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn reset_sync_marker() -> Result<String, String> {
     let mut cfg = g360_db_ventas::config::load_config();
     cfg.last_supabase_sync = None;
     g360_db_ventas::config::save_config(&cfg).map_err(|e| e.to_string())?;
-    Ok("Marcador de sync reseteado. La próxima subida será completa (Full Sync).".to_string())
+    // Fuerza reconciliacion MES POR MES (no purga de ventana completa).
+    // Se usa '' (no NULL) para distinguir un reset FORZADO del estado inicial de una
+    // BD recreada: el sembrado solo llena NULLs, asi que '' fuerza la re-subida.
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    sqlx::query("UPDATE sync_months SET remote_checksum = '', estado = 'pending'")
+        .execute(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok("Marcador reseteado. La próxima sincronización reconciliará mes por mes.".to_string())
+}
+
+/// Reconciliación por mes con Supabase (resumible, con circuit breaker).
+/// Reemplaza el Full Sync de ventana completa. No-op si Supabase está deshabilitado.
+#[tauri::command]
+async fn reconcile_supabase_cmd(
+) -> Result<g360_db_ventas::processor::uploader::ReconcileResult, String> {
+    let cfg = g360_db_ventas::config::load_config();
+    if !cfg.supabase_enabled {
+        return Err("Supabase deshabilitado (modo solo local). Actívalo en Configuración.".into());
+    }
+    if !cfg.supabase.is_configured() {
+        return Err("Supabase no configurado".into());
+    }
+    {
+        let st = CAPTURE_STATE.lock().unwrap();
+        if st.phase != CapturePhase::Idle
+            && st.phase != CapturePhase::Done
+            && st.phase != CapturePhase::Error
+        {
+            return Err("Hay una captura en curso. Espere a que termine antes de reconciliar.".into());
+        }
+    }
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    let retention = cfg.supabase_retention_days_effective();
+    let shared: SharedProgress = CAPTURE_STATE.clone();
+    let progress_cb: g360_db_ventas::processor::uploader::ProgressCb =
+        Some(Arc::new(move |_b, _t, pct, msg| {
+            let mut s = shared.lock().unwrap();
+            s.phase = CapturePhase::Uploading;
+            s.message = msg.to_string();
+            s.progress = pct;
+            s.started_at = s.started_at.or_else(|| Some(now_secs()));
+            s.finished_at = None;
+            drop(s);
+        }));
+    let res = g360_db_ventas::processor::uploader::reconcile_supabase(&pool, retention, &progress_cb)
+        .await
+        .map_err(|e| e.to_string())?;
+    invalidate_dashboard_caches();
+    // Registrar la fecha de última sincronización (aunque no hubiera meses pendientes:
+    // Supabase quedó verificado contra el local en este momento).
+    {
+        let mut cfg2 = g360_db_ventas::config::load_config();
+        cfg2.last_supabase_sync = Some(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+        let _ = g360_db_ventas::config::save_config(&cfg2);
+    }
+    let msg = format!(
+        "Reconciliación: {} meses sincronizados, {} fallidos, {} filas subidas{}",
+        res.months_synced,
+        res.months_failed,
+        res.rows_uploaded,
+        if res.stopped_early { " (cortado por errores; se reanuda en la próxima)" } else { "" }
+    );
+    set_state("idle", &msg, 1.0);
+    Ok(res)
 }
 
 /// Reset admin: backup de config actual, genera config limpio con credenciales vacías.
@@ -342,70 +512,16 @@ async fn verify_intranet_credentials() -> Result<String, String> {
 
 #[tauri::command]
 async fn upload_all() -> Result<String, String> {
-    let cfg = g360_db_ventas::config::load_config();
-    if !cfg.supabase.is_configured() {
-        return Err("Supabase no configurado. Abra Configuracion e ingrese credenciales.".to_string());
-    }
-    // Bloquear upload durante una captura activa: la paginacion OFFSET se corrompe
-    // si la tabla se mueve mientras se lee (bug real del full-sync 2026-09-08:
-    // Supabase quedo con meses mezclados viejos/nuevos).
-    {
-        let st = CAPTURE_STATE.lock().unwrap();
-        if st.phase != CapturePhase::Idle && st.phase != CapturePhase::Done && st.phase != CapturePhase::Error {
-            return Err("Hay una captura en curso. Espere a que termine (o detengala) antes de subir a Supabase.".to_string());
-        }
-    }
-    set_state("uploading", "Conectando a Supabase...", 0.03);
-    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
-
-    // Pre-count INFORMATIVO con el mismo filtro del uploader (raw-first: elegibles,
-    // no el raw completo). El conteo real lo hace upload_all dentro de la misma tx logica.
-    let count: i64 = sqlx::query_scalar(&format!(
-        "SELECT COUNT(*) FROM ventas {}",
-        g360_db_ventas::config::with_line_filter("")
+    // Reconciliación por mes (resumible) en vez de full-window purge.
+    let res = reconcile_supabase_cmd().await?;
+    Ok(format!(
+        "Reconciliación: {} meses sincronizados, {} fallidos, {} filas subidas, {} purgadas{}",
+        res.months_synced,
+        res.months_failed,
+        res.rows_uploaded,
+        res.rows_purged,
+        if res.stopped_early { " (cortado; se reanuda luego)" } else { "" }
     ))
-        .fetch_one(&pool).await.map_err(|e| e.to_string())?;
-    if count == 0 {
-        set_state("idle", "Nada elegible para subir (filtro de lineas)", 1.0);
-        return Ok("Nada elegible para subir (revisa lineas permitidas / raw local)".to_string());
-    }
-
-    let last_sync = cfg.last_supabase_sync.clone();
-    let retention = cfg.supabase_retention_days_effective(); // Usar retención configurada para Supabase
-    let shared: SharedProgress = CAPTURE_STATE.clone();
-
-    // Closure que actualiza el estado de progreso desde el callback del uploader
-    let progress_cb: g360_db_ventas::processor::uploader::ProgressCb = Some(Arc::new(move |batch, total, pct, msg| {
-        let mut s = shared.lock().unwrap();
-        s.phase = CapturePhase::Uploading;
-        s.message = msg.to_string();
-        s.progress = pct;
-        s.started_at = s.started_at.or_else(|| Some(now_secs()));
-        s.finished_at = None;
-        drop(s);
-    }));
-
-    set_state("uploading", &format!("Subiendo ~{} registros elegibles a Supabase...", count), 0.05);
-
-    match g360_db_ventas::processor::uploader::upload_all(&pool, retention, last_sync.as_deref(), &progress_cb).await {
-        Ok((up, cleaned)) => {
-            // Solo avanzar el marcador si realmente se subieron filas.
-            // Evita el caso donde se marca last_supabase_sync sin subir nada
-            // (bloquea futuros syncs incrementales con "nada nuevo").
-            if up > 0 {
-                let mut cfg2 = g360_db_ventas::config::load_config();
-                cfg2.last_supabase_sync = Some(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
-                let _ = g360_db_ventas::config::save_config(&cfg2);
-            }
-            let retention_msg = if cleaned > 0 { format!(" + {} antiguos limpiados", cleaned) } else { String::new() };
-            set_state("idle", &format!("Sync OK: {} rows{}", up, retention_msg), 1.0);
-            Ok(format!("Sync OK: {} rows (incremental, ventana: {} anos){}", up, retention, retention_msg))
-        }
-        Err(e) => {
-            set_state("idle", &format!("Error sync: {}", e), 0.0);
-            Err(format!("Error en upload: {}", e))
-        }
-    }
 }
 
 #[tauri::command]
@@ -494,16 +610,18 @@ async fn sync_from_last() -> Result<CaptureStatus, String> {
             st.phase != CapturePhase::Idle && st.phase != CapturePhase::Done && st.phase != CapturePhase::Error
         };
         if !is_running {
-            let _ = std::fs::remove_file(&lock_path);
-            if lock_path.exists() {
+            // Lock huerfano (esta app no captura): intentar borrarlo. Si otro
+            // proceso lo tiene abierto (share_mode 0), remove falla -> no lanzar
+            // una captura condenada a fallar con "lock ocupado".
+            if std::fs::remove_file(&lock_path).is_err() && lock_path.exists() {
                 if let Ok(meta) = std::fs::metadata(&lock_path) {
                     if let Ok(elapsed) = meta.modified().and_then(|m| m.elapsed().map_err(|_| std::io::Error::from(std::io::ErrorKind::Other))) {
                         if elapsed.as_secs() < 5 {
                             return Err(format!("Lock liberándose (hace {}s). Reintente en 3s.", elapsed.as_secs()));
                         }
-                        let _ = std::fs::remove_file(&lock_path);
                     }
                 }
+                return Err("Otra instancia está capturando en este equipo. Espere a que termine o ciérrela.".into());
             }
         } else if let Ok(meta) = std::fs::metadata(&lock_path) {
             if let Ok(elapsed) = meta.modified().and_then(|m| m.elapsed().map_err(|_| std::io::Error::from(std::io::ErrorKind::Other))) {
@@ -564,6 +682,264 @@ async fn sync_from_last() -> Result<CaptureStatus, String> {
         state: "syncing".into(),
         phase: "checking_lock".into(),
         message: "Sync desde ultima captura".into(),
+        progress: 0.1,
+        started_at: Some(now_secs()),
+        finished_at: None,
+        current_item: String::new(),
+        eta_secs: None,
+    })
+}
+
+/// Flujo automático inteligente: captura desde la última fecha local, comprueba con
+/// Supabase si hubo cambios (fecha más reciente y conteo de filas) y solo entonces sube.
+/// No bloquea: corre en background y reporta por el estado de captura (get_capture_status).
+#[tauri::command]
+async fn sync_smart() -> Result<CaptureStatus, String> {
+    if let Err(pf) = g360_db_ventas::browser::captor::preflight_checks() {
+        return Err(pf);
+    }
+    let raw = g360_db_ventas::config::raw_dir();
+    let lock_path = raw.join("capture.lock");
+    if lock_path.exists() {
+        let is_running = {
+            let st = CAPTURE_STATE.lock().unwrap();
+            st.phase != CapturePhase::Idle
+                && st.phase != CapturePhase::Done
+                && st.phase != CapturePhase::Error
+        };
+        if is_running {
+            return Err("Ya hay una operación en curso. Espere a que termine.".into());
+        }
+        // Lock huerfano: si otro proceso lo tiene abierto, remove falla -> no
+        // lanzar una captura condenada a fallar con "lock ocupado".
+        if std::fs::remove_file(&lock_path).is_err() && lock_path.exists() {
+            return Err("Otra instancia está capturando en este equipo. Espere a que termine o ciérrela.".into());
+        }
+    }
+
+    let shared: SharedProgress = CAPTURE_STATE.clone();
+    let last_date = {
+        let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+        let last: Option<String> = sqlx::query_scalar("SELECT MAX(fecha_orig) FROM ventas")
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(None);
+        last.unwrap_or_else(|| {
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            let secs_pe = now.saturating_sub(5 * 3600);
+            let days = (secs_pe / 86400) as i64;
+            let z = days + 719468;
+            let era = if z >= 0 { z } else { z - 146096 } / 146097;
+            let doe = (z - era * 146097) as i64;
+            let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+            let mut y = yoe + era * 400;
+            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+            let mp = (5 * doy + 2) / 153;
+            let d = doy - (153 * mp + 2) / 5 + 1;
+            let m = if mp < 10 { mp + 3 } else { mp - 9 };
+            if m <= 2 { y += 1; }
+            format!("{:04}-{:02}-{:02}", y, m, d)
+        })
+    };
+
+    CAPTURE_ABORT.store(false, Ordering::Relaxed);
+    {
+        let mut s = shared.lock().unwrap();
+        s.set_start(&format!("Sync inteligente desde {}", last_date));
+    }
+
+    let shared_bg = shared.clone();
+    let start_bg = last_date.clone();
+    tauri::async_runtime::spawn(async move {
+        // 1) Capturar desde la última fecha local
+        if let Err(e) = g360_db_ventas::capture::run_batch_history(
+            &start_bg, "", false, shared_bg.clone(), Some(CAPTURE_ABORT.clone()), 3,
+        ).await {
+            let mut st = shared_bg.lock().unwrap();
+            st.set_phase(CapturePhase::Error, &format!("Error captura: {e}"));
+            st.update_progress(0.0, &format!("Error captura: {e}"));
+            eprintln!("sync_smart captura: {}", e);
+            return;
+        }
+        invalidate_dashboard_caches();
+
+        // 2) Reconciliar con Supabase (mes por mes, resumible) — opcional
+        let cfg = g360_db_ventas::config::load_config();
+        if !cfg.supabase_enabled || !cfg.supabase.is_configured() {
+            let mut st = shared_bg.lock().unwrap();
+            let msg = if cfg.supabase_enabled {
+                "Captura local lista (Supabase no configurado)"
+            } else {
+                "Captura local lista (modo solo local)"
+            };
+            st.set_phase(CapturePhase::Done, msg);
+            st.update_progress(1.0, msg);
+            return;
+        }
+        let retention = cfg.supabase_retention_days_effective();
+        let pool = match g360_db_ventas::db::writer::init_pool().await {
+            Ok(p) => p,
+            Err(e) => {
+                let mut st = shared_bg.lock().unwrap();
+                st.set_phase(CapturePhase::Error, &format!("Error BD: {e}"));
+                return;
+            }
+        };
+        {
+            let mut st = shared_bg.lock().unwrap();
+            st.set_phase(CapturePhase::Uploading, "Reconciliando con Supabase...");
+            st.update_progress(0.5, "Reconciliando con Supabase...");
+        }
+        let shared_cb = shared_bg.clone();
+        let progress_cb: g360_db_ventas::processor::uploader::ProgressCb =
+            Some(Arc::new(move |_b, _t, pct, msg| {
+                let mut s = shared_cb.lock().unwrap();
+                s.phase = CapturePhase::Uploading;
+                s.message = msg.to_string();
+                s.progress = pct;
+                s.started_at = s.started_at.or_else(|| Some(now_secs()));
+                s.finished_at = None;
+                drop(s);
+            }));
+        match g360_db_ventas::processor::uploader::reconcile_supabase(&pool, retention, &progress_cb)
+            .await
+        {
+            Ok(res) => {
+                invalidate_dashboard_caches();
+                let mut st = shared_bg.lock().unwrap();
+                let msg = format!(
+                    "Reconciliación: {} meses OK, {} fallidos, {} filas subidas{}",
+                    res.months_synced,
+                    res.months_failed,
+                    res.rows_uploaded,
+                    if res.stopped_early { " (cortado; se reanuda luego)" } else { "" }
+                );
+                st.set_phase(CapturePhase::Done, &msg);
+                st.update_progress(1.0, &msg);
+            }
+            Err(e) => {
+                let mut st = shared_bg.lock().unwrap();
+                st.set_phase(CapturePhase::Error, &format!("Error reconcile: {e}"));
+                st.update_progress(0.0, &format!("Error reconcile: {e}"));
+            }
+        }
+    });
+
+    Ok(CaptureStatus {
+        state: "syncing".into(),
+        phase: "checking_lock".into(),
+        message: format!("Sync inteligente desde {}", last_date),
+        progress: 0.1,
+        started_at: Some(now_secs()),
+        finished_at: None,
+        current_item: String::new(),
+        eta_secs: None,
+    })
+}
+
+/// Flujo automatizado completo: descarga/captura del rango desde la intranet,
+/// normaliza a SQLite y reconcilia Supabase (mes por mes, sin datos repetidos).
+/// Corre en background y reporta por el estado de captura (get_capture_status).
+#[tauri::command]
+async fn run_full_flow(desde: String, hasta: String) -> Result<CaptureStatus, String> {
+    if let Err(pf) = g360_db_ventas::browser::captor::preflight_checks() {
+        return Err(pf);
+    }
+    let raw = g360_db_ventas::config::raw_dir();
+    let lock_path = raw.join("capture.lock");
+    if lock_path.exists() {
+        let is_running = {
+            let st = CAPTURE_STATE.lock().unwrap();
+            st.phase != CapturePhase::Idle
+                && st.phase != CapturePhase::Done
+                && st.phase != CapturePhase::Error
+        };
+        if is_running {
+            return Err("Ya hay una operación en curso. Espere a que termine.".into());
+        }
+        if std::fs::remove_file(&lock_path).is_err() && lock_path.exists() {
+            return Err("Otra instancia está capturando en este equipo. Espere o ciérrela.".into());
+        }
+    }
+
+    let shared: SharedProgress = CAPTURE_STATE.clone();
+    CAPTURE_ABORT.store(false, Ordering::Relaxed);
+    {
+        let mut s = shared.lock().unwrap();
+        s.set_start(&format!("Flujo completo {} -> {}", desde, hasta));
+    }
+
+    let shared_bg = shared.clone();
+    let (d, h) = (desde.clone(), hasta.clone());
+    tauri::async_runtime::spawn(async move {
+        // 1) Captura + normalizacion a SQLite
+        if let Err(e) = g360_db_ventas::capture::run_batch_history(
+            &d, &h, false, shared_bg.clone(), Some(CAPTURE_ABORT.clone()), 3,
+        ).await {
+            let mut st = shared_bg.lock().unwrap();
+            st.set_phase(CapturePhase::Error, &format!("Error captura: {e}"));
+            st.update_progress(0.0, &format!("Error captura: {e}"));
+            return;
+        }
+        invalidate_dashboard_caches();
+
+        // 2) Reconciliacion con Supabase (opcional)
+        let cfg = g360_db_ventas::config::load_config();
+        if !cfg.supabase_enabled || !cfg.supabase.is_configured() {
+            let mut st = shared_bg.lock().unwrap();
+            st.set_phase(CapturePhase::Done, "Flujo local completado (Supabase deshabilitado)");
+            st.update_progress(1.0, "Flujo local completado (Supabase deshabilitado)");
+            return;
+        }
+        let pool = match g360_db_ventas::db::writer::init_pool().await {
+            Ok(p) => p,
+            Err(e) => {
+                let mut st = shared_bg.lock().unwrap();
+                st.set_phase(CapturePhase::Error, &format!("Error BD: {e}"));
+                return;
+            }
+        };
+        let retention = cfg.supabase_retention_days_effective();
+        {
+            let mut st = shared_bg.lock().unwrap();
+            st.set_phase(CapturePhase::Uploading, "Reconciliando con Supabase...");
+            st.update_progress(0.6, "Reconciliando con Supabase...");
+        }
+        let shared_cb = shared_bg.clone();
+        let progress_cb: g360_db_ventas::processor::uploader::ProgressCb =
+            Some(Arc::new(move |_b, _t, pct, msg| {
+                let mut s = shared_cb.lock().unwrap();
+                s.phase = CapturePhase::Uploading;
+                s.message = msg.to_string();
+                s.progress = pct;
+                s.started_at = s.started_at.or_else(|| Some(now_secs()));
+                s.finished_at = None;
+                drop(s);
+            }));
+        match g360_db_ventas::processor::uploader::reconcile_supabase(&pool, retention, &progress_cb).await {
+            Ok(res) => {
+                invalidate_dashboard_caches();
+                let msg = format!(
+                    "Flujo completo: {} meses OK, {} filas subidas, {} purgadas{}",
+                    res.months_synced, res.rows_uploaded, res.rows_purged,
+                    if res.stopped_early { " (cortado; se reanuda luego)" } else { "" }
+                );
+                let mut st = shared_bg.lock().unwrap();
+                st.set_phase(CapturePhase::Done, &msg);
+                st.update_progress(1.0, &msg);
+            }
+            Err(e) => {
+                let mut st = shared_bg.lock().unwrap();
+                st.set_phase(CapturePhase::Error, &format!("Error reconcile: {e}"));
+                st.update_progress(0.0, &format!("Error reconcile: {e}"));
+            }
+        }
+    });
+
+    Ok(CaptureStatus {
+        state: "syncing".into(),
+        phase: "checking_lock".into(),
+        message: format!("Flujo completo {} -> {}", desde, hasta),
         progress: 0.1,
         started_at: Some(now_secs()),
         finished_at: None,
@@ -681,6 +1057,11 @@ async fn clear_db() -> Result<CaptureStatus, String> {
         }
     }
 
+    // Liberar el archivo ANTES de borrar: cerrar el pool singleton. En Windows un
+    // archivo abierto no se puede eliminar, y si el pool sigue vivo init_pool()
+    // devuelve el mismo pool (con los datos) -> la BD "no se limpiaba".
+    g360_db_ventas::db::writer::reset_pool().await;
+
     // Retry borrado (Windows: handle puede tardar en liberarse)
     for attempt in 1..=5 {
         match std::fs::remove_file(&db_path) {
@@ -695,6 +1076,12 @@ async fn clear_db() -> Result<CaptureStatus, String> {
     for suffix in ["-wal", "-shm"] {
         let other = db_path.with_file_name(format!("{}{}", db_path.file_name().and_then(|n| n.to_str()).unwrap_or("historial"), suffix));
         let _ = std::fs::remove_file(&other);
+    }
+    // Verificar que de verdad se borro (si el archivo sigue, abortar con mensaje claro).
+    if db_path.exists() {
+        return Err(
+            "No se pudo borrar historial.db (archivo en uso). Cierra la app y reintenta.".into(),
+        );
     }
     let _ = std::fs::create_dir_all(db_dir);
 
@@ -839,12 +1226,44 @@ async fn get_failed_days() -> Result<Vec<FailedDayInfo>, String> {
     Ok(out)
 }
 
+/// Gate de integridad para importacion manual: rechaza XLS cuya columna SKU
+/// (ID_ARTICULO) este guardada como numero. En ese caso Excel pudo borrar los
+/// ceros a la izquierda (011019 -> 11019) y la importacion crearia SKUs falsos
+/// que colisionan con productos de otra linea. La captura automatica descarga
+/// el XLS original del intranet (texto), por eso solo se valida al importar a mano.
+fn reject_numeric_sku(xls_path: &str) -> Result<(), String> {
+    match g360_db_ventas::processor::xls::inspect_sku_column(std::path::Path::new(xls_path)) {
+        Ok(insp) if insp.has_numeric_sku() => {
+            let n = insp.numeric_cells;
+            let total = insp.total_cells;
+            Err(format!(
+                "⛔ Importación bloqueada: la columna SKU está guardada como número en {n} de {total} filas. \
+                 Excel pudo eliminar ceros a la izquierda (011019 → 11019) y crear SKUs falsos. \
+                 Vuelve a exportar/descargar el XLS del intranet SIN abrirlo ni re-guardarlo en Excel. \
+                 Detalle: {}",
+                insp.warning_message()
+            ))
+        }
+        Ok(_) => Ok(()),
+        Err(e) => {
+            // Si no se pudo inspeccionar (formato raro), no bloquear: el parseo
+            // posterior validara el contenido. Solo se registra.
+            eprintln!("inspect_sku_column no concluyente para {}: {}", xls_path, e);
+            Ok(())
+        }
+    }
+}
+
 #[tauri::command]
 async fn import_manual_day(day: String, xls_path: String) -> Result<String, String> {
     // day: YYYY-MM-DD, xls_path: ruta absoluta del XLS descargado manualmente
     if day.len()!=10 { return Err("Formato dia debe ser YYYY-MM-DD".into()); }
     let src = std::path::Path::new(&xls_path);
     if !src.exists() { return Err(format!("XLS no existe: {}", xls_path)); }
+    // Gate de integridad: si la columna SKU es numerica, los ceros a la
+    // izquierda se perdieron al re-guardar el XLS en Excel. Bloquear: importar
+    // crearia SKUs falsos que colisionan con otros de distinta linea.
+    reject_numeric_sku(&xls_path)?;
     let raw = g360_db_ventas::config::raw_dir();
     std::fs::create_dir_all(&raw).map_err(|e| e.to_string())?;
     let dest_xls = raw.join(format!("ventas_{}.xls", day));
@@ -856,12 +1275,11 @@ async fn import_manual_day(day: String, xls_path: String) -> Result<String, Stri
         Ok(_) => return Err("CSV generado vacio (0 filas)".into()),
         Err(e) => return Err(format!("Conversion XLS->CSV fallo: {}", e)),
     }
-    // Parsear e insertar en la BD (dedup protege contra duplicados)
+    // Parsear e insertar en la BD (insert_ventas reemplaza el rango del dia)
     match g360_db_ventas::processor::parser::parse_export_csv(&dest_csv) {
         Ok(ventas) if !ventas.is_empty() => {
             let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
             let n = g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, true).await.map_err(|e| e.to_string())?;
-            let _ = g360_db_ventas::db::writer::dedup_ventas(&pool).await;
             // Limpiar failed_*.json del mes
             let mes = &day[..7];
             let fail_path = raw.join(format!("failed_{}.json", mes));
@@ -887,6 +1305,8 @@ async fn import_manual_month(month: String, xls_path: String) -> Result<String, 
     if month.len()!=7 || !month.contains('-') { return Err("Formato mes debe ser YYYY-MM".into()); }
     let src = std::path::Path::new(&xls_path);
     if !src.exists() { return Err(format!("XLS no existe: {}", xls_path)); }
+    // Gate de integridad: mismo chequeo que import_manual_day.
+    reject_numeric_sku(&xls_path)?;
     let raw = g360_db_ventas::config::raw_dir();
     std::fs::create_dir_all(&raw).map_err(|e| e.to_string())?;
     let dest_xls = raw.join(format!("ventas_{}.xls", month));
@@ -898,15 +1318,14 @@ async fn import_manual_month(month: String, xls_path: String) -> Result<String, 
         Ok(_) => return Err("CSV generado vacio (0 filas)".into()),
         Err(e) => return Err(format!("Conversion XLS->CSV fallo: {}", e)),
     }
-    // Parsear + insertar (dedup final protege contra duplicados con dailies previos)
+    // Parsear + insertar (insert_ventas reemplaza el mes completo)
     match g360_db_ventas::processor::parser::parse_export_csv(&dest_csv) {
         Ok(ventas) if !ventas.is_empty() => {
             let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
             let n = g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, true).await.map_err(|e| e.to_string())?;
-            let _ = g360_db_ventas::db::writer::dedup_ventas(&pool).await;
             // Limpiar failed json del mes
             let _ = std::fs::remove_file(raw.join(format!("failed_{}.json", month)));
-            Ok(format!("Mes {} importado desde XLS manual: {} filas insertadas (dedup aplicado)", month, n))
+            Ok(format!("Mes {} importado desde XLS manual: {} filas insertadas", month, n))
         }
         Ok(_) => Err("Parse devolvio 0 filas — verifica que el XLS sea del reporte Estadistica11".into()),
         Err(e) => Err(format!("Parse fallo: {}", e)),
@@ -963,7 +1382,22 @@ async fn preview_import(xls_path: String) -> Result<PreviewResult, String> {
     for v in ventas.iter().take(3) {
         preview_rows.push(vec![v.tpo_doc.clone(), v.serie_doc.clone(), v.nro_doc.clone(), v.id_articulo.clone(), format!("{:.2}", v.soles), v.fecha_orig.to_string()]);
     }
-    let warnings = if ventas.is_empty() { vec!["Parse devolvio 0 filas — verifica que sea Estadistica11".to_string()] } else { vec![] };
+    let mut warnings: Vec<String> = Vec::new();
+    if ventas.is_empty() {
+        warnings.push("Parse devolvio 0 filas — verifica que sea Estadistica11".to_string());
+    }
+    // Aviso temprano: si la columna SKU es numerica, el import se bloqueara.
+    if let Ok(insp) = g360_db_ventas::processor::xls::inspect_sku_column(src) {
+        if insp.has_numeric_sku() {
+            warnings.push(format!(
+                "⛔ Columna SKU guardada como NÚMERO ({} filas). El cero inicial se pudo perder \
+                 (011019 → 11019) y la importación será bloqueada. Re-exporta el XLS del intranet \
+                 sin re-guardarlo en Excel. {}",
+                insp.numeric_cells,
+                insp.warning_message()
+            ));
+        }
+    }
     Ok(PreviewResult {
         file_name: src.file_name().unwrap_or_default().to_string_lossy().to_string(),
         total_rows: ventas.len() + ref_status.values().sum::<usize>(),
@@ -1145,10 +1579,28 @@ async fn abort_capture() -> Result<String, String> {
 
 #[tauri::command]
 async fn test_intranet() -> Result<String, String> {
-    match g360_db_ventas::browser::captor::preflight_checks() {
-        Ok(()) => Ok("Conexion a intranet OK. Chrome detectado.".into()),
-        Err(e) => Err(e),
+    // Verificacion REAL: presencia + Chrome + login contra el intranet.
+    // (Antes solo validaba presencia y podia reportar "OK" con credenciales invalidas.)
+    if let Err(e) = g360_db_ventas::browser::captor::preflight_checks() {
+        return Err(e);
     }
+    verify_intranet_credentials().await?;
+    Ok("Credenciales válidas · Chrome detectado".into())
+}
+
+/// Estado (barato, sin red) de las credenciales configuradas, para el arranque.
+#[tauri::command]
+async fn get_credentials_status() -> Result<serde_json::Value, String> {
+    use g360_db_ventas::config::{effective_intranet_pass, effective_intranet_user};
+    let cfg = g360_db_ventas::config::load_config();
+    let user = effective_intranet_user();
+    let pass = effective_intranet_pass();
+    Ok(serde_json::json!({
+        "intranet_configured": !user.is_empty() && !pass.is_empty(),
+        "intranet_user": user,
+        "supabase_configured": cfg.supabase.is_configured(),
+        "supabase_enabled": cfg.supabase_enabled,
+    }))
 }
 
 #[tauri::command]
@@ -1247,77 +1699,43 @@ async fn run_auto_sync_and_exit() -> ! {
                 }
             }
             
-            // Paso 3: Upload con verificación
-            println!("Paso 3: Subiendo a Supabase...");
-            let dry_run = match g360_db_ventas::processor::uploader::dry_run_upload(
-                &pool, 
-                cfg.supabase_retention_days_effective(), 
-                cfg.last_supabase_sync.as_deref()
-            ).await {
-                Ok(dr) => dr,
-                Err(e) => {
-                    eprintln!("ERROR: No se pudo calcular dry-run: {}", e);
-                    std::process::exit(1);
-                }
-            };
-            
-            if dry_run.rows_to_upload == 0 {
-                println!("No hay datos nuevos para subir.");
+            // Paso 3: Reconciliar con Supabase (mes por mes, resumible) — opcional
+            if !cfg.supabase_enabled || !cfg.supabase.is_configured() {
+                println!("Supabase deshabilitado o no configurado: solo captura local.");
+                let _ = g360_db_ventas::db::writer::calculate_monthly_checksums(&pool).await;
+                println!("\n=== SYNC LOCAL COMPLETADO ===");
                 std::process::exit(0);
             }
-            
-            println!("Subiendo {} registros...", dry_run.rows_to_upload);
-            
+            println!("Paso 3: Reconciliando con Supabase (mes por mes)...");
             let shared: SharedProgress = CAPTURE_STATE.clone();
-            let progress_cb: g360_db_ventas::processor::uploader::ProgressCb = Some(Arc::new(move |batch, total, pct, msg| {
+            let progress_cb: g360_db_ventas::processor::uploader::ProgressCb = Some(Arc::new(move |_b, _t, pct, msg| {
                 let mut s = shared.lock().unwrap();
                 s.phase = CapturePhase::Uploading;
                 s.message = msg.to_string();
                 s.progress = pct;
                 drop(s);
             }));
-            
-            let capture_start_utc = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-            match g360_db_ventas::processor::uploader::upload_all(
-                &pool, 
-                cfg.supabase_retention_days_effective(), 
-                cfg.last_supabase_sync.as_deref(), 
-                &progress_cb
+            match g360_db_ventas::processor::uploader::reconcile_supabase(
+                &pool,
+                cfg.supabase_retention_days_effective(),
+                &progress_cb,
             ).await {
-                Ok((up, cleaned)) => {
-                    println!("✓ Upload completado: {} filas subidas, {} limpiadas", up, cleaned);
-                    
-                    // Verificación post-upload
-                    let url = g360_db_ventas::config::get_supabase_url();
-                    let key = g360_db_ventas::config::get_supabase_service_key();
-                    
-                    if let Ok(verification) = g360_db_ventas::processor::uploader::verify_upload_result(&url, &key, up, Some(&capture_start_utc)).await {
-                        if verification.matched {
-                            println!("✓ Verificación OK: {} filas confirmadas en Supabase", verification.actual_count);
-                            
-                            // Actualizar marker
-                            let mut cfg2 = g360_db_ventas::config::load_config();
-                            cfg2.last_supabase_sync = Some(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
-                            let _ = g360_db_ventas::config::save_config(&cfg2);
-                            
-                            println!("✓ Marker actualizado");
-                        } else {
-                            eprintln!("⚠ Advertencia: Discrepancia verificada. Esperadas: {}, Encontradas: {}", 
-                                verification.expected_count, verification.actual_count);
-                        }
-                    }
-                    
+                Ok(res) => {
+                    println!(
+                        "✓ Reconciliación: {} meses sincronizados, {} fallidos, {} filas subidas, {} purgadas{}",
+                        res.months_synced, res.months_failed, res.rows_uploaded, res.rows_purged,
+                        if res.stopped_early { " (cortado; se reanuda luego)" } else { "" }
+                    );
                     // Calcular checksums
                     println!("Paso 4: Calculando checksums...");
                     if let Ok(_) = g360_db_ventas::db::writer::calculate_monthly_checksums(&pool).await {
                         println!("✓ Checksums calculados");
                     }
-                    
                     println!("\n=== SYNC AUTOMÁTICO COMPLETADO ===");
                     std::process::exit(0);
                 }
                 Err(e) => {
-                    eprintln!("ERROR: Fallo en upload: {}", e);
+                    eprintln!("ERROR: Fallo en reconciliación: {}", e);
                     std::process::exit(1);
                 }
             }
@@ -1372,15 +1790,16 @@ fn main() {
         tauri::Builder::default()
             .invoke_handler(tauri::generate_handler![
                 get_dashboard, get_health, get_settings, save_settings,
-                test_supabase, upload_all, admin_reset, reset_sync_marker, save_service_role_key,
-                capture_range, sync_from_last,
+                test_supabase, get_supabase_info, get_local_metrics, upload_all, admin_reset, reset_sync_marker, save_service_role_key,
+                capture_range, sync_from_last, sync_smart, reconcile_supabase_cmd, run_full_flow,
                 clear_cache, open_data_folder, clear_db,
                 get_capture_status,
                 list_months, delete_month, delete_months, get_completeness, get_failed_days, import_manual_day, import_manual_month,
                 preview_import, reparse_raw,
-                abort_capture, test_intranet, preview_csv,
+                abort_capture, test_intranet, get_credentials_status, preview_csv,
                 // Auditoría e integridad
                 verify_integrity, calculate_checksums, get_sync_history, get_checksum_history,
+                get_data_quality, export_nc_ndb, get_monthly_monitor, export_monitor_xlsx,
                 // Protección de upload
                 upload_dry_run, upload_all_with_verify,
                 // Mantenimiento DB
@@ -1405,6 +1824,47 @@ async fn verify_integrity() -> Result<serde_json::Value, String> {
         .await
         .map_err(|e| e.to_string())?;
     Ok(serde_json::to_value(issues).unwrap_or(serde_json::json!({"error": "serialization failed"})))
+}
+
+/// Reporte de calidad de datos (críticos / warnings / info).
+#[tauri::command]
+async fn get_data_quality() -> Result<serde_json::Value, String> {
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    g360_db_ventas::db::writer::data_quality_report(&pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Exporta NCR y NDB a CSV separados (con vínculo a la factura referenciada).
+#[tauri::command]
+async fn export_nc_ndb(desde: String, hasta: String) -> Result<Vec<String>, String> {
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    g360_db_ventas::db::writer::export_nc_ndb(&pool, &desde, &hasta)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Monitor mensual: mes | filas | unidades | total soles (para comparar con la intranet).
+#[tauri::command]
+async fn get_monthly_monitor() -> Result<serde_json::Value, String> {
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    let rows = g360_db_ventas::db::writer::monthly_monitor(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    let arr: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|(m, f, c, s)| serde_json::json!({"mes": m, "filas": f, "unidades": c, "soles": s}))
+        .collect();
+    Ok(serde_json::Value::Array(arr))
+}
+
+/// Exporta el monitor mensual a XLSX.
+#[tauri::command]
+async fn export_monitor_xlsx() -> Result<String, String> {
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    g360_db_ventas::db::writer::export_monitor_xlsx(&pool)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1499,110 +1959,25 @@ async fn upload_dry_run() -> Result<serde_json::Value, String> {
     }))
 }
 
-/// Ejecuta el upload con verificación post-upload
+/// Sincroniza con Supabase reconciliando MES POR MES (resumible, circuit breaker).
+/// Reemplaza el upload/full-sync anterior. No-op si Supabase está deshabilitado.
 #[tauri::command]
 async fn upload_all_with_verify() -> Result<serde_json::Value, String> {
-    let cfg = g360_db_ventas::config::load_config();
-    if !cfg.supabase.is_configured() {
-        return Err("Supabase no configurado".to_string());
-    }
-    {
-        let st = CAPTURE_STATE.lock().unwrap();
-        if st.phase != CapturePhase::Idle
-            && st.phase != CapturePhase::Done
-            && st.phase != CapturePhase::Error
-        {
-            return Err("Hay una captura en curso. Espere a que termine antes de subir a Supabase.".to_string());
-        }
-    }
-
-    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
-    let retention = cfg.supabase_retention_days_effective();
-    let last_sync = cfg.last_supabase_sync.clone();
-
-    // Dry-run primero
-    let dry_run = g360_db_ventas::processor::uploader::dry_run_upload(&pool, retention, last_sync.as_deref())
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let rows_to_upload = dry_run.rows_to_upload;
-
-    if rows_to_upload == 0 {
-        return Ok(serde_json::json!({
-            "status": "idle",
-            "message": "Nada nuevo para subir (sync incremental)",
-            "rows_to_upload": 0,
-            "verified": false
-        }));
-    }
-
-    set_state("uploading", &format!("Subiendo {} registros a Supabase...", rows_to_upload), 0.05);
-
-    let capture_start_utc = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let shared: SharedProgress = CAPTURE_STATE.clone();
-    let progress_cb: g360_db_ventas::processor::uploader::ProgressCb = Some(Arc::new(move |_batch, _total, pct, msg| {
-        let mut s = shared.lock().unwrap();
-        s.phase = CapturePhase::Uploading;
-        s.message = msg.to_string();
-        s.progress = pct;
-        s.started_at = s.started_at.or_else(|| Some(now_secs()));
-        s.finished_at = None;
-        drop(s);
-    }));
-
-    match g360_db_ventas::processor::uploader::upload_all(&pool, retention, last_sync.as_deref(), &progress_cb).await {
-        Ok((up, cleaned)) => {
-            // Verificación post-upload
-            let url = g360_db_ventas::config::get_supabase_url();
-            let key = g360_db_ventas::config::get_supabase_service_key();
-
-            let verification = g360_db_ventas::processor::uploader::verify_upload_result(
-                &url,
-                &key,
-                up,
-                Some(&capture_start_utc),
-            )
-            .await
-            .map_err(|e| {
-                set_state("idle", &format!("Error verificando Supabase: {e}"), 0.0);
-                format!("Upload completado, pero no se pudo verificar en Supabase: {e}")
-            })?;
-
-            // Actualizar marcador solo si verificación pasó
-            if up > 0 && verification.matched {
-                let mut cfg2 = g360_db_ventas::config::load_config();
-                cfg2.last_supabase_sync = Some(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
-                let _ = g360_db_ventas::config::save_config(&cfg2);
-            }
-
-            let retention_msg = if cleaned > 0 { format!(" + {} antiguos limpiados", cleaned) } else { String::new() };
-            let verify_msg = if verification.matched {
-                format!(" verificado: {} filas confirmadas", verification.actual_count)
-            } else {
-                format!(" verificación: esperadas {}, encontradas {}", verification.expected_count, verification.actual_count)
-            };
-
-            set_state("idle", &format!("Sync OK: {} rows{}", up, retention_msg), 1.0);
-
-            Ok(serde_json::json!({
-                "status": "ok",
-                "message": format!("Sync OK: {} rows{}{}", up, retention_msg, verify_msg),
-                "rows_uploaded": up,
-                "rows_cleaned": cleaned,
-                "verification": {
-                    "expected_count": verification.expected_count,
-                    "actual_count": verification.actual_count,
-                    "matched": verification.matched,
-                    "discrepancy": verification.discrepancy
-                },
-                "marker_updated": up > 0 && verification.matched
-            }))
-        }
-        Err(e) => {
-            set_state("idle", &format!("Error sync: {}", e), 0.0);
-            Err(format!("Error en upload: {}", e))
-        }
-    }
+    let res = reconcile_supabase_cmd().await?;
+    Ok(serde_json::json!({
+        "status": if res.stopped_early { "partial" } else { "ok" },
+        "message": format!(
+            "Reconciliación: {} meses sincronizados, {} fallidos, {} filas subidas, {} purgadas{}",
+            res.months_synced, res.months_failed, res.rows_uploaded, res.rows_purged,
+            if res.stopped_early { " (reanuda en la próxima)" } else { "" }
+        ),
+        "months_total": res.months_total,
+        "months_synced": res.months_synced,
+        "months_failed": res.months_failed,
+        "rows_uploaded": res.rows_uploaded,
+        "rows_purged": res.rows_purged,
+        "stopped_early": res.stopped_early
+    }))
 }
 
 // ─── AUTOMATIZACIÓN DIARIA ───────────────────────────────────────────────
@@ -1641,70 +2016,34 @@ async fn auto_daily_pipeline() -> Result<serde_json::Value, String> {
             set_state("syncing", "Calculando checksums...", 0.7);
             let _ = g360_db_ventas::db::writer::calculate_monthly_checksums(&pool).await;
 
-            // Paso 4: Dry-run upload
-            set_state("uploading", "Verificando datos para subir...", 0.8);
-            let dry_run = g360_db_ventas::processor::uploader::dry_run_upload(&pool, cfg.supabase_retention_days_effective(), cfg.last_supabase_sync.as_deref())
-                .await
-                .map_err(|e| e.to_string())?;
-
-            if dry_run.rows_to_upload == 0 {
-                set_state("idle", "No hay datos nuevos para subir", 1.0);
-                return Ok(serde_json::json!({
-                    "status": "idle",
-                    "message": "No hay datos nuevos para subir",
-                    "captured_date": yesterday_str,
-                    "rows_to_upload": 0
-                }));
-            }
-
-            // Paso 5: Upload con verificación
-            set_state("uploading", &format!("Subiendo {} registros...", dry_run.rows_to_upload), 0.85);
-
+            // Paso 4: Reconciliar con Supabase (mes por mes, resumible)
+            set_state("uploading", "Reconciliando con Supabase...", 0.8);
             let shared: SharedProgress = CAPTURE_STATE.clone();
-            let progress_cb: g360_db_ventas::processor::uploader::ProgressCb = Some(Arc::new(move |_batch, _total, pct, msg| {
+            let progress_cb: g360_db_ventas::processor::uploader::ProgressCb = Some(Arc::new(move |_b, _t, pct, msg| {
                 let mut s = shared.lock().unwrap();
                 s.phase = CapturePhase::Uploading;
                 s.message = msg.to_string();
                 s.progress = pct;
                 drop(s);
             }));
-
-            let capture_start_utc = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-            match g360_db_ventas::processor::uploader::upload_all(&pool, cfg.supabase_retention_days_effective(), cfg.last_supabase_sync.as_deref(), &progress_cb).await {
-                Ok((up, cleaned)) => {
-                    let url = g360_db_ventas::config::get_supabase_url();
-                    let key = g360_db_ventas::config::get_supabase_service_key();
-
-                    let verification = g360_db_ventas::processor::uploader::verify_upload_result(&url, &key, up, Some(&capture_start_utc))
-                        .await
-                        .unwrap_or(g360_db_ventas::processor::uploader::VerificationResult {
-                            expected_count: up,
-                            actual_count: 0,
-                            matched: false,
-                            discrepancy: up,
-                        });
-
-                    if up > 0 && verification.matched {
-                        let mut cfg2 = g360_db_ventas::config::load_config();
-                        cfg2.last_supabase_sync = Some(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
-                        let _ = g360_db_ventas::config::save_config(&cfg2);
-                    }
-
-                    set_state("idle", &format!("Pipeline diario completado: {} filas subidas", up), 1.0);
-
+            match g360_db_ventas::processor::uploader::reconcile_supabase(&pool, cfg.supabase_retention_days_effective(), &progress_cb).await {
+                Ok(res) => {
+                    set_state("idle", &format!("Pipeline diario: {} meses OK, {} filas subidas", res.months_synced, res.rows_uploaded), 1.0);
                     Ok(serde_json::json!({
-                        "status": "ok",
-                        "message": format!("Pipeline completado: {} capturado, {} filas subidas", yesterday_str, up),
+                        "status": if res.stopped_early { "partial" } else { "ok" },
+                        "message": format!("Pipeline completado: {} capturado, {} filas subidas, {} meses OK{}", yesterday_str, res.rows_uploaded, res.months_synced, if res.stopped_early { " (cortado)" } else { "" }),
                         "captured_date": yesterday_str,
-                        "rows_uploaded": up,
-                        "rows_cleaned": cleaned,
-                        "marker_updated": up > 0 && verification.matched,
+                        "rows_uploaded": res.rows_uploaded,
+                        "rows_purged": res.rows_purged,
+                        "months_synced": res.months_synced,
+                        "months_failed": res.months_failed,
+                        "stopped_early": res.stopped_early,
                         "integrity_issues": integrity.len()
                     }))
                 }
                 Err(e) => {
-                    set_state("idle", &format!("Error en upload: {}", e), 0.0);
-                    Err(format!("Error en upload: {}", e))
+                    set_state("idle", &format!("Error en reconciliación: {}", e), 0.0);
+                    Err(format!("Error en reconciliación: {}", e))
                 }
             }
         }

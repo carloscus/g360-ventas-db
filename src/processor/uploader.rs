@@ -9,31 +9,48 @@ use tracing::info;
 /// (batch_actual, total_batches, porcentaje, mensaje)
 pub type ProgressCb = Option<Arc<dyn Fn(usize, usize, f32, &str) + Send + Sync>>;
 
-/// Sube un batch de ventas a Supabase (sin on_conflict para evitar error 500 con multi-línea).
-/// Reintenta hasta 3 veces con backoff exponencial ante errores transitorios (5xx, timeout).
-/// Deduplica por (folio_unico, id_articulo) para evitar duplicados en Supabase.
+/// Sube un batch de ventas a Supabase.
+/// Reintenta hasta 3 intentos con backoff exponencial ante errores transitorios (5xx, timeout).
+/// NO deduplica: `(folio_unico, id_articulo)` NO es unico en el ERP — una factura puede
+/// tener varias lineas del mismo SKU (gratuita + pagada, precios distintos, repeticion
+/// por guia de remision). Filtrar por esa clave borra datos reales (verificado 2026-09).
 pub async fn upload_to_supabase(ventas: &[Venta], progress_cb: &ProgressCb) -> Result<usize> {
     let url = get_supabase_url();
     let key = get_supabase_service_key();
     if url.contains("TU_SUPABASE") || key.contains("TU_ANON") {
         return Err(anyhow::anyhow!("Supabase credentials not configured"));
     }
-    // Deduplicar por (folio_unico, id_articulo): mantener la primera ocurrencia de cada línea
-    let mut seen: std::collections::HashMap<(String, String), ()> = std::collections::HashMap::new();
-    let deduped: Vec<Venta> = ventas.iter()
-        .filter(|v| seen.insert((v.folio_unico.clone(), v.id_articulo.clone()), ()).is_none())
-        .cloned()
-        .collect();
-    if deduped.len() < ventas.len() {
-        info!("Upload dedup: {} duplicados descartados en batch de {}", ventas.len() - deduped.len(), ventas.len());
-    }
     // NO on_conflict: Supabase no permite múltiples filas con misma key en upsert batch.
-    // La deduplicación se maneja a nivel de aplicación (reparse + dedup_ventas).
     let endpoint = format!(
         "{}/rest/v1/{}",
         url, SUPABASE_TABLE
     );
-    let body = serde_json::to_string(&deduped)?;
+    // Supabase no tiene estas columnas (raw-first: viven solo en el SQLite local).
+    // PostgREST rechaza claves desconocidas con PGRST204, asi que se excluyen del
+    // payload de subida (decisión: no migrar estas columnas a Supabase).
+    const SUPABASE_EXCLUDED_COLS: [&str; 8] = [
+        "ord_compra",
+        "id_ubigeo",
+        "canal_distribucion",
+        "nom_condicion_pago",
+        "estado_linea",
+        "division",
+        "fec_cargo",
+        "id_guia",
+    ];
+    let payload: Vec<serde_json::Value> = ventas
+        .iter()
+        .map(|v| {
+            let mut m = serde_json::to_value(v).unwrap_or(serde_json::Value::Null);
+            if let Some(obj) = m.as_object_mut() {
+                for c in SUPABASE_EXCLUDED_COLS {
+                    obj.remove(c);
+                }
+            }
+            m
+        })
+        .collect();
+    let body = serde_json::to_string(&payload)?;
     // Timeout: sin esto, un PostgREST colgado (statement timeout en tabla con churn
     // masivo) deja el upload eternamente esperando.
     let client = reqwest::Client::builder()
@@ -84,7 +101,7 @@ pub async fn upload_to_supabase(ventas: &[Venta], progress_cb: &ProgressCb) -> R
             if let Some(cb) = progress_cb {
                 cb(0, 0, 0.0, ""); // no-op batch done
             }
-            return Ok(deduped.len());
+            return Ok(ventas.len());
         }
         // Errores transitorios (5xx, rate-limit) -> reintentar; 4xx -> error inmediato
         if st.is_server_error() || st == reqwest::StatusCode::TOO_MANY_REQUESTS {
@@ -102,6 +119,76 @@ pub async fn upload_to_supabase(ventas: &[Venta], progress_cb: &ProgressCb) -> R
     }
     Err(last_err
         .unwrap_or_else(|| anyhow::anyhow!("Supabase upload failed after {} attempts", max_attempts)))
+}
+
+/// Columnas de `ventas` en el orden EXACTO que espera `map_venta_row`.
+const VENTA_SELECT_COLS: &str = "id, id_articulo,original_sku,nom_articulo,id_linea,nom_linea,id_grupo,nom_grupo,\
+id_tipo,nom_tipo,id_familia,nom_familia,\
+id_cliente,doc_cliente,nom_cliente,tpo_doc,serie_doc,nro_doc,referencia,\
+moneda,cantidad,cantidad_fae,soles,dolares,precio_unitario,anho,mes,fecha_orig,\
+fecha_ref,fecha_venc,cod_sucursal,nom_sucursal,\
+departamento,provincia,distrito,id_vendedor,\
+nom_vendedor,id_pedido,ord_compra,file_source,mes_ref,\
+tipo_operacion,factura_ref_serie,factura_ref_nro,folio_unico";
+
+/// Mapea una fila de `ventas` (SELECT con el orden de columnas de `VENTA_SELECT_COLS`)
+/// a `(id, Venta)`. Reutilizable por upload_all y reconcile_supabase.
+fn map_venta_row(row: sqlx::sqlite::SqliteRow) -> (i64, Venta) {
+    use sqlx::Row;
+    let v = Venta {
+        id_articulo: row.get(1),
+        original_sku: row.get(2),
+        nom_articulo: row.get(3),
+        id_linea: row.get(4),
+        nom_linea: row.get(5),
+        id_grupo: row.get(6),
+        nom_grupo: row.get(7),
+        id_tipo: row.get(8),
+        nom_tipo: row.get(9),
+        id_familia: row.get(10),
+        nom_familia: row.get(11),
+        id_cliente: row.get(12),
+        doc_cliente: row.get(13),
+        nom_cliente: row.get(14),
+        tpo_doc: row.get(15),
+        serie_doc: row.get(16),
+        nro_doc: row.get(17),
+        referencia: row.get(18),
+        moneda: row.get(19),
+        cantidad: row.get(20),
+        cantidad_fae: row.try_get(21).unwrap_or_default(),
+        soles: row.get(22),
+        dolares: row.get(23),
+        precio_unitario: row.get(24),
+        anho: row.get(25),
+        mes: row.get(26),
+        fecha_orig: row.get(27),
+        fecha_ref: row.try_get(28).unwrap_or(None),
+        fecha_venc: row.try_get(29).unwrap_or(None),
+        cod_sucursal: row.get(30),
+        nom_sucursal: row.get(31),
+        departamento: row.get(32),
+        provincia: row.get(33),
+        distrito: row.get(34),
+        id_vendedor: row.get(35),
+        nom_vendedor: row.get(36),
+        id_pedido: row.get(37),
+        ord_compra: row.try_get(38).unwrap_or_default(),
+        file_source: row.get(39),
+        mes_ref: row.get(40),
+        tipo_operacion: row.try_get(41).unwrap_or_default(),
+        factura_ref_serie: row.try_get(42).unwrap_or_default(),
+        factura_ref_nro: row.try_get(43).unwrap_or_default(),
+        folio_unico: row.try_get(44).unwrap_or_default(),
+        id_ubigeo: row.try_get(45).unwrap_or_default(),
+        canal_distribucion: row.try_get(46).unwrap_or_default(),
+        nom_condicion_pago: row.try_get(47).unwrap_or_default(),
+        estado_linea: row.try_get(48).unwrap_or_default(),
+        division: row.try_get(49).unwrap_or_default(),
+        fec_cargo: row.try_get(50).unwrap_or_default(),
+        id_guia: row.try_get(51).unwrap_or_default(),
+    };
+    (row.get(0), v)
 }
 
 /// Sube todas las ventas desde SQLite a Supabase en batches de 500.
@@ -176,8 +263,34 @@ pub async fn upload_all(
         ));
     }
 
-    // Todas las purgas se ejecutan después de validar el lote local; un error de
-    // calidad nunca debe dejar Supabase parcialmente vacío.
+    // NOTA: NO se valida unicidad por (folio_unico, id_articulo). Esa clave NO es
+    // unica en el ERP: una factura puede tener varias lineas del mismo SKU (linea
+    // gratuita + pagada, precios distintos, o repeticion por guia de remision).
+    // Se suben TODAS las filas elegibles; Supabase no tiene constraint de unicidad.
+
+    let count: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM ventas {}", upload_where
+    ))
+    .fetch_one(pool)
+    .await
+    .context("Count query failed")?;
+
+    // Visibilidad raw-first: cuántas filas locales quedan fuera por el filtro
+    let total_local: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+    info!(
+        "Filtro de líneas: {}/{} filas locales elegibles para Supabase ({} excluidas por allowlist/NC-ND)",
+        count, total_local, total_local - count
+    );
+
+    if count == 0 {
+        return Ok((0, 0));
+    }
+
+    // Todas las purgas se ejecutan DESPUÉS de validar el lote local (fechas +
+    // duplicados): un error de calidad nunca debe dejar Supabase parcialmente vacío.
     if last_sync.is_none() || last_sync == Some("") {
         if let Some(cb) = progress_cb {
             cb(0, 0, 0.02, "Full sync: purgando ventana en Supabase...");
@@ -203,49 +316,6 @@ pub async fn upload_all(
         }
     }
 
-    // VALIDACIÓN duplicados: SOLO entre las filas elegibles para upload y con folio
-    // no vacío. Raw-first: un duplicado en filas no-elegibles es irrelevante para
-    // Supabase, y folios vacíos ("TPO//") colisionarían entre sí sin ser el mismo doc.
-    let dup_count: i64 = sqlx::query_scalar(&format!(
-        "SELECT COUNT(*) FROM (
-            SELECT folio_unico, id_articulo, COUNT(*) as cnt
-            FROM ventas {} AND folio_unico != ''
-            GROUP BY folio_unico, id_articulo
-            HAVING COUNT(*) > 1
-        )", upload_where
-    ))
-    .fetch_one(pool)
-    .await
-    .context("Duplicate check failed")?;
-
-    if dup_count > 0 {
-        return Err(anyhow::anyhow!(
-            "Hay {} pares (folio,SKU) duplicados entre las filas a subir. Ejecuta 'Reprocesar raw' primero para deduplicar.",
-            dup_count
-        ));
-    }
-
-    let count: i64 = sqlx::query_scalar(&format!(
-        "SELECT COUNT(*) FROM ventas {}", upload_where
-    ))
-    .fetch_one(pool)
-    .await
-    .context("Count query failed")?;
-
-    // Visibilidad raw-first: cuántas filas locales quedan fuera por el filtro
-    let total_local: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas")
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
-    info!(
-        "Filtro de líneas: {}/{} filas locales elegibles para Supabase ({} excluidas por allowlist/NC-ND)",
-        count, total_local, total_local - count
-    );
-
-    if count == 0 {
-        return Ok((0, 0));
-    }
-
     let total_batches = ((count as f64) / (bs as f64)).ceil() as usize;
     let mut up = 0usize;
 
@@ -254,15 +324,8 @@ pub async fn upload_all(
     // recorrer 475K filas antes de leer las suyas -> la subida se degradaba de
     // ~2 batches/s a minutos por batch (bug real 2026-09-09, RAM 4.5 GB incluida).
     let select_sql = format!(
-        "SELECT id, id_articulo,original_sku,nom_articulo,id_linea,nom_linea,id_grupo,nom_grupo,\
-         id_tipo,nom_tipo,id_familia,nom_familia,\
-         id_cliente,doc_cliente,nom_cliente,tpo_doc,serie_doc,nro_doc,referencia,\
-         moneda,cantidad,cantidad_fae,soles,dolares,precio_unitario,anho,mes,fecha_orig,\
-         fecha_ref,fecha_venc,cod_sucursal,nom_sucursal,\
-         departamento,provincia,distrito,id_vendedor,\
-          nom_vendedor,id_pedido,ord_compra,file_source,mes_ref,\
-         tipo_operacion,factura_ref_serie,factura_ref_nro,folio_unico \
-         FROM ventas {} AND id > ? ORDER BY id LIMIT ?", upload_where
+        "SELECT {} FROM ventas {} AND id > ? ORDER BY id LIMIT ?",
+        VENTA_SELECT_COLS, upload_where
     );
 
     let start = Instant::now();
@@ -278,63 +341,7 @@ pub async fn upload_all(
         let rows: Vec<(i64, Venta)> = sqlx::query(&select_sql)
             .bind(last_id)
             .bind(bs as i64)
-            .map(|row: sqlx::sqlite::SqliteRow| {
-                use sqlx::Row;
-                let v = Venta {
-                    id_articulo: row.get(1),
-                    original_sku: row.get(2),
-                    nom_articulo: row.get(3),
-                    id_linea: row.get(4),
-                    nom_linea: row.get(5),
-                    id_grupo: row.get(6),
-                    nom_grupo: row.get(7),
-                    id_tipo: row.get(8),
-                    nom_tipo: row.get(9),
-                    id_familia: row.get(10),
-                    nom_familia: row.get(11),
-                    id_cliente: row.get(12),
-                    doc_cliente: row.get(13),
-                    nom_cliente: row.get(14),
-                    tpo_doc: row.get(15),
-                    serie_doc: row.get(16),
-                    nro_doc: row.get(17),
-                    referencia: row.get(18),
-                    moneda: row.get(19),
-                    cantidad: row.get(20),
-                    cantidad_fae: row.try_get(21).unwrap_or_default(),
-                    soles: row.get(22),
-                    dolares: row.get(23),
-                    precio_unitario: row.get(24),
-                    anho: row.get(25),
-                    mes: row.get(26),
-                    fecha_orig: row.get(27),
-                    fecha_ref: row.try_get(28).unwrap_or(None),
-                    fecha_venc: row.try_get(29).unwrap_or(None),
-                    cod_sucursal: row.get(30),
-                    nom_sucursal: row.get(31),
-                    departamento: row.get(32),
-                    provincia: row.get(33),
-                    distrito: row.get(34),
-                    id_vendedor: row.get(35),
-                    nom_vendedor: row.get(36),
-                    id_pedido: row.get(37),
-                    ord_compra: row.try_get(38).unwrap_or_default(),
-                    file_source: row.get(39),
-                    mes_ref: row.get(40),
-                    tipo_operacion: row.try_get(41).unwrap_or_default(),
-                    factura_ref_serie: row.try_get(42).unwrap_or_default(),
-                    factura_ref_nro: row.try_get(43).unwrap_or_default(),
-                    folio_unico: row.try_get(44).unwrap_or_default(),
-                    id_ubigeo: row.try_get(45).unwrap_or_default(),
-                    canal_distribucion: row.try_get(46).unwrap_or_default(),
-                    nom_condicion_pago: row.try_get(47).unwrap_or_default(),
-                    estado_linea: row.try_get(48).unwrap_or_default(),
-                    division: row.try_get(49).unwrap_or_default(),
-                    fec_cargo: row.try_get(50).unwrap_or_default(),
-                    id_guia: row.try_get(51).unwrap_or_default(),
-                };
-                (row.get(0), v)
-            })
+            .map(map_venta_row)
             .fetch_all(pool)
             .await
             .context("Fetch batch failed")?;
@@ -479,32 +486,10 @@ pub async fn resync_stale_months(
             continue;
         }
 
-        // Purgar el mes desactualizado (loop hasta vaciar)
-        let mut purged_mes = 0usize;
-        loop {
-            let resp = client
-                .delete(&base_url)
-                .header("apikey", &key)
-                .header("Authorization", format!("Bearer {}", key))
-                .header("Prefer", "return=representation")
-                .query(&[("mes_ref", mes_filter.as_str()), ("select", "id")])
-                .send()
-                .await
-                .context("Month-aware: fallo DELETE de mes")?;
-            if !resp.status().is_success() {
-                anyhow::bail!(
-                    "Month-aware: Supabase {} al purgar mes {}: {}",
-                    resp.status(), mes_ref,
-                    resp.text().await.unwrap_or_default().chars().take(120).collect::<String>()
-                );
-            }
-            let rows: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!([]));
-            let n = rows.as_array().map(|a| a.len()).unwrap_or(0);
-            purged_mes += n;
-            if n == 0 {
-                break;
-            }
-        }
+        // Purgar el mes desactualizado (por lotes de ids, evita statement_timeout)
+        let purged_mes = delete_month_batched(&client, &base_url, &key, mes_ref)
+            .await
+            .context("Month-aware: fallo DELETE de mes")?;
         if purged_mes > 0 {
             info!("Month-aware: mes {} desactualizado -> purgadas {} filas", mes_ref, purged_mes);
             purgados.push((mes_ref.clone(), purged_mes));
@@ -514,11 +499,128 @@ pub async fn resync_stale_months(
     Ok(purgados)
 }
 
+/// Borra todas las filas de un mes (`mes_ref=eq.MES`) en batches por `id`.
+/// Un DELETE del mes completo puede exceder el `statement_timeout` de PostgREST
+/// (ERROR 57014) cuando el mes tiene decenas de miles de filas o hay bloat; borrar
+/// por lotes de ids mantiene cada statement corto y predecible. Devuelve filas borradas.
+async fn delete_month_batched(
+    client: &reqwest::Client,
+    base_url: &str,
+    key: &str,
+    mes: &str,
+) -> Result<usize> {
+    const BATCH: usize = 500;
+    let auth = format!("Bearer {}", key);
+    let mut deleted = 0usize;
+    let mut iter = 0usize;
+    loop {
+        iter += 1;
+        if iter > 10_000 {
+            return Err(anyhow::anyhow!(
+                "Supabase DELETE ids {}: demasiadas iteraciones (posible bloqueo de borrado)",
+                mes
+            ));
+        }
+        let mes_filter = format!("eq.{}", mes);
+        let limit_s = BATCH.to_string();
+
+        // 1) Leer hasta BATCH ids del mes (seek por idx_venta_mes)
+        let mut ids: Vec<String> = Vec::new();
+        let mut last_err: Option<String> = None;
+        for attempt in 1..=3 {
+            match client
+                .get(base_url)
+                .header("apikey", key)
+                .header("Authorization", &auth)
+                .query(&[
+                    ("mes_ref", mes_filter.as_str()),
+                    ("select", "id"),
+                    ("limit", limit_s.as_str()),
+                ])
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => {
+                    let rows: serde_json::Value =
+                        r.json().await.unwrap_or(serde_json::json!([]));
+                    ids = rows
+                        .as_array()
+                        .map(|a| a.iter().filter_map(|x| x.get("id").map(|v| v.to_string())).collect())
+                        .unwrap_or_default();
+                    last_err = None;
+                    break;
+                }
+                Ok(r) => {
+                    let st = r.status();
+                    if st.is_client_error() {
+                        return Err(anyhow::anyhow!("Supabase GET ids {}: {}", mes, st));
+                    }
+                    last_err = Some(format!("{}", st));
+                }
+                Err(e) => last_err = Some(format!("red: {e}")),
+            }
+            if attempt < 3 {
+                tokio::time::sleep(Duration::from_secs(2 * attempt as u64)).await;
+            }
+        }
+        if let Some(e) = last_err {
+            return Err(anyhow::anyhow!("Supabase GET ids {} tras 3 intentos: {}", mes, e));
+        }
+        if ids.is_empty() {
+            break;
+        }
+
+        // 2) DELETE por `id=in.(...)`
+        let id_filter = format!("in.({})", ids.join(","));
+        let mut last_err: Option<String> = None;
+        let mut ok = false;
+        for attempt in 1..=3 {
+            match client
+                .delete(base_url)
+                .header("apikey", key)
+                .header("Authorization", &auth)
+                .header("Prefer", "return=minimal")
+                .query(&[("id", id_filter.as_str())])
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => {
+                    ok = true;
+                    last_err = None;
+                    break;
+                }
+                Ok(r) => {
+                    let st = r.status();
+                    if st.is_client_error() {
+                        return Err(anyhow::anyhow!("Supabase DELETE ids {}: {}", mes, st));
+                    }
+                    last_err = Some(format!("{}", st));
+                }
+                Err(e) => last_err = Some(format!("red: {e}")),
+            }
+            if attempt < 3 {
+                tokio::time::sleep(Duration::from_secs(2 * attempt as u64)).await;
+            }
+        }
+        if !ok {
+            return Err(anyhow::anyhow!(
+                "Supabase DELETE ids {} tras 3 intentos: {}",
+                mes,
+                last_err.unwrap_or_default()
+            ));
+        }
+        deleted += ids.len();
+        if ids.len() < BATCH {
+            break; // mes vacio
+        }
+    }
+    Ok(deleted)
+}
+
 /// Purga la ventana de retencion en Supabase (full sync), MES POR MES.
-/// Un DELETE unico de toda la ventana (~600K filas) excede el statement_timeout
-/// de PostgREST (57014) en tablas con churn/bloat — bug real 2026-09-09 que dejo
-/// la purga a medias y Supabase mezclado. Cada mes son ~10-25K filas: seguro.
-/// Reintento por mes ante 5xx transitorios.
+/// El DELETE se hace por lotes de ids (ver `delete_month_batched`): un DELETE del
+/// mes completo excede el statement_timeout de PostgREST (57014) en meses grandes.
+/// Reintento por lote ante 5xx transitorios.
 pub async fn purge_supabase_window(retention_days: u32) -> Result<usize> {
     if retention_days == 0 {
         return Ok(0);
@@ -558,51 +660,15 @@ pub async fn purge_supabase_window(retention_days: u32) -> Result<usize> {
     let mut purged = 0usize;
 
     for mes in &meses {
-        loop {
-            let mut last_err: Option<String> = None;
-            let mut n = 0usize;
-            for attempt in 1..=3 {
-                let resp = client
-                    .delete(&base_url)
-                    .header("apikey", &key)
-                    .header("Authorization", format!("Bearer {}", key))
-                    .header("Prefer", "return=representation")
-                    .query(&[("mes_ref", format!("eq.{}", mes).as_str()), ("select", "id")])
-                    .send()
-                    .await;
-                match resp {
-                    Ok(r) if r.status().is_success() => {
-                        let rows: serde_json::Value =
-                            r.json().await.unwrap_or(serde_json::json!([]));
-                        n = rows.as_array().map(|a| a.len()).unwrap_or(0);
-                        last_err = None;
-                        break;
-                    }
-                    Ok(r) => {
-                        let st = r.status();
-                        let txt = r.text().await.unwrap_or_default();
-                        let msg = format!("Supabase {}: {}", st, txt.chars().take(120).collect::<String>());
-                        // 4xx (no transitorio) -> abortar sin reintentar
-                        if st.is_client_error() {
-                            return Err(anyhow::anyhow!("Supabase purge {}: {}", mes, msg));
-                        }
-                        last_err = Some(msg);
-                    }
-                    Err(e) => last_err = Some(format!("red: {e}")),
-                }
-                if attempt < 3 {
-                    tokio::time::sleep(Duration::from_secs(2 * attempt as u64)).await;
-                }
+        match delete_month_batched(&client, &base_url, &key, mes).await {
+            Ok(n) => {
+                purged += n;
+                info!("Purge {}: {} filas (acumulado {})", mes, n, purged);
             }
-            if let Some(msg) = last_err {
-                return Err(anyhow::anyhow!("Supabase purge {} tras 3 intentos: {}", mes, msg));
-            }
-            purged += n;
-            if n == 0 {
-                break; // mes vacio (o ya purgado) -> siguiente mes
+            Err(e) => {
+                return Err(anyhow::anyhow!("Full sync: fallo purge de ventana: {}", e));
             }
         }
-        info!("Purge {}: acumulado {} filas", mes, purged);
     }
 
     Ok(purged)
@@ -684,46 +750,268 @@ pub async fn cleanup_supabase_retention(
     }
 
     for (mi, mes) in meses_purgar.iter().enumerate() {
-        loop {
-            let resp = client
-                .delete(&base_url)
-                .header("apikey", &key)
-                .header("Authorization", format!("Bearer {}", key))
-                .header("Prefer", "return=representation")
-                .query(&[("mes_ref", format!("eq.{}", mes).as_str()), ("select", "id")])
-                .send()
-                .await;
-
-            if let Err(e) = resp {
-                info!("Supabase retention delete red fallo ({}): {}", mes, e);
-                break;
+        // Borrado por lotes de ids (best-effort: la limpieza fuera de ventana no
+        // debe abortar el upload si un mes falla).
+        match delete_month_batched(&client, &base_url, &key, mes).await {
+            Ok(n) => {
+                deleted += n;
+                if let Some(cb) = progress_cb {
+                    let frac = (mi + 1) as f64 / meses_purgar.len().max(1) as f64;
+                    cb(0, 0, (0.95 + frac * 0.05) as f32, &format!(
+                        "Retencion: mes {} limpiado ({} acumulados)",
+                        mes, deleted
+                    ));
+                }
             }
-            let resp = resp.unwrap();
-            if !resp.status().is_success() {
-                let txt = resp.text().await.unwrap_or_default();
-                info!("Supabase retention delete fallo {}: {}", mes, txt.chars().take(120).collect::<String>());
-                break;
-            }
-            let rows: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!([]));
-            let n = rows.as_array().map(|a| a.len()).unwrap_or(0);
-            deleted += n;
-
-            if let Some(cb) = progress_cb {
-                let frac = (mi + 1) as f64 / meses_purgar.len().max(1) as f64;
-                cb(0, 0, (0.95 + frac * 0.05) as f32, &format!(
-                    "Retencion: mes {} limpiado ({} acumulados)",
-                    mes, deleted
-                ));
-            }
-
-            if n == 0 {
-                break;
+            Err(e) => {
+                info!("Supabase retention delete fallo ({}): {}", mes, e);
             }
         }
     }
 
     info!("Supabase retention: {} registros eliminados", deleted);
     Ok(deleted)
+}
+
+/// Resultado de una corrida de reconciliacion.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ReconcileResult {
+    pub months_total: usize,
+    pub months_synced: usize,
+    pub months_failed: usize,
+    pub rows_uploaded: usize,
+    pub rows_purged: usize,
+    pub stopped_early: bool,
+}
+
+/// Circuit breaker: corta la reconciliacion tras N meses fallidos consecutivos
+/// (evita martillar Supabase cuando esta throttled/degradado).
+const RECONCILE_MAX_CONSECUTIVE_FAILURES: usize = 3;
+
+/// Sincroniza UN mes: purga sus filas en Supabase (por lotes de ids) y re-sube
+/// las filas elegibles desde SQLite (keyset por id). Devuelve (purgadas, subidas).
+async fn reconcile_month(
+    pool: &sqlx::SqlitePool,
+    client: &reqwest::Client,
+    base_url: &str,
+    key: &str,
+    mes: &str,
+) -> Result<(usize, usize)> {
+    // 1) Purga el mes (borrado por lotes, evita statement_timeout)
+    let purged = delete_month_batched(client, base_url, key, mes).await?;
+
+    // 2) Sube las filas elegibles del mes desde SQLite
+    let mes_esc = mes.replace('\'', "''");
+    let where_clause =
+        crate::config::with_line_filter(&format!("WHERE mes_ref = '{}'", mes_esc));
+    let select_sql = format!(
+        "SELECT {} FROM ventas {} AND id > ? ORDER BY id LIMIT ?",
+        VENTA_SELECT_COLS, where_clause
+    );
+    let no_cb: ProgressCb = None;
+    let mut last_id = 0i64;
+    let mut uploaded = 0usize;
+    let mut guard = 0usize;
+    loop {
+        guard += 1;
+        if guard > 100_000 {
+            return Err(anyhow::anyhow!("reconcile_month {mes}: demasiados batches"));
+        }
+        let rows: Vec<(i64, Venta)> = sqlx::query(&select_sql)
+            .bind(last_id)
+            .bind(500i64)
+            .map(map_venta_row)
+            .fetch_all(pool)
+            .await
+            .context("reconcile fetch failed")?;
+        if rows.is_empty() {
+            break;
+        }
+        let len = rows.len();
+        last_id = rows.last().map(|(id, _)| *id).unwrap_or(last_id);
+        let ventas: Vec<Venta> = rows.into_iter().map(|(_, v)| v).collect();
+        uploaded += upload_to_supabase(&ventas, &no_cb).await?;
+        if len < 500 {
+            break;
+        }
+    }
+    Ok((purged, uploaded))
+}
+
+/// Reconcilia Supabase con la BD local MES POR MES (resumible + circuit breaker).
+/// Reemplaza el full-window purge: solo los meses cuyo checksum local difiere del
+/// ultimo subido se purgan + re-suben. El estado vive en `sync_months`, asi que si
+/// se interrumpe retoma donde quedo en la proxima corrida. NO hace full-scan remoto.
+pub async fn reconcile_supabase(
+    pool: &sqlx::SqlitePool,
+    retention_days: u32,
+    progress_cb: &ProgressCb,
+) -> Result<ReconcileResult> {
+    let url = get_supabase_url();
+    let key = get_supabase_service_key();
+    if url.contains("TU_SUPABASE") || key.contains("TU_ANON") {
+        return Err(anyhow::anyhow!("Supabase no configurado"));
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .connect_timeout(Duration::from_secs(15))
+        .build()?;
+    let base_url = format!("{}/rest/v1/{}", url, SUPABASE_TABLE);
+
+    // 1) Checksums locales ELEGIBLES por mes (mismo filtro del uploader)
+    let base_where = if retention_days > 0 {
+        let cutoff = (chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
+            .format("%Y-%m")
+            .to_string();
+        format!("WHERE mes_ref >= '{}'", cutoff)
+    } else {
+        String::new()
+    };
+    let where_clause = crate::config::with_line_filter(&base_where);
+    let local: Vec<(String, String, i64)> = sqlx::query_as(&format!(
+        "SELECT mes_ref, printf('%08x-%08x-%08x', COUNT(*), \
+                CAST(ROUND(SUM(soles)*100) AS INTEGER), \
+                CAST(ROUND(SUM(cantidad)*100) AS INTEGER)) AS checksum, \
+                COUNT(*) AS filas \
+         FROM ventas {} GROUP BY mes_ref ORDER BY mes_ref",
+        where_clause
+    ))
+    .fetch_all(pool)
+    .await
+    .context("reconcile: local checksums failed")?;
+
+    // 2) Persistir checksum local (crea filas nuevas con remote_checksum NULL)
+    for (mes, checksum, filas) in &local {
+        sqlx::query(
+            "INSERT INTO sync_months (mes_ref, local_checksum, filas, actualizado_en) \
+             VALUES (?, ?, ?, datetime('now')) \
+             ON CONFLICT(mes_ref) DO UPDATE SET local_checksum = excluded.local_checksum, \
+                filas = excluded.filas, actualizado_en = excluded.actualizado_en",
+        )
+        .bind(mes)
+        .bind(checksum)
+        .bind(filas)
+        .execute(pool)
+        .await?;
+    }
+
+    // 3) Sembrar estado desde Supabase cuando la BD local fue recreada (sync_months
+    //    perdido). Si un mes ya existe en Supabase con el MISMO conteo local, se marca
+    //    como sincronizado SIN re-subir. Solo los meses con diferencia se reconcilian.
+    //    (No aplica a reset forzado: reset_sync_marker pone remote_checksum='' , no NULL.)
+    let sin_estado: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sync_months WHERE remote_checksum IS NULL",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    if sin_estado > 0 {
+        if let Ok(sb_counts) = fetch_supabase_month_counts(&client, &url, &key).await {
+            let mut sembrados = 0usize;
+            for (mes, _checksum, filas) in &local {
+                if sb_counts.get(mes) == Some(filas) {
+                    let r = sqlx::query(
+                        "UPDATE sync_months SET remote_checksum = local_checksum, estado = 'synced' \
+                         WHERE mes_ref = ? AND remote_checksum IS NULL",
+                    )
+                    .bind(mes)
+                    .execute(pool)
+                    .await?;
+                    sembrados += r.rows_affected() as usize;
+                }
+            }
+            if sembrados > 0 {
+                info!(
+                    "Reconcile: sembrados {} meses desde Supabase (mismo conteo, sin re-subir)",
+                    sembrados
+                );
+            }
+        } else {
+            info!("Reconcile: RPC g360_ventas_por_mes no disponible; se omite el sembrado");
+        }
+    }
+
+    // 4) Meses a sincronizar: local != remoto (o nunca subido)
+    let pendientes: Vec<(String, String)> = sqlx::query_as(
+        "SELECT mes_ref, local_checksum FROM sync_months \
+         WHERE remote_checksum IS NULL OR remote_checksum != local_checksum \
+         ORDER BY mes_ref",
+    )
+    .fetch_all(pool)
+    .await
+    .context("reconcile: pending months failed")?;
+
+    let months_total = pendientes.len();
+    let mut synced = 0usize;
+    let mut failed = 0usize;
+    let mut rows_uploaded = 0usize;
+    let mut rows_purged = 0usize;
+    let mut consecutive_failures = 0usize;
+    let mut stopped_early = false;
+
+    for (i, (mes, local_checksum)) in pendientes.iter().enumerate() {
+        if let Some(cb) = progress_cb {
+            let frac = (i as f64 / months_total.max(1) as f64) * 0.98;
+            cb(
+                0,
+                months_total,
+                frac as f32,
+                &format!("Reconciliando mes {}/{} ({})", i + 1, months_total, mes),
+            );
+        }
+        match reconcile_month(pool, &client, &base_url, &key, mes).await {
+            Ok((purged, uploaded)) => {
+                sqlx::query(
+                    "UPDATE sync_months SET remote_checksum = local_checksum, estado = 'synced', \
+                        intentos = 0, ultimo_error = NULL, actualizado_en = datetime('now') \
+                     WHERE mes_ref = ?",
+                )
+                .bind(mes)
+                .execute(pool)
+                .await?;
+                synced += 1;
+                rows_purged += purged;
+                rows_uploaded += uploaded;
+                consecutive_failures = 0;
+                info!(
+                    "Reconcile {}: purgadas {} + subidas {} (checksum {})",
+                    mes, purged, uploaded, local_checksum
+                );
+            }
+            Err(e) => {
+                let emsg: String = e.to_string().chars().take(300).collect();
+                sqlx::query(
+                    "UPDATE sync_months SET estado = 'error', intentos = intentos + 1, \
+                        ultimo_error = ?, actualizado_en = datetime('now') WHERE mes_ref = ?",
+                )
+                .bind(&emsg)
+                .bind(mes)
+                .execute(pool)
+                .await?;
+                failed += 1;
+                consecutive_failures += 1;
+                tracing::warn!("Reconcile {} fallo: {}", mes, emsg);
+                if consecutive_failures >= RECONCILE_MAX_CONSECUTIVE_FAILURES {
+                    stopped_early = true;
+                    info!(
+                        "Reconcile: cortado tras {} fallos consecutivos (probable throttling); \
+                         se reanuda en la proxima corrida",
+                        consecutive_failures
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok(ReconcileResult {
+        months_total,
+        months_synced: synced,
+        months_failed: failed,
+        rows_uploaded,
+        rows_purged,
+        stopped_early,
+    })
 }
 
 pub async fn test_supabase_connection(url: &str, key: &str) -> Result<String> {
@@ -756,6 +1044,181 @@ pub async fn test_supabase_connection(url: &str, key: &str) -> Result<String> {
         ))
     }
 }
+
+/// Cobertura de Supabase: rango de fechas (`fecha_orig`) y total de filas.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SupabaseInfo {
+    pub min_date: String,
+    pub max_date: String,
+    pub total_rows: i64,
+    /// Documentos distintos (COUNT(DISTINCT folio_unico)). None si la funcion
+    /// RPC `g360_ventas_stats()` no esta creada en Supabase.
+    pub total_documents: Option<i64>,
+}
+
+/// Cuenta las filas de Supabase con `count=planned` (estimador del planner).
+/// NO hace full-scan: es barato en disco, clave cuando el Disk IO Budget esta
+/// limitado. El valor es aproximado (suficiente para el display del dashboard).
+async fn count_supabase_rows(client: &reqwest::Client, base: &str, key: &str) -> Result<i64> {
+    let resp = client
+        .get(base)
+        .header("apikey", key)
+        .header("Authorization", format!("Bearer {}", key))
+        .header("Prefer", "count=planned")
+        .header("Range", "0-0")
+        .query(&[("select", "id")])
+        .send()
+        .await?;
+    Ok(resp
+        .headers()
+        .get("content-range")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|cr| cr.split('/').nth(1))
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0))
+}
+
+/// Lee la fecha `fecha_orig` mas antigua (dir="asc") o mas nueva (dir="desc").
+async fn fetch_edge_date(
+    client: &reqwest::Client,
+    base: &str,
+    key: &str,
+    dir: &str,
+) -> Result<String> {
+    let order = format!("fecha_orig.{}", dir);
+    let resp = client
+        .get(base)
+        .header("apikey", key)
+        .header("Authorization", format!("Bearer {}", key))
+        .query(&[
+            ("select", "fecha_orig"),
+            ("order", order.as_str()),
+            ("limit", "1"),
+            ("fecha_orig", "not.is.null"),
+        ])
+        .send()
+        .await?;
+    let rows: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!([]));
+    Ok(rows
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|r| r.get("fecha_orig"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string())
+}
+
+/// Cuenta documentos distintos en Supabase via la funcion RPC `g360_ventas_stats()`.
+/// Best-effort: si la funcion no existe (404/PGRST202), el llamador la omite.
+async fn fetch_supabase_documents(
+    client: &reqwest::Client,
+    url: &str,
+    key: &str,
+) -> Result<i64> {
+    let endpoint = format!("{}/rest/v1/rpc/g360_ventas_stats", url);
+    let resp = client
+        .post(&endpoint)
+        .header("apikey", key)
+        .header("Authorization", format!("Bearer {}", key))
+        .header("Content-Type", "application/json")
+        .body("{}")
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("rpc g360_ventas_stats: {}", resp.status());
+    }
+    let v: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!([]));
+    v.as_array()
+        .and_then(|a| a.first())
+        .and_then(|r| r.get("documentos"))
+        .and_then(|d| d.as_i64())
+        .ok_or_else(|| anyhow::anyhow!("rpc sin campo documentos"))
+}
+
+/// Conteo de filas por mes en Supabase via RPC `g360_ventas_por_mes()`.
+/// Se usa para sembrar `sync_months` cuando la BD local se recrea (sin re-subir).
+async fn fetch_supabase_month_counts(
+    client: &reqwest::Client,
+    url: &str,
+    key: &str,
+) -> Result<std::collections::HashMap<String, i64>> {
+    let endpoint = format!("{}/rest/v1/rpc/g360_ventas_por_mes", url);
+    let resp = client
+        .post(&endpoint)
+        .header("apikey", key)
+        .header("Authorization", format!("Bearer {}", key))
+        .header("Content-Type", "application/json")
+        .body("{}")
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("rpc g360_ventas_por_mes: {}", resp.status());
+    }
+    let rows: Vec<serde_json::Value> = resp.json().await.unwrap_or_default();
+    let mut map = std::collections::HashMap::new();
+    for r in rows {
+        if let (Some(m), Some(n)) = (
+            r.get("mes_ref").and_then(|v| v.as_str()),
+            r.get("filas").and_then(|v| v.as_i64()),
+        ) {
+            map.insert(m.to_string(), n);
+        }
+    }
+    Ok(map)
+}
+
+/// Consulta Supabase para mostrar la fecha mas antigua, mas nueva y el total de filas.
+/// Lectura liviana: 2 seeks con `limit=1` + 1 `count=planned`. Best-effort para documentos.
+pub async fn get_supabase_info() -> Result<SupabaseInfo> {
+    let url = get_supabase_url();
+    let key = get_supabase_service_key();
+    if url.contains("TU_SUPABASE") || key.contains("TU_ANON") {
+        return Err(anyhow::anyhow!("Supabase no configurado"));
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(10))
+        .build()?;
+    let base = format!("{}/rest/v1/{}", url, SUPABASE_TABLE);
+    let total_rows = count_supabase_rows(&client, &base, &key).await?;
+    let min_date = fetch_edge_date(&client, &base, &key, "asc").await.unwrap_or_default();
+    let max_date = fetch_edge_date(&client, &base, &key, "desc").await.unwrap_or_default();
+    let total_documents = fetch_supabase_documents(&client, &url, &key).await.ok();
+    Ok(SupabaseInfo { min_date, max_date, total_rows, total_documents })
+}
+
+/// Determina si hay que subir a Supabase. Chequeo LOCAL-FIRST, sin I/O a Supabase:
+/// si hay filas elegibles capturadas despues del ultimo sync -> `true`.
+/// Nunca sincronizado -> `true`. Sin filas nuevas -> `false`.
+/// Evita full-scans remotos (COUNT / MAX(capturado_en)) que consumen Disk IO Budget.
+pub async fn check_supabase_needs_sync(
+    pool: &sqlx::SqlitePool,
+    retention_days: u32,
+    last_sync: Option<&str>,
+) -> Result<bool> {
+    let last_sync = match last_sync {
+        Some(s) if !s.is_empty() => s,
+        _ => return Ok(true),
+    };
+    let mut parts = vec![format!("capturado_en > '{}'", last_sync.replace('\'', "''"))];
+    if retention_days > 0 {
+        let cutoff = (chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
+            .format("%Y-%m")
+            .to_string();
+        parts.push(format!("mes_ref >= '{}'", cutoff));
+    }
+    let base_where = format!("WHERE {}", parts.join(" AND "));
+    let where_clause = crate::config::with_line_filter(&base_where);
+    let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ventas {}", where_clause))
+        .fetch_one(pool)
+        .await
+        .context("check local new rows failed")?;
+    if n > 0 {
+        info!("check_supabase: {} filas locales nuevas desde {} -> sync", n, last_sync);
+    }
+    Ok(n > 0)
+}
+
 /// Verifica post-upload: compara filas enviadas vs filas recibidas en Supabase.
 /// `since_utc` filtra por capturado_en >= timestamp de inicio del upload (las filas
 /// de esta corrida); sin él compararía contra el total de la tabla (siempre dispara

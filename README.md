@@ -41,6 +41,7 @@ flowchart TD
 - [Esquema de datos](#esquema-de-datos)
 - [Campos derivados](#campos-derivados)
 - [Vistas para API de devoluciones](#vistas-para-api-de-devoluciones)
+- [Vistas de análisis comparativo](#vistas-de-análisis-comparativo)
 - [Guía rápida](#guía-rápida)
 - [Interfaz de escritorio](#interfaz-de-escritorio)
 - [Configuración](#configuración)
@@ -178,6 +179,35 @@ Se crean en Supabase (migración `supabase/migrations/20250828000003_vw_retornos
 
 Índices creados: `idx_retorno_cliente_sku`, `idx_retorno_folio`, `idx_retorno_ref`.
 
+## Vistas de análisis comparativo
+
+Vistas materializadas (`mv_venta_linea_sku_mes`) y vistas SQL para análisis de ventas, histórico de artículos y radar de recompra.
+
+| Vista | Qué contiene | Uso |
+|-------|--------------|-----|
+| `vw_comparativo_ventas` | Ventas por artículo/mes con variación interanual y mensual (%) | Comparar desempeño de SKU |
+| `vw_comparativo_linea` | Ventas por línea/mes con variación interanual y mensual (%) | Comparar desempeño de línea |
+| `vw_historial_venta_cliente` | Historial de ventas por cliente+SKU con precio anterior | Verificar precio histórico |
+| `vw_historial_articulo` | Histórico de artículo: vendido, devuelto, precio, cambios de nombre/línea | Análisis de producto |
+| `vw_radar_recompra` | Cadencia de recompra por cliente+SKU, días silencio, estado oportunidad | Radar de oportunidades |
+| `mv_venta_linea_sku_mes` | Materialized view: venta por línea+SKU+mes (pre-calculada) | Agregación rápida |
+
+### Ejemplo: comparativo de un SKU
+
+```bash
+curl "https://tqdmoytaucnfrpaklprc.supabase.co/rest/v1/vw_comparativo_ventas?select=*&id_articulo=eq.02211&order=mes_ref.desc&limit=12" \
+  -H "apikey: {ANON_KEY}" \
+  -H "Authorization: Bearer {ANON_KEY}"
+```
+
+### Ejemplo: radar de recompra
+
+```bash
+curl "https://tqdmoytaucnfrpaklprc.supabase.co/rest/v1/vw_radar_recompra?select=*&id_cliente=eq.00068414&order=dias_silencio.desc&limit=20" \
+  -H "apikey: {ANON_KEY}" \
+  -H "Authorization: Bearer {ANON_KEY}"
+```
+
 ---
 
 ## Guía rápida
@@ -193,20 +223,21 @@ G360_INTRANET_USER=usuario_demo
 G360_INTRANET_PASS=password_demo
 ```
 
-### 2. Capturar ventas
+### 2. Capturar ventas (sección 1 · DB Local)
 
-1. Abre la app Tauri (`g360-db-ventas-tauri.exe`).
-2. Selecciona el rango de fechas (desde / hasta).
-3. Click **"ejecutar captura"**.
-4. El pipeline descarga cada mes y lo inserta en SQLite.
+1. Abre la app Tauri (`G360 DB Ventas.exe`).
+2. Define el rango (desde / hasta) y **⟳ Capturar rango** (o **↻ Sync última fecha** para incremental).
+3. El pipeline descarga cada mes y lo inserta en SQLite. No toca Supabase.
 
-### 3. Sincronizar con Supabase
+### 3. Sincronizar con Supabase (sección 2)
 
-- Click **"sinc con supabase"** (sync incremental por `capturado_en`).
-- O **"⋯ más acciones" → "🔄 Forzar Full Sync Supabase"** (resetea el marcador y re-sube la ventana completa).
-- Los registros se suben en batches de 500 con deduplicación client-side por `(folio_unico, id_articulo)` — sin `on_conflict` en Supabase (permite facturas multi-línea).
+- Click **🔄 Reconciliar ahora**: calcula el checksum por mes, y solo purga + re-sube (en batches de 500) los meses que cambiaron. Sin duplicados (`Prefer: return=minimal`, purga por lotes de ids antes de re-subir). Resumible + circuit breaker.
 
-### 4. Automatización diaria (Task Scheduler)
+### 4. Flujo completo (sección 3)
+
+- **▶ Ejecutar flujo completo** (usa el rango de la sección 1): descarga intranet → SQLite → reconcilia Supabase, en un solo paso.
+
+### 5. Automatización diaria (Task Scheduler)
 
 La app soporta modo headless para el Programador de Tareas de Windows:
 
@@ -222,25 +253,44 @@ Con `--task-scheduler` la app ejecuta el pipeline completo (captura día anterio
 
 ## Interfaz de escritorio
 
+La UI está organizada en **3 secciones**:
+
+### 1. DB Local
+Métricas del SQLite local: **registros**, **desde/hasta**, **meses**, **documentos**, **tamaño BD**, **últ. captura / verificación** y **relación de folios NC/NDB** (total, asociadas a factura, huérfanas). Incluye la descarga por rango (desde → hasta), captura, sync, verificación/checksum, respaldo y el menú de acciones (importar, gestionar meses, calidad de datos, limpiar caché).
+
+### 2. Supabase
+Estado del sync + **desde/hasta**, **filas** y **documentos** en Supabase, con botón **🔄 Reconciliar ahora** (sincroniza mes por mes sin re-subir lo que no cambió).
+
+> Los "documentos" de Supabase (`COUNT(DISTINCT folio_unico)`) usan la RPC `g360_ventas_stats()` (BLOQUE 8 de `supabase/RELOAD_CHECKLIST.sql`). Si no existe, se muestra "—" y el resto de métricas sigue funcionando. La RPC `g360_ventas_por_mes()` (BLOQUE 9) habilita el sembrado de reconciliación tras recrear la BD local.
+
+### 3. Flujo automatizado
+Un solo botón **▶ Ejecutar flujo completo** para un rango desde/hasta: descarga desde la intranet (si falta el mes) → crea/actualiza SQLite → reconcilia Supabase (verificando que no haya datos repetidos).
+
+### Acciones y utilidades
+
 | Elemento | Función |
 |----------|---------|
-| **KPIs** | registros, ventas totales, clientes, SKUs |
-| **Badges** | captura → proceso → local (fase actual) |
-| **Barra progreso** | avance de la captura + ETA |
-| **📅 meses** | gestionar meses capturados (eliminar) |
-| **👁 vista previa** | ver headers + 2 filas del CSV más reciente |
+| **⟳ Capturar rango** | descarga el rango desde la intranet → SQLite (no toca Supabase) |
+| **↻ Sync última fecha** | captura incremental local (no sube) |
+| **🔍 Verificar BD / 🔐 Checksum** | integridad y checksums mensuales |
+| **📂 Compartir / respaldar BD** | abre la carpeta de datos |
+| **⋯ más acciones** | Importar mes (XLS), Gestionar meses, Vista previa CSV, **📊 Monitor mensual**, 🚦 Calidad de datos, Limpiar caché |
 | **⏹ detener** | abortar captura en curso |
-| **⚙ config** | intranet, Supabase, líneas permitidas, retención, auto-sync |
+
+### Monitor mensual (📊)
+
+Tabla **mes · filas · unidades · total soles** (mismo filtro de líneas del uploader) para comparar contra la intranet. Botón **⬇ Exportar XLSX** → `data/export/monitor_<fecha>.xlsx` (XLSX real generado en Rust, sin dependencias externas).
 
 ### Modal de configuración
 
 | Sección | Campo |
 |---------|-------|
-| **Intranet CIPSA** | usuario, clave |
+| **Intranet CIPSA** | usuario, clave (con estado configuradas/verificadas) |
 | **Reporte** | generado por (responsable) |
-| **Destino Supabase** | URL, anon key, tabla |
+| **Destino Supabase** | habilitado (switch), URL, anon key, service role key |
+| **Comportamiento** | auto-sync al abrir, ventana Supabase (días), retención apps derivadas |
 | **Líneas permitidas** | sufijos de línea de producto (avanzado) |
-| **Comportamiento** | auto-sync al abrir, retención de datos |
+| **Operaciones avanzadas** | Reprocesar raw, Reconciliar, Recrear BD local |
 
 ---
 
@@ -272,10 +322,11 @@ Almacenado en `%APPDATA%\g360-db-ventas\data\config.json`:
   "allowed_lines": ["01", "02", "09", "11", "14"],
   "auto_sync": true,
   "app_retention_years": 3,
-  "supabase_retention_years": 4,
+  "supabase_retention_years": 0,
+  "supabase_retention_days": 1277,
   "auto_daily_capture": false,
   "capture_times": ["12:00", "20:00"],
-  "last_supabase_sync": "2026-09-01T21:54:56Z"
+  "last_supabase_sync": "2026-09-16T21:46:44Z"
 }
 ```
 
@@ -300,13 +351,43 @@ Almacenado en `%APPDATA%\g360-db-ventas\data\config.json`:
 | Escenario | Comportamiento |
 |-----------|----------------|
 | **Local** | historial completo (sin límite de años) + export RAW del ERP (todas las líneas) |
-| **Supabase** | **ventana ROTATIVA** de `supabase_retention_days` (1277 = 3.5 años): cada subida inserta lo nuevo y elimina los meses con `mes_ref < cutoff` — un mes entra, un mes sale. Tamaño estable ~385 MB (77% del plan gratuito de 500 MB) |
+| **Supabase** | **ventana ROTATIVA** de `supabase_retention_days` (1277 = 3.5 años): cada subida inserta lo nuevo y elimina los meses con `mes_ref < cutoff` — un mes entra, un mes sale. Tamaño actual ~384 MB (76.9% del plan gratuito de 500 MB) |
 | **Apps derivadas** | ventana activa de `app_retention_years` (3 años) |
 | **Líneas no permitidas** | raw-first: viven SOLO en la BD local; se filtran al subir (`config::with_line_filter`: allowlist + regla NC/ND por factura referenciada) |
 
 > RAW-FIRST: el parser ya no filtra por línea — la BD local guarda el export completo del ERP, así que cambiar el allowlist o reprocesar no requiere re-capturar desde la intranet. El filtro obligatorio vive en el WHERE del uploader (`supabase_line_filter_sql`, fail-closed): sube líneas permitidas y NC/ND cuya factura referenciada (F01) tenga línea permitida (lookup global, cubre cross-mes). `stats_cache` se calcula con el mismo filtro para mantener el dashboard coherente con Supabase.
 >
-> **Capacidad (plan gratuito 500 MB)**: costo real medido ≈ 732 bytes/fila con índices. Monitoreo: `select * from vw_ventas_storage;` en el SQL Editor. Regla: <85% tranquilo, 85-95% planificar recorte, >95% riesgo de pausa. La rotación mensual genera ~11 MB/mes de dead tuples — `pg_cron` semanal (BLOQUE 7 de `supabase/RELOAD_CHECKLIST.sql`) los limpia. Tras cualquier recreación de la tabla, re-aplicar RLS + índices con ese mismo checklist.
+> **Capacidad (plan gratuito 500 MB)**: costo real medido ≈ 670 bytes/fila con índices. Monitoreo: `select * from vw_ventas_storage;` en el SQL Editor. Regla: <85% tranquilo, 85-95% planificar recorte, >95% riesgo de pausa.
+>
+> **Disk IO Budget (crítico en free tier)**: el plan gratuito tiene un presupuesto de I/O de disco; si se agota, el throughput cae a **5 MB/s** y las queries revientan con `57014` (statement timeout). Los Full Sync (purga de toda la ventana + re-subida) y `VACUUM FULL` son los mayores consumidores. Recomendaciones: preferir el **sync incremental** (`sync_smart`) sobre el Full Sync; usar `VACUUM ANALYZE` (no `VACUUM FULL`) para mantenimiento; espaciar las limpiezas. El app ya hace el chequeo de cambios de forma **local-first** y el display usa `count=planned` para no gastar I/O remoto. El presupuesto se repone en el ciclo de facturación.
+>
+> **Purga por lotes**: `purge_supabase_window`, `resync_stale_months` y `cleanup_supabase_retention` borran por lotes de 500 `id` (`id=in.(...)`) en lugar de un DELETE mensual, para no exceder el `statement_timeout` de PostgREST.
+>
+> Tras un Full Sync grande, el bloat se limpia solo con autovacuum; **NO** ejecutar `VACUUM FULL` (consume mucho I/O). Tras cualquier recreación de la tabla, re-aplicar RLS + índices con `supabase/RELOAD_CHECKLIST.sql`.
+
+---
+
+## Sincronización con Supabase (reconciliación por mes)
+
+El local es la **fuente de verdad** y Supabase un **suscriptor opcional**. La sincronización ya **no** purga la ventana completa (eso agotaba el Disk IO Budget); ahora se **reconcilian mes por mes**:
+
+- Tabla local `sync_months(mes_ref, local_checksum, remote_checksum, estado, intentos, ultimo_error)`. Por cada mes se calcula un checksum de las filas elegibles (mismo filtro del uploader) y se compara con el último subido.
+- Solo los meses con checksum **distinto** se purgan (borrado por lotes de 500 `id`) y se re-suben. Los meses sin cambios no se tocan.
+- **Resumible**: el estado persiste en `sync_months`; si se interrumpe, la próxima corrida retoma donde quedó.
+- **Circuit breaker**: tras 3 meses fallidos consecutivos (p. ej. `57014`/throttling) se detiene y se reanuda después — no aborta todo el sync ni mata la app.
+- El botón **"🔄 Reconciliar"** (antes "Full Sync") limpia `remote_checksum` y reconcilia todos los meses, sin purga de ventana completa.
+
+### Modo solo-local (`supabase_enabled`)
+
+En Configuración → **Destino Supabase** hay un switch **"Supabase habilitado"**. Si se desactiva, la app es **100% local**: captura, parseo, dims y checksums en SQLite; ninguna operación toca Supabase. El sync automático al abrir solo captura y termina con "modo solo local".
+
+### Flujo automático al abrir (`sync_smart`)
+
+1. Captura desde la última fecha local.
+2. Si Supabase está habilitado y configurado → `reconcile_supabase` (mes por mes, resumible).
+3. Si no → solo captura local y termina.
+
+No hace full-scans remotos: los checksums son locales y el display de Supabase usa `count=planned` (estimador del planner).
 
 ---
 
@@ -318,8 +399,9 @@ La app incluye un sistema de verificación de datos accesible desde **⋯ más a
 |-----------------|---------|
 | **🔍 Verificar Integridad** (`verify_integrity`) | detecta duplicados por `(folio_unico, id_articulo)`, folios huérfanos y meses faltantes |
 | **🔐 Calcular Checksums** (`calculate_checksums`) | hash mensual por `(filas, soles, dolares)` — detecta cambios no autorizados |
+| **🚦 Calidad de datos** (`get_data_quality`) | reporte por severidad: **críticos** (campos requeridos vacíos, fechas inválidas, `mes_ref` inconsistente), **warnings** (NC/NDB sin referencia, precio 0, ventas negativas, fechas futuras, huecos de meses) e **info** (NC/NDB huérfanas, duplicados legítimos) |
 | **upload_dry_run** | preview de lo que se subiría (filas, totales, tamaño estimado) sin subir nada |
-| **upload_all_with_verify** | upload con verificación post-upload: el marcador de sync solo avanza si el conteo coincide |
+| **upload_all_with_verify** | reconcilia con verificación: solo avanza los meses cuyo conteo/checksum cuadra |
 
 **Tablas de auditoría** (SQLite local):
 
@@ -327,9 +409,18 @@ La app incluye un sistema de verificación de datos accesible desde **⋯ más a
 |-------|-----------|
 | `sync_log` | cada sync: tipo, estado, filas solicitadas/subidas/limpiadas, duración, errores |
 | `mes_checksums` | hash por mes con timestamp — baseline para detectar corrupción |
+| `sync_months` | estado de reconciliación por mes (local vs remoto, intentos, último error) |
 | `audit_log` | trazabilidad de operaciones DML |
 
-**Validación pre-upload**: el uploader bloquea el sync si detecta duplicados `(folio, SKU)` en la BD local o filas con folio/SKU nulos o cantidades negativas.
+**Seguros contra datos corruptos de la fuente (intranet)**:
+
+| Seguro | Qué previene |
+|--------|--------------|
+| **Validación de headers** | si el export del intranet cambia de formato (falta `ID_ARTICULO`/`ID_CLIENTE`/`FECHA_ORIG`/`TPO_DOC`/`SERIE_DOC`/`NRO_DOC`) → **aborta** con mensaje accionable |
+| **Fechas inválidas** | si alguna fila trae `fecha_orig` inválida → **no se reemplaza el mes** (aborta la carga) |
+| **Guard de reemplazo** | si las filas nuevas de un mes son <50% de las existentes → **no se borra el mes** (posible descarga truncada) |
+| **Insert vacío** | si el parseo de un mes/día da 0 filas → **no se borra nada** (no-op) |
+| **Validación pre-upload** | el uploader bloquea el sync con duplicados/folio nulo/negativos |
 
 ---
 
@@ -339,18 +430,32 @@ Las vistas SQL expuestas en Supabase están disponibles vía PostgREST para cons
 
 ### Endpoints disponibles
 
-| Método | Ruta PostgREST | Endpoint helper (si aplica) | Descripción |
-|--------|----------------|-----------------------------|-------------|
-| GET | `/rest/v1/vw_dim_articulo?select=*&id_articulo=eq.{sku}` | `/retornos/validar-sku?id_articulo={sku}` | Validar existencia de SKU |
-| GET | `/rest/v1/vw_dim_cliente?select=*&id_cliente=eq.{id}` | — | Lookup de cliente |
-| GET | `/rest/v1/vw_facturas_disponibles?id_cliente=eq.{id}&id_articulo=eq.{sku}&limit=50` | `/retornos/facturas` | Facturas con saldo |
-| GET | `/rest/v1/vw_nc_totales?serie_doc=eq.{serie}&nro_doc=eq.{nro}` | — | NC totales de una factura |
-| GET | `/rest/v1/vw_nc_parciales?factura_ref_serie=eq.{serie}&factura_ref_nro=eq.{nro}` | — | NC parciales |
+| Método | Ruta PostgREST | Descripción |
+|--------|----------------|-------------|
+| GET | `/rest/v1/vw_dim_articulo?select=*&id_articulo=eq.{sku}` | Validar existencia de SKU |
+| GET | `/rest/v1/vw_dim_cliente?select=*&id_cliente=eq.{id}` | Lookup de cliente |
+| GET | `/rest/v1/vw_facturas_disponibles?id_cliente=eq.{id}&id_articulo=eq.{sku}&limit=50` | Facturas con saldo (LIFO) |
+| GET | `/rest/v1/vw_nc_totales?serie_doc=eq.{serie}&nro_doc=eq.{nro}` | NC totales de una factura |
+| GET | `/rest/v1/vw_nc_parciales?factura_ref_serie=eq.{serie}&factura_ref_nro=eq.{nro}` | NC parciales |
+| GET | `/rest/v1/vw_comparativo_ventas?id_articulo=eq.{sku}&order=mes_ref.desc` | Variación interanual/mensual del SKU |
+| GET | `/rest/v1/vw_comparativo_linea?id_linea=eq.{linea}&order=mes_ref.desc` | Variación de línea |
+| GET | `/rest/v1/vw_historial_venta_cliente?id_cliente=eq.{id}&id_articulo=eq.{sku}` | Histórico de precio por cliente+SKU |
+| GET | `/rest/v1/vw_historial_articulo?id_articulo=eq.{sku}&order=mes_ref.desc` | Histórico del artículo |
+| GET | `/rest/v1/vw_radar_recompra?id_cliente=eq.{id}&order=dias_silencio.desc` | Radar de recompra |
+| GET | `/rest/v1/mv_venta_linea_sku_mes?select=*&id_linea=eq.{linea}&order=mes_ref.desc` | Venta por línea+SKU+mes |
 
 ### Ejemplo: obtener facturas disponibles
 
 ```bash
 curl "https://tqdmoytaucnfrpaklprc.supabase.co/rest/v1/vw_facturas_disponibles?select=*&id_cliente=eq.00068414&id_articulo=eq.02211&limit=50&order=fecha_orig.desc" \
+  -H "apikey: {ANON_KEY}" \
+  -H "Authorization: Bearer {ANON_KEY}"
+```
+
+### Ejemplo: historial de precios de un cliente+SKU
+
+```bash
+curl "https://tqdmoytaucnfrpaklprc.supabase.co/rest/v1/vw_historial_venta_cliente?select=*&id_cliente=eq.00068414&id_articulo=eq.02211&order=fecha_orig.desc&limit=20" \
   -H "apikey: {ANON_KEY}" \
   -H "Authorization: Bearer {ANON_KEY}"
 ```
@@ -367,19 +472,23 @@ La clave anon está en `config.json` → `supabase.key` (o variables de entorno 
 
 ### Consumidores conocidos
 
-- **g360-erp-nc-sustentor** — lee desde `vw_facturas_disponibles` vía cliente REST integrado (`src/core/supabase_client.py`)
-- Otros proyectos pueden consultar directamente por PostgREST
+- **g360-erp-nc-sustentor** — app Flet que consume SQLite local directamente (no usa Supabase)
+- **g360-ventas-analisis** — consulta `vw_comparativo_ventas`, `vw_historial_venta_cliente` para dashboards comparativos
+- **g360-ventas-radar** — consulta `vw_radar_recompra` para alertas de oportunidades
+- Otros proyectos pueden consultar Supabase directamente por PostgREST o SQLite local
 
 ---
 
 ## CLI
 
+Binarios en `dist/` (o `cargo run --bin <nombre>`):
+
 ```bash
-cargo run --bin capture      # captura 1 mes
-cargo run --bin batch        # captura N meses
-cargo run --bin normalize    # xls -> CSV -> SQLite
-cargo run --bin upload       # SQLite -> Supabase
-cargo run --bin query        # consulta la BD
+upload.exe    <rango>            # reconciliación Supabase (mes por mes)
+recapture.exe <desde> <hasta>    # re-captura un rango desde la intranet (pipeline completo)
+reparse.exe                      # re-parsea los CSV de raw/ -> SQLite (sin intranet)
+importxls.exe <YYYY-MM> <xls>    # importa un XLS mensual manual (reemplaza el mes)
+query.exe                        # consulta la BD
 ```
 
 ---
@@ -414,6 +523,26 @@ frontend/
 
 ---
 
+## Rendimiento local (SQLite)
+
+El local es la fuente de verdad y está optimizado para BD de ~2.8M filas:
+
+| Medida | Detalle |
+|--------|---------|
+| **PRAGMAs** | `synchronous=NORMAL`, `temp_store=MEMORY`, `cache_size=64MB`, `mmap_size=256MB`, `wal_autocheckpoint`, `journal_size_limit` |
+| **Índices depurados** | se eliminaron 5 redundantes (`idx_venta_linea_exact`==`idx_venta_linea`, `idx_retorno_ref`==`idx_venta_fact_ref`, prefijos `idx_venta_doc_cliente`/`idx_venta_fecha`, y `idx_venta_linea_sufijo` de formato viejo). Quedan 16 → menos escritura por INSERT |
+| **Insert en bloque** | `insert_ventas` usa multi-row (`QueryBuilder`, chunks de 400) en vez de 1 statement por fila |
+| **`stats_por_mes`** | agregado mensual precomputado (mismo filtro de líneas del uploader); el dashboard lo lee en vez de un `GROUP BY` en vivo |
+| **`analyze_db`** | `ANALYZE` + `PRAGMA optimize` tras cada captura para que el planner elija buenos planes |
+| **Dims** | las tablas `dim_*`/`fact_venta_mes` son cache: se reconstruyen bajo demanda (export) y los consumidores online usan las vistas `vw_dim_*` (siempre vivas) |
+| **Descarga** | `build_pending` omite meses ya completos en `raw/` y la captura usa N workers en paralelo |
+
+Resultado medido en la BD real (2.8M filas): **2.64 GB → 2.42 GB** tras dropear índices redundantes + `VACUUM` (−225 MB), y estadísticas del planner al día.
+
+> `VACUUM` es **local** (barato y seguro en SQLite); es distinto de `VACUUM FULL` en Supabase, que NO se debe usar por el Disk IO Budget.
+
+---
+
 ## Protecciones
 
 | Capa | Qué hace | Qué previene |
@@ -430,6 +559,12 @@ frontend/
 | **Filtro retención en SELECT** | `WHERE mes_ref >= cutoff` antes de subir | Exceso de cuota Supabase |
 | **Validación pre-upload** | bloquea sync con duplicados/nulos/negativos | Subir data corrupta |
 | **Verificación post-upload** | compara conteo enviado vs recibido; marker solo avanza si coincide | Syncs incrementales rotos |
+| **Pool SQLite 32 conexiones** | `max_connections(32)` con `idle_timeout(60s)` | Pool agotado en syncs grandes |
+| **Reconciliación por mes** | solo meses con checksum local != remoto (`sync_months`) | Purga de ventana completa / agotar Disk IO Budget |
+| **Circuit breaker** | corta tras 3 meses fallidos consecutivos y reanuda después | Martillar Supabase throttled / abortar todo |
+| **Chequeo local-first** | `sync_smart` decide con SQLite, sin full-scan remoto | Gastar I/O remoto en cada apertura |
+| **Modo solo-local** | `supabase_enabled=false` desactiva todo contacto con Supabase | Dependencia forzada de Supabase |
+| **VACUUM FULL post-sync** | ejecutar `VACUUM ANALYZE public.ventas;` (no FULL) | Bloat de dead tuples en Supabase |
 
 ---
 
@@ -443,13 +578,13 @@ Este proyecto forma parte del ecosistema **G360** para apoyo CRM y gestión de d
 - **[g360-master-data](https://github.com/carloscus/g360-master-data)** — Catálogo maestro de productos
 - **[g360-stock-api](https://github.com/carloscus/g360-stock-api)** — Backend de datos de stock
 - **[g360-stock-reporter-lit](https://github.com/carloscus/g360-stock-reporter-lit)** — Frontend PWA de stock
-- **[g360-erp-nc-sustentor](https://github.com/carloscus/g360_NC_sustentor)** — App de sustento de Notas de Crédito (lee vistas desde este proyecto)
+- **[g360-erp-nc-sustentor](https://github.com/carloscus/g360_NC_sustentor)** — App de sustento de Notas de Crédito (consume SQLite local)
 
 ```mermaid
 flowchart LR
-    DB["g360-ventas-db<br/>(Supabase + SQLite)"]
+    DB["g360-ventas-db<br/>(SQLite local)"]
     NC["g360-erp-nc-sustentor<br/>(Python/Flet)"]
-    NC -->|PostgREST| DB
+    NC -->|lectura directa| DB
 ```
 
 ---

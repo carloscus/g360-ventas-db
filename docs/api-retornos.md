@@ -147,3 +147,65 @@ Resultado esperado:
 - 1 NC total: NCR/215/29154 (50,000u, S/7,137.50 → S/0.1427/u)
 - Precio neto: S/3.5748 - S/0.1427 = S/3.4321/u
 - Total: 500 × 3.4321 = S/1,716.05
+
+---
+
+## Vistas complementarias para análisis
+
+### Historial de precios por cliente+SKU
+
+```bash
+curl "https://tqdmoytaucnfrpaklprc.supabase.co/rest/v1/vw_historial_venta_cliente?select=*&id_cliente=eq.00068414&id_articulo=eq.02211&order=fecha_orig.desc&limit=20" \
+  -H "apikey: {KEY}" -H "Authorization: Bearer {KEY}"
+```
+
+Response 200:
+```json
+[
+  {
+    "id_cliente": "00068414",
+    "nom_cliente": "PRIMAVERA DISTRIBUIDORES S.A.C.",
+    "id_articulo": "02211",
+    "nom_articulo": "FORRO N VINIFAN A4 CRISTAL 26",
+    "folio_unico": "F01/201/47967",
+    "fecha_orig": "2025-11-16",
+    "mes_ref": "2025-11",
+    "tipo_operacion": "venta",
+    "cantidad": 50000,
+    "soles": 178740.00,
+    "precio_unitario": 3.5748,
+    "precio_anterior": 3.4321,
+    "fecha_anterior": "2025-10-15",
+    "precio_anterior2": 3.2100
+  }
+]
+```
+
+### Radar de recompra
+
+```bash
+curl "https://tqdmoytaucnfrpaklprc.supabase.co/rest/v1/vw_radar_recompra?select=*&id_cliente=eq.00068414&order=dias_silencio.desc&limit=20" \
+  -H "apikey: {KEY}" -H "Authorization: Bearer {KEY}"
+```
+
+Response 200:
+```json
+[
+  {
+    "id_cliente": "00068414",
+    "nom_cliente": "PRIMAVERA DISTRIBUIDORES S.A.C.",
+    "id_articulo": "02211",
+    "nom_articulo": "FORRO N VINIFAN A4 CRISTAL 26",
+    "id_linea": "0102",
+    "nom_linea": "PAPELARIA",
+    "n_compras": 12,
+    "ultima_compra": "2025-11-16",
+    "dias_cadencia": 30,
+    "precio_promedio": 3.5748,
+    "und_por_dia": 1666.67,
+    "dias_silencio": 45,
+    "cadencia_efectiva": 30,
+    "estado_oportunidad": "RETRASADO"
+  }
+]
+```

@@ -65,8 +65,8 @@ fn parser_raw_first_conserva_todas_las_filas() {
     // (fuera del allowlist por defecto) y la NC sin referencia.
     assert_eq!(ventas.len(), 6, "raw-first: el parser NO debe filtrar por linea");
     assert!(
-        ventas.iter().any(|v| v.id_linea == "0103" && v.tpo_doc == "F01"),
-        "la fila de linea no permitida debe conservarse en el raw"
+        ventas.iter().any(|v| v.id_linea == "03" && v.tpo_doc == "F01"),
+        "la fila de linea no permitida debe conservarse en el raw (id_linea normalizada sin prefijo)"
     );
     assert!(
         ventas.iter().any(|v| v.tpo_doc == "NCR" && v.factura_ref_serie.is_empty()),
@@ -99,7 +99,7 @@ async fn filtro_upload_sql_coincide_con_espejo_rust() {
     sqlx::query(CREATE_STATS_CACHE_SQL).execute(&pool).await.unwrap();
     sqlx::query(CREATE_AUDIT_TABLES_SQL).execute(&pool).await.unwrap();
 
-    g360_db_ventas::db::writer::insert_ventas(&pool, &ventas)
+    g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, false)
         .await
         .expect("insert_ventas");
 
@@ -131,6 +131,7 @@ async fn filtro_upload_sql_coincide_con_espejo_rust() {
         assert_eq!(elegibles, 4, "escenario esperado con allowlist por defecto");
 
         // stats_cache alineada con lo vital (no con el raw)
+        g360_db_ventas::db::writer::refresh_stats_cache(&pool).await.unwrap();
         let st: f64 = sqlx::query_scalar("SELECT value FROM stats_cache WHERE key = 'total_records'")
             .fetch_one(&pool)
             .await
@@ -152,7 +153,7 @@ async fn filtro_upload_sql_coincide_con_espejo_rust() {
 #[test]
 fn with_line_filter_combina_y_falla_cerrado() {
     let f = supabase_line_filter_sql();
-    assert!(f.contains("substr(id_linea, -2) IN ("), "sufijo de 2 chars");
+    assert!(f.contains("id_linea IN ("), "filtro por linea permitida (exact-match 2 chars)");
     assert!(f.contains("EXISTS (SELECT 1 FROM ventas f"), "regla NC/ND");
 
     assert!(with_line_filter("").starts_with("WHERE ("));

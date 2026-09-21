@@ -113,3 +113,21 @@ select cron.schedule(
 
 -- Desactivar si alguna vez hace falta:
 -- select cron.unschedule('vacuum-ventas-semanal');
+
+-- BLOQUE 8 - Funcion de estadisticas para el dashboard (seccion Supabase)
+-- Devuelve fecha min/max, filas y documentos distintos de la tabla ventas.
+create or replace function public.g360_ventas_stats()
+returns table(min_fecha date, max_fecha date, filas bigint, documentos bigint)
+language sql stable as $$
+  select min(fecha_orig)::date, max(fecha_orig)::date, count(*)::bigint, count(distinct folio_unico)::bigint
+  from public.ventas;
+$$;
+grant execute on function public.g360_ventas_stats() to anon, authenticated, service_role;
+
+-- BLOQUE 9 - Conteo por mes (sembrar reconciliacion cuando la BD local se recrea)
+create or replace function public.g360_ventas_por_mes()
+returns table(mes_ref text, filas bigint)
+language sql stable as $$
+  select mes_ref, count(*)::bigint as filas from public.ventas group by mes_ref;
+$$;
+grant execute on function public.g360_ventas_por_mes() to anon, authenticated, service_role;

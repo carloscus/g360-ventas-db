@@ -142,6 +142,10 @@ pub struct AppConfig {
     /// Ultimo timestamp de sync a Supabase (ISO format, UTC). Para sync incremental.
     #[serde(default)]
     pub last_supabase_sync: Option<String>,
+    /// Master switch: si es false, la app NO toca Supabase (100% local).
+    /// Default true para no cambiar el comportamiento en configs existentes.
+    #[serde(default = "default_true")]
+    pub supabase_enabled: bool,
     /// Captura automática diaria (false = manual)
     #[serde(default)]
     pub auto_daily_capture: bool,
@@ -152,6 +156,7 @@ pub struct AppConfig {
 
 fn default_app_retention() -> u32 { 3 }
 fn default_supabase_retention() -> u32 { 4 }
+fn default_true() -> bool { true }
 fn default_capture_times() -> Vec<String> {
     vec!["12:00".to_string(), "20:00".to_string()]
 }
@@ -180,6 +185,7 @@ impl AppConfig {
             supabase_retention_years: 4,
             supabase_retention_days: 0,
             last_supabase_sync: None,
+            supabase_enabled: true,
             auto_daily_capture: false,
             capture_times: default_capture_times(),
         }

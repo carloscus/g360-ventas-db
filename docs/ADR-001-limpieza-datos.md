@@ -113,3 +113,132 @@ las devoluciones que la referencian a ella.
 **Regla documentada**: si algún día se exporta el rango pre-2018 (si el
 intranet lo permitiera), estas huérfanas se resolverían solas. No requiere
 acción.
+
+---
+
+## Addendum 2026-09-15: guard de SKU y propiedad de las alertas de integridad
+
+### Colisiones de ceros en SKU: 82 grupos, TODOS falsos positivos
+
+`LTRIM(id_articulo,'0')` agrupa 82 pares de SKUs que solo comparten dígitos tras
+quitar ceros. Verificado contra la BD: **los 82 pares son productos DISTINTOS en
+líneas distintas** (0 casos en la misma línea):
+
+| Variante | Línea | Producto | Variante | Línea | Producto |
+|---|---|---|---|---|---|
+| `011019` | 01 PELOTAS | N SEMIDEPORTIVA FUTBOL | `11019` | 11 METALICA | PERFORADOR VINIFAN |
+| `014014` | 01 PELOTAS | PELOTA SALTARINA PAW PATROL | `14014` | 14 OTROS | DESCUENTO JUGUETE |
+| `014186` | 01 PELOTAS | … | `14186` | 73 … | … |
+
+Distribución: 56 pares (L01↔L14), 16 (L01↔L73), 8 (L01↔L11), 2 (L01↔L02).
+
+**El cero inicial es significativo**: distingue la línea `01` (pelotas) del
+resto. El detector en `writer.rs` es informativo, no marca corrupción.
+
+### Cadena SKU verificada extremo a extremo (sin modificación)
+
+```
+ERP/intranet (celda TEXTO "011019")
+  → xls_to_csv (calamine Data::String)      → "011019"
+  → clean_id() (solo quita BOM y ".0")       → "011019"
+  → SQLite id_articulo TEXT                  → "011019"
+  → Supabase                                 → "011019"
+```
+
+Evidencia: `ventas_2025-10.csv` tiene 8,558/19,990 filas con cero inicial, sin
+un solo artefacto `.0`. `clean_id()` NO hace zero-fill ni zero-strip.
+
+### Riesgo real y guard implementado
+
+Único punto de falla: **importación manual por XLS**. `xls.rs` convierte celdas
+`Data::Float` con `{:.0}`, así que si Excel tipó la columna SKU como número,
+`011019` llega como `11019` — cero perdido en origen, irrecuperable.
+
+**Guard implementado**:
+
+1. `processor::xls::inspect_sku_column()` — detecta celdas numéricas en la
+   columna `ID_ARTICULO` sin convertir ni insertar.
+2. `xls_to_csv()` — registra `warn!` durante la conversión (cubre la captura
+   automática como defensa en profundidad, sin bloquear el pipeline).
+3. `import_manual_day` / `import_manual_month` — **bloquean** con mensaje
+   accionable ("re-exporta sin re-guardar en Excel").
+4. `preview_import()` — muestra el aviso antes de confirmar.
+5. Tests en `tests/sku_column_guard.rs` + fixtures `tests/fixtures/`.
+
+### Propiedad de las alertas (decisión de alcance)
+
+Las alertas restantes de `detectar_entidades_duplicadas` son **propias de la
+fuente (ERP), no del pipeline**:
+
+| Alerta | Origen | Acción |
+|---|---|---|
+| 🟡 RUC duplicado (3) | Renombres/fusiones del ERP | ERP; la clave `id_cliente` no se parte |
+| 🟡 Nombres repetidos (133) | Split por renombre ERP | ERP; `vw_dim_cliente` muestra el más reciente |
+| ℹ️ SKU colisión ceros (82) | Códigos legítimos distintos | Falso positivo, informativo |
+| ℹ️ Clientes/SKUs renombrados | Historia del catálogo | Informativo, auditable |
+
+El pipeline preserva la fuente; solo protege contra daño *introducido en la
+importación* (el guard de SKU). No "corrige" datos del ERP.
+
+---
+
+## Addendum 2026-09-15: jerarquía ID estable → nombre vigente (dims)
+
+### Decisión
+
+Toda dimensión se keyed por su **ID estable** y expone los atributos
+(nombre, RUC, ubicación, catálogo) de la **fila más reciente**, no del `MAX()`
+alfabético. Jerarquía adoptada:
+
+```
+id_cliente  → doc_cliente (RUC) → nom_cliente ─┐
+id_vendedor → nom_vendedor                     ├─ atributo por fila más reciente
+id_linea    → nom_linea / grupo / familia      │
+id_articulo → original_sku → nom_articulo ─────┘
+```
+
+Si el ERP renombra un cliente/SKU/línea/vendedor **sin cambiar el código**,
+las dimensiones muestran el nombre vigente. Igual que ya hacían
+`vw_dim_cliente`/`vw_dim_articulo` (migración Supabase 20250902000004).
+
+### Estado previo (inconsistencia encontrada)
+
+| Objeto | Semántica previa | Correcto |
+|---|---|---|
+| `vw_dim_cliente` (vista) | `ROW_NUMBER` más reciente | ✅ |
+| `vw_dim_articulo` (vista) | `ROW_NUMBER` más reciente | ✅ |
+| `vw_dim_linea` (vista) | `MAX(nom_linea)` | ❌ → corregido |
+| `dim_cliente` (tabla) | `MAX(nom_cliente)` | ❌ → corregido |
+| `dim_vendedor` (tabla) | `MAX(nom_vendedor)` | ❌ → corregido |
+| `dim_articulo` (tabla) | `MAX(nom_articulo)` | ❌ → corregido |
+| `dim_linea` (tabla) | `MAX(nom_linea)` | ❌ → corregido |
+
+**Datos actuales: 0 renombres** en las 4 entidades (el ERP estampa el nombre
+actual al exportar). El cambio es *forward-proof*: no altera nada hoy, pero
+protege ante renombres futuros entre capturas.
+
+### Bug adicional corregido
+
+`refresh_dim_tables` retornaba temprano si `dim_cliente` ya tenía filas. Eso
+hacía que **dedup, migraciones de id_linea/id_vendedor y export** NO refrescaran
+las dims (quedaban desactualizadas). Ahora:
+- `refresh_dim_tables(pool)` → **siempre** reconstruye.
+- `ensure_dims_fresh(pool)` → reconstruye solo si vacías o `PRAGMA user_version
+  < DIM_SCHEMA_VERSION`; es el guard del arranque caliente (init_pool cada ~2 s).
+- `DIM_SCHEMA_VERSION` (schema.rs) versiona la **semántica**; v2 = nombres
+  vigentes. BD existentes migran una sola vez (~100 s con 2.8 M filas).
+
+### Vistas: DROP + CREATE
+
+Las vistas de dimensión pasaron de `CREATE VIEW IF NOT EXISTS` a
+`DROP VIEW IF EXISTS ...; CREATE VIEW ...`. Sin esto, una definición nueva
+**nunca** reemplazaba una vista ya existente (bug real detectado al aplicar
+el cambio: `vw_dim_linea` seguía con `MAX()`). Recrear vistas es instantáneo
+(son metadatos); el código es ahora la única fuente de verdad.
+
+### Nota de alcance (local)
+
+Las tablas `dim_*` locales solo se consultan para el conteo del endpoint
+`get_db_health`. Las dimensiones expuestas a apps downstream son las vistas
+`vw_dim_*`. `insert_ventas` no refresca dims (comportamiento previo, no
+modificado): las dims se refrescan en arranque/version-bump/export/dedup.

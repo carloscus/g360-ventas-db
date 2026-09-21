@@ -5,17 +5,19 @@ use std::path::Path;
 use tracing::info;
 
 /// Parsea un valor numerico con contexto de columna.
-/// is_quantity=true: trata '.' como decimal SIEMPRE (nunca miles) y redondea a entero.
+/// is_quantity=true: trata '.' como decimal SIEMPRE (nunca miles); conserva
+///   decimales (redondeo a 4 solo para limpiar ruido float).
 /// is_quantity=false: detecta formato segun heuristica (miles o decimal).
 fn parse_f64(s: &str, is_quantity: bool) -> f64 {
     let s = s.trim();
     if s.is_empty() {
         return 0.0;
     }
-    // Columnas de cantidad: punto siempre es decimal, coma se elimina
-    // Redondear a entero: 1.000 -> 1000 (nunca 1000.5)
+    // Columnas de cantidad: punto siempre es decimal, coma se elimina.
+    // Raw-first: se conservan los decimales (hay lineas con fracciones).
     if is_quantity {
-        return s.replace(',', "").parse::<f64>().unwrap_or(0.0).round();
+        let v = s.replace(',', "").parse::<f64>().unwrap_or(0.0);
+        return (v * 10_000.0).round() / 10_000.0;
     }
     // Para montos: detectar formato segun contexto
     if s.contains('.') && s.contains(',') {
@@ -272,6 +274,23 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
     let c_fec = col("FEC_CARGO");
     let c_ip = col("ID_PEDIDO");
     let c_fv = col("FECHA_VENC");
+    // Seguro de esquema: sin estas columnas el parseo descartaria filas en silencio.
+    // Si el intranet cambia el header, abortamos con un mensaje accionable.
+    let required = [
+        "ID_ARTICULO", "ID_CLIENTE", "FECHA_ORIG", "TPO_DOC", "SERIE_DOC", "NRO_DOC",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|n| !headers.iter().any(|h| h.contains(n)))
+        .collect();
+    if !missing.is_empty() {
+        return Err(anyhow!(
+            "Headers requeridos faltantes en {}: {}. El export del intranet cambió de formato; no se procesa.",
+            path.display(),
+            missing.join(", ")
+        ));
+    }
     let mut raw_rows: Vec<Venta> = Vec::new();
     let mut invalid_dates = 0usize;
     for row in reader.records() {
@@ -318,11 +337,11 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
             nro_doc: clean_id(&g(c_nd)),
             referencia: g(c_ref),
             moneda: {
-                let m = g(c_mn);
-                if m.is_empty() {
-                    "Soles".to_string()
-                } else {
-                    m
+                let m = g(c_mn).to_uppercase();
+                match m.as_str() {
+                    "" | "SOL" | "SOLES" | "PEN" | "S/" => "Soles".to_string(),
+                    "DOL" | "DOLARES" | "USD" | "US$" | "$" => "Dolares".to_string(),
+                    _ => m,
                 }
             },
             cantidad,
@@ -338,7 +357,7 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
                 if s.is_empty() {
                     None
                 } else {
-                    Some(s)
+                    Some(parse_date(&s).map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or(s))
                 }
             },
             fecha_venc: {
@@ -346,7 +365,7 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
                 if s.is_empty() {
                     None
                 } else {
-                    Some(s)
+                    Some(parse_date(&s).map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or(s))
                 }
             },
             cod_sucursal: g(c_cs),
