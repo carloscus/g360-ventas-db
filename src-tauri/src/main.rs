@@ -801,14 +801,22 @@ async fn sync_smart() -> Result<CaptureStatus, String> {
                 s.finished_at = None;
                 drop(s);
             }));
-        match g360_db_ventas::processor::uploader::reconcile_supabase(&pool, retention, &progress_cb)
-            .await
+        // Sync INCREMENTAL por día: purga+sube solo los días capturados (no el mes entero).
+        let hasta_bg = chrono::Local::now().format("%Y-%m-%d").to_string();
+        match g360_db_ventas::processor::uploader::sync_incremental(
+            &pool,
+            retention,
+            &start_bg,
+            &hasta_bg,
+            &progress_cb,
+        )
+        .await
         {
             Ok(res) => {
                 invalidate_dashboard_caches();
                 let mut st = shared_bg.lock().unwrap();
                 let msg = format!(
-                    "Reconciliación: {} meses OK, {} fallidos, {} filas subidas{}",
+                    "Sync incremental: {} meses OK, {} fallidos, {} filas subidas{}",
                     res.months_synced,
                     res.months_failed,
                     res.rows_uploaded,
@@ -916,7 +924,7 @@ async fn run_full_flow(desde: String, hasta: String) -> Result<CaptureStatus, St
                 s.finished_at = None;
                 drop(s);
             }));
-        match g360_db_ventas::processor::uploader::reconcile_supabase(&pool, retention, &progress_cb).await {
+        match g360_db_ventas::processor::uploader::sync_incremental(&pool, retention, &d, &h, &progress_cb).await {
             Ok(res) => {
                 invalidate_dashboard_caches();
                 let msg = format!(
@@ -1803,7 +1811,7 @@ fn main() {
                 // Protección de upload
                 upload_dry_run, upload_all_with_verify,
                 // Mantenimiento DB
-                vacuum_db, backup_db, export_full_db, recalculate_checksums, get_db_health,
+                vacuum_db, backup_db, export_full_db, export_canonical_snapshot, recalculate_checksums, get_db_health,
                 // Automatización diaria
                 auto_daily_pipeline, get_next_capture_time
             ])
@@ -2016,8 +2024,8 @@ async fn auto_daily_pipeline() -> Result<serde_json::Value, String> {
             set_state("syncing", "Calculando checksums...", 0.7);
             let _ = g360_db_ventas::db::writer::calculate_monthly_checksums(&pool).await;
 
-            // Paso 4: Reconciliar con Supabase (mes por mes, resumible)
-            set_state("uploading", "Reconciliando con Supabase...", 0.8);
+            // Paso 4: Sync incremental por día (solo el día capturado)
+            set_state("uploading", "Sincronizando con Supabase...", 0.8);
             let shared: SharedProgress = CAPTURE_STATE.clone();
             let progress_cb: g360_db_ventas::processor::uploader::ProgressCb = Some(Arc::new(move |_b, _t, pct, msg| {
                 let mut s = shared.lock().unwrap();
@@ -2026,7 +2034,7 @@ async fn auto_daily_pipeline() -> Result<serde_json::Value, String> {
                 s.progress = pct;
                 drop(s);
             }));
-            match g360_db_ventas::processor::uploader::reconcile_supabase(&pool, cfg.supabase_retention_days_effective(), &progress_cb).await {
+            match g360_db_ventas::processor::uploader::sync_incremental(&pool, cfg.supabase_retention_days_effective(), &yesterday_str, &yesterday_str, &progress_cb).await {
                 Ok(res) => {
                     set_state("idle", &format!("Pipeline diario: {} meses OK, {} filas subidas", res.months_synced, res.rows_uploaded), 1.0);
                     Ok(serde_json::json!({
@@ -2110,6 +2118,19 @@ async fn backup_db() -> Result<String, String> {
 async fn export_full_db(path: String) -> Result<String, String> {
     let target = std::path::Path::new(&path);
     g360_db_ventas::db::writer::export_full_db(target).await.map_err(|e| e.to_string())
+}
+
+/// Exporta una instantánea canónica (snapshot .db + manifiesto JSON) a la carpeta
+/// `data/export/`. Para que otra app trabaje sobre una copia aislada.
+#[tauri::command]
+async fn export_canonical_snapshot() -> Result<serde_json::Value, String> {
+    let dir = g360_db_ventas::config::data_dir().join("export");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let target = dir.join(format!("base_canonica_{}.db", ts));
+    g360_db_ventas::db::writer::export_canonical_snapshot(&target)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Calcula checksums para meses que aun no tienen hash (complementa los 105/121).

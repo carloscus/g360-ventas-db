@@ -53,6 +53,10 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .sec-head{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:800;color:#cfe4f7;text-transform:uppercase;letter-spacing:.09em}
 .sec-num{display:inline-grid;place-items:center;width:17px;height:17px;border-radius:5px;background:rgba(56,189,248,.16);color:#7dd3fc;font-size:10px;font-weight:800}
 .sec-sub{font-size:10px;color:#6a829e;line-height:1.35;margin-top:-4px}
+details#rangeBox summary{list-style:none;user-select:none;outline:none}
+details#rangeBox summary::-webkit-details-marker{display:none}
+details#rangeBox summary:before{content:'▸ ';color:#7dd3fc}
+details#rangeBox[open] summary:before{content:'▾ '}
 .task-flow{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
 .task{padding:6px 5px;border-radius:7px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);font-size:11px;color:#5a7a9a;font-weight:700;text-align:center;letter-spacing:0.04em;text-transform:uppercase;transition:all .2s ease}
 .task.active{background:rgba(56,189,248,0.12);color:#bae6fd;border-color:rgba(56,189,248,0.18)}
@@ -231,32 +235,40 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <div class="info-item"><div class="info-v" id="lmVerif">—</div><div class="info-l">últ. verificación</div></div>
 </div>
 <div class="ctrl">
-<div class="row">
+<button class="btn btn-p" id="updateNow" title="Captura lo nuevo de la intranet y publica en Supabase">⟳ Actualizar ahora</button>
+<div class="config-help" style="margin:3px 0 0">Trae lo nuevo desde la intranet y publica la ventana válida en Supabase (incremental por día).</div>
+<details id="rangeBox" style="margin-top:9px">
+<summary style="cursor:pointer;font-size:11px;color:#7dd3fc;font-weight:700">Rango específico / re-capturar</summary>
+<div class="row" style="margin-top:7px">
 <label>desde<input type="date" id="sd"/></label>
 <label>hasta<input type="date" id="ed"/></label>
 </div>
-<button class="btn btn-p" id="cap">⟳ Capturar rango</button>
-<button class="btn btn-s" id="sync" title="Captura incremental desde la última fecha capturada">↻ Sync última fecha</button>
 <div class="btn-grid">
-  <button class="btn btn-ghost" id="verifyBtn" title="Verifica duplicados, folios y consistencia de la BD local">🔍 Verificar BD</button>
-  <button class="btn btn-ghost" id="checksumBtn" title="Genera checksums mensuales para detectar cambios">🔐 Checksum</button>
+  <button class="btn btn-s" id="cap" title="Descarga el rango a la BD local (sin publicar)">⟳ Capturar local</button>
+  <button class="btn btn-p" id="fullFlowBtn" title="Descarga el rango y publica en Supabase">▶ Capturar y publicar</button>
 </div>
-<button class="btn btn-s" id="shareDbBtn" title="Abre la carpeta local para copiarla a un extraíble o compartirla en la red">📂 Compartir / respaldar BD</button>
-<button class="btn btn-d hid" id="stopBtn">⏹ detener</button>
-<div class="menu-wrap">
-  <button class="btn btn-s" id="moreBtn" style="margin-top:0">⋯ más acciones</button>
-  <div class="menu" id="moreMenu">
-    <div class="msec">BD local — poblar y reparar</div>
-    <button id="importBtn" title="Repara un mes incompleto con el XLS mensual del intranet">📥 Importar mes (arrastrar XLS)</button>
-    <button id="manageMonths" title="Revisar o borrar meses específicos de la BD local">📅 Gestionar meses</button>
-    <div class="msec">Diagnóstico (opcional)</div>
-    <button id="previewBtn" title="Muestra las primeras filas de la BD local">👁 Vista previa CSV</button>
-    <button id="qualityBtn" title="Reporte de calidad de datos: críticos, warnings e info">🚦 Calidad de datos</button>
-    <button id="monitorBtn" title="Tabla mes · unidades · total soles para comparar con la intranet">📊 Monitor mensual</button>
-    <div class="msec">Mantenimiento</div>
-    <button id="clr" class="btn-ghost" title="Borra XLS temporales descargados">🧹 Limpiar caché XLS</button>
+</details>
+<div class="btn-grid" style="margin-top:9px">
+  <button class="btn btn-ghost" id="verifyBtn" title="Verifica integridad y calidad de los datos">🔎 Verificar</button>
+  <div class="menu-wrap">
+    <button class="btn btn-ghost" id="moreBtn">⋯ más acciones</button>
+    <div class="menu" id="moreMenu">
+      <div class="msec">Datos locales</div>
+      <button id="importBtn" title="Repara un mes incompleto con el XLS mensual del intranet">📥 Importar mes (XLS)</button>
+      <button id="manageMonths" title="Revisar o borrar meses de la BD local">📅 Gestionar meses</button>
+      <button id="monitorBtn" title="Tabla mes · unidades · total soles para comparar con la intranet">📊 Monitor mensual</button>
+      <div class="msec">Diagnóstico</div>
+      <button id="previewBtn" title="Primeras filas de la BD local">👁 Vista previa CSV</button>
+      <button id="qualityBtn" title="Reporte de calidad de datos: críticos, warnings e info">🚦 Calidad de datos</button>
+      <button id="checksumBtn" title="Genera checksums mensuales para detectar cambios">🔐 Checksums</button>
+      <div class="msec">Respaldo / limpieza</div>
+      <button id="exportDbBtn" title="Genera una copia .db + manifiesto JSON para que otra app trabaje aislada">🗄 Exportar base canónica</button>
+      <button id="shareDbBtn" title="Abre la carpeta local para copiarla a un extraíble o compartirla en la red">📂 Compartir / respaldar BD</button>
+      <button id="clr" title="Borra XLS temporales descargados">🧹 Limpiar caché XLS</button>
+    </div>
   </div>
 </div>
+<button class="btn btn-d hid" id="stopBtn">⏹ detener</button>
 <div id="est" class="est hid">⏱ ~<span id="estm">0</span> min</div>
 <div class="status" id="st"><div class="dot-sm"></div><span id="stxt">listo</span></div>
 </div>
@@ -279,15 +291,7 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 <div class="info-item"><div class="info-v" id="sbRows">—</div><div class="info-l">filas</div></div>
 <div class="info-item"><div class="info-v" id="sbDocs">—</div><div class="info-l">documentos</div></div>
 </div>
-<button class="btn btn-warn" id="reconcileBtn" style="margin-top:6px" title="Sincroniza Supabase con la BD local, mes por mes">🔄 Reconciliar ahora</button>
-</div>
-
-<!-- ═══ SECCIÓN 3: FLUJO AUTOMATIZADO ═══ -->
-<div class="sec">
-<div class="sec-head"><span class="sec-num">3</span> Flujo automatizado</div>
-<div class="config-help" style="margin:0">Descarga desde la intranet → crea/actualiza SQLite → reconcilia Supabase (sin datos repetidos).</div>
-<div class="config-help" style="margin:0">Usa el rango desde/hasta definido en la sección 1.</div>
-<button class="btn btn-p" id="fullFlowBtn">▶ Ejecutar flujo completo</button>
+<button class="btn btn-warn" id="reconcileBtn" style="margin-top:6px" title="Re-sincroniza Supabase con la BD local (correcciones/re-parseos)">🔄 Reconciliar (correcciones)</button>
 </div>
 
 <div class="footer">powered by <span>g360</span></div>
@@ -476,7 +480,7 @@ function setAppUnavailable(message){
   textEl.textContent=message;
   document.getElementById('st').className='status act err';
   document.getElementById('stxt').textContent='sin entorno tauri';
-  ['cap','sync','clr','shareDbBtn','dbclr','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','previewBtn','qualityBtn','monitorBtn','reconcileBtn','fullFlowBtn','moreBtn'].forEach(id=>{
+  ['cap','updateNow','clr','shareDbBtn','dbclr','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','previewBtn','qualityBtn','monitorBtn','reconcileBtn','fullFlowBtn','exportDbBtn','moreBtn'].forEach(id=>{
     const el=document.getElementById(id);
     if (el) el.disabled=true;
   });
@@ -510,7 +514,7 @@ async function load(){
   const d=await invoke('get_dashboard');
    totalRegistros=d.total_records||0;
   document.getElementById('k1').textContent=fn(d.total_records);
-  document.getElementById('k5').textContent=h.last_capture||'-';
+  document.getElementById('k5').textContent=h.last_capture?fmtFecha(h.last_capture):'-';
   document.getElementById('k6').textContent=(h.db_size_mb||0).toFixed(1)+' mb';
   // Preserve user selection: only set inputs if they are empty.
   const sdEl = document.getElementById('sd');
@@ -553,7 +557,7 @@ async function load(){
        sbSub.textContent='☁ completa ⚙ Configuración';
      } else if(cfg.last_supabase_sync){
        const role=cfg.supabase_service_role_configured?' · ✅ escritura':' · ⚠ sin service role';
-       sbEl.textContent=utcToPeru(cfg.last_supabase_sync)+role;
+       sbEl.textContent=fmtFecha(utcToPeru(cfg.last_supabase_sync))+role;
        sbEl.style.color=cfg.supabase_service_role_configured?'#7dd3fc':'#fbbf24';
        sbSub.textContent='últ. sync Supabase';
       }else{
@@ -567,29 +571,16 @@ async function load(){
       document.getElementById('sbWindowNote').textContent=
         'Ventana vigente: últimos '+(days/365).toFixed(1)+' años (desde '+cut+') · solo líneas válidas + NC/NDB referenciadas.';
     }catch(e){}
-   // Cobertura Supabase: fecha desde/hasta + filas + documentos
-   try{
-     const info=await invoke('get_supabase_info');
-     const fD=v=>v?String(v).slice(0,10):'—';
-     document.getElementById('sbMinDate').textContent=fD(info.min_date);
-     document.getElementById('sbMaxDate').textContent=fD(info.max_date);
-     document.getElementById('sbRows').textContent=info.total_rows?fn(info.total_rows):'—';
-     document.getElementById('sbDocs').textContent=(info.total_documents!=null)?fn(info.total_documents):'—';
-   }catch(e){
-     document.getElementById('sbMinDate').textContent='—';
-     document.getElementById('sbMaxDate').textContent='—';
-     document.getElementById('sbRows').textContent='—';
-     document.getElementById('sbDocs').textContent='—';
-   }
+    // Cobertura Supabase (cacheada 5 min; ver refreshSupabaseCoverage)
+    await refreshSupabaseCoverage(false);
    // Métricas DB local (sección 1) + defaults del flujo (sección 3)
    try{
      const lm=await invoke('get_local_metrics');
-     const fD=v=>v?String(v).slice(0,10):'—';
-     document.getElementById('lmDesde').textContent=fD(lm.min_date);
-     document.getElementById('lmHasta').textContent=fD(lm.max_date);
+     document.getElementById('lmDesde').textContent=fmtFecha(lm.min_date);
+     document.getElementById('lmHasta').textContent=fmtFecha(lm.max_date);
      document.getElementById('lmMeses').textContent=fn(lm.total_months);
      document.getElementById('lmDocs').textContent=fn(lm.total_documents);
-     document.getElementById('lmVerif').textContent=lm.last_checksum?utcToPeru(lm.last_checksum).slice(0,16):'—';
+     document.getElementById('lmVerif').textContent=lm.last_checksum?fmtFecha(utcToPeru(lm.last_checksum)):'—';
      document.getElementById('lmNcTotal').textContent=fn(lm.ncndb_total);
      document.getElementById('lmNcLinked').textContent=fn(lm.ncndb_linked);
      document.getElementById('lmNcOrf').textContent=fn(lm.ncndb_orphans);
@@ -603,6 +594,19 @@ async function load(){
 }}
 
 // Convierte ISO (UTC) a hora Peru (UTC-5, sin DST): 'YYYY-MM-DD HH:MM'
+// (formato interno; para mostrar usar fmtFecha)
+// Display local: ISO 'aaaa-mm-dd[ hh:mm]' -> 'dd/mm/aaaa[ hh:mm]'.
+// Solo display: inputs, comparaciones y storage siguen en ISO. Lo que no
+// calza (n/a, vacio, texto libre) pasa intacto — nunca rompe la pintura.
+function fmtFecha(v){
+  if(v===null||v===undefined||v==='')return '—';
+  const s=String(v).trim();
+  const m=s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/);
+  if(!m)return s;
+  let out=m[3]+'/'+m[2]+'/'+m[1];
+  if(m[4]!==undefined)out+=' '+m[4]+':'+m[5];
+  return out;
+}
 function utcToPeru(iso){
   if(!iso) return '';
   const d=new Date(iso);
@@ -667,6 +671,29 @@ function humanizeError(e){
   return t;
 }
 let prevPollState='';let prevPollMsg='';
+// Cobertura Supabase: la RPC g360_ventas_stats() hace full-scan (min/max/count/
+// count-distinct). Cache por sesion con TTL: evita 1 full-scan por cada load().
+// Las acciones que mutan Supabase (reconciliar/sync) fuerzan refresh explicito.
+let sbInfoCache=null,sbInfoTs=0;const SB_INFO_TTL_MS=5*60*1000;
+function paintSupabaseCoverage(info){
+  document.getElementById('sbMinDate').textContent=fmtFecha(info.min_date);
+  document.getElementById('sbMaxDate').textContent=fmtFecha(info.max_date);
+  document.getElementById('sbRows').textContent=info.total_rows?fn(info.total_rows):'—';
+  document.getElementById('sbDocs').textContent=(info.total_documents!=null)?fn(info.total_documents):'—';
+}
+function paintSupabaseCoverageEmpty(){
+  for(const id of ['sbMinDate','sbMaxDate','sbRows','sbDocs'])document.getElementById(id).textContent='—';
+}
+async function refreshSupabaseCoverage(force=false){
+  const now=Date.now();
+  if(!force&&sbInfoCache&&(now-sbInfoTs)<SB_INFO_TTL_MS){paintSupabaseCoverage(sbInfoCache);return sbInfoCache;}
+  try{
+    const info=await invoke('get_supabase_info');
+    sbInfoCache=info;sbInfoTs=now;
+    paintSupabaseCoverage(info);
+    return info;
+  }catch(e){paintSupabaseCoverageEmpty();return null;}
+}
 function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInterval(async()=>{try{
   const r=await invoke('get_capture_status');
   if(!r||!r.state)return;
@@ -711,7 +738,7 @@ function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInter
 
     // 5) Deshabilitar TODO botón de acción durante operación (P2 critique:
     //    el menú quedaba activo y permitia reparse/upload en paralelo)
-    ['cap','sync','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','clr','dbclr','previewBtn','qualityBtn','monitorBtn','reconcileBtn','fullFlowBtn','moreBtn'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=true;}});
+    ['cap','updateNow','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','clr','dbclr','previewBtn','qualityBtn','monitorBtn','reconcileBtn','fullFlowBtn','exportDbBtn','moreBtn'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=true;}});
     document.getElementById('stopBtn').classList.remove('hid');
 
     // 6) Mensaje en barra de estado
@@ -727,7 +754,7 @@ function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInter
       document.getElementById('pctLabel').textContent='';
       document.getElementById('dbProgressBar').style.transform='scaleX(0)';
       // Reactivar acciones, ocultar detener
-      ['cap','sync','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','clr','dbclr','previewBtn','qualityBtn','monitorBtn','reconcileBtn','fullFlowBtn','moreBtn'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=false;}});
+      ['cap','updateNow','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','clr','dbclr','previewBtn','qualityBtn','monitorBtn','reconcileBtn','fullFlowBtn','exportDbBtn','moreBtn'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=false;}});
       document.getElementById('stopBtn').classList.add('hid');
       // Resetear badges a estado idle
       updateTaskFlow(r.state==='error'?'error':'DB lista');
@@ -863,10 +890,10 @@ document.getElementById('cap').addEventListener('click',async()=>{
   show('iniciando captura...');stopPolling();
   try{const r=await invoke('capture_range',{startDate:s,endDate:e});show(r.message);startPolling();}catch(err){show(humanizeError(err),true);startPolling();}
 });
-document.getElementById('sync').addEventListener('click',async()=>{
+document.getElementById('updateNow').addEventListener('click',async()=>{
   if(!intranetVerified&&!confirm('No se ha verificado el login del intranet en esta sesión. ¿Continuar de todos modos?'))return;
-  show('syncing...');stopPolling();
-  try{const r=await invoke('sync_from_last');show(r.message);startPolling();}catch(err){show(humanizeError(err),true);startPolling();}
+  show('actualizando: capturando y publicando...');stopPolling();
+  try{const r=await invoke('sync_smart');show(r.message||'Actualizando...');await refreshSupabaseCoverage(true);startPolling();}catch(err){show(humanizeError(err),true);startPolling();}
 });
 document.getElementById('clr').addEventListener('click',async()=>{
   if(!confirm('Limpiar XLS temporales?'))return;
@@ -878,6 +905,14 @@ document.getElementById('shareDbBtn').addEventListener('click',async()=>{
     show('Carpeta de datos abierta. Puede copiarla a un extraíble o compartirla desde el Explorador:\n'+path);
   }catch(err){show(humanizeError(err),true);}
 });
+document.getElementById('exportDbBtn').addEventListener('click',async()=>{
+  moreMenu.classList.remove('open');
+  show('exportando base canónica (snapshot + manifiesto)...');
+  try{
+    const r=await invoke('export_canonical_snapshot');
+    show('Base canónica exportada:\n• '+r.db_path+'\n• '+r.manifest_path+'\n\n'+r.total_months+' meses · '+fn(r.total_rows_raw)+' filas · '+Math.round(r.db_size_mb||0)+' MB\n\nComparte el .db + .manifest.json; la otra app valida y trabaja sobre su copia.');
+  }catch(e){show(humanizeError(e),true)}
+});
 document.getElementById('resetSyncBtn').addEventListener('click',async()=>{
   let years=4; try{const c=await invoke('get_settings'); years=Math.max(1,Math.round((c.supabase_retention_days||1277)/365));}catch(e){}
   if(!confirm('¿Reconciliar Supabase con la BD local?\n\n- Compara cada mes por checksum y solo re-sube los meses que cambiaron\n- Purga + re-sube MES POR MES (sin purgar toda la ventana de golpe)\n- Es resumible: si se corta, se reanuda en la próxima\n- Aplica cambios de Líneas permitidas SIN re-capturar\n- Cobertura: últimos '+years+' años'))return;
@@ -886,6 +921,7 @@ document.getElementById('resetSyncBtn').addEventListener('click',async()=>{
     await invoke('reset_sync_marker');
     const r=await invoke('upload_all_with_verify');
     show(r.message||r);
+    await refreshSupabaseCoverage(true);
     load();
     startPolling();
   }catch(err){
@@ -899,15 +935,17 @@ document.getElementById('dbclr').addEventListener('click',async()=>{
   try{const r=await invoke('clear_db');show(r.message);load();}catch(err){show(humanizeError(err),true)}
 });
 document.getElementById('verifyBtn').addEventListener('click',async()=>{
-  show('verificando integridad...');
+  show('verificando integridad y calidad...');
   try{
     const r=await invoke('verify_integrity');
     const issues = Array.isArray(r) ? r : (r.issues || []);
-    if(issues.length > 0 && !(issues.length === 1 && issues[0].includes('✅'))) {
-      show('⚠️ Inconsistencias encontradas:\n' + issues.join('\n'), true);
-    } else {
-      show('✅ Integridad OK: ' + (issues[0] || 'Sin problemas'));
-    }
+    let crit=[],warn=[];
+    try{const q=await invoke('get_data_quality');crit=q.critical||[];warn=q.warn||[];}catch(e){}
+    let msg='🔎 Verificación de datos\n\n';
+    msg+='🔴 Críticos ('+crit.length+'):\n'+(crit.length?crit.map(x=>'• '+x).join('\n'):'• ninguno')+'\n\n';
+    if(warn.length) msg+='🟠 Warnings ('+warn.length+'):\n'+warn.map(x=>'• '+x).join('\n')+'\n\n';
+    msg+='🔵 Integridad:\n'+(issues.length?issues.map(x=>'• '+x).join('\n'):'• sin inconsistencias');
+    show(msg, crit.length>0);
   }catch(err){show(humanizeError(err),true)}
 });
 document.getElementById('checksumBtn').addEventListener('click',async()=>{
@@ -991,6 +1029,7 @@ document.getElementById('reconcileBtn').addEventListener('click',async()=>{
   try{
     const r=await invoke('upload_all_with_verify');
     show(r.message||r);
+    await refreshSupabaseCoverage(true);
     load();startPolling();
   }catch(err){show(humanizeError(err),true);startPolling();}
 });
@@ -1002,6 +1041,7 @@ document.getElementById('fullFlowBtn').addEventListener('click',async()=>{
   try{
     const r=await invoke('run_full_flow',{desde:d,hasta:h});
     show(r.message||'Flujo iniciado');
+    await refreshSupabaseCoverage(true);
     startPolling();
   }catch(err){show(humanizeError(err),true);startPolling();}
 });

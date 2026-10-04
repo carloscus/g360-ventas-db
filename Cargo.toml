@@ -48,3 +48,7 @@ path = "src/bin/reparse.rs"
 [[bin]]
 name = "importxls"
 path = "src/bin/importxls.rs"
+
+[[bin]]
+name = "export"
+path = "src/bin/export.rs"

@@ -103,7 +103,7 @@ Archivo: `src-tauri/src/main.rs`
     "pass": "tu_password"
   },
   "allowed_lines": ["01", "02", "09", "11", "14"],
-  "supabase_retention_days": 1277,
+  "supabase_retention_days": 1095,
   "auto_sync": true
 }
 ```

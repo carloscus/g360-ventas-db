@@ -438,12 +438,14 @@ pub async fn resync_stale_months(
 
     for (mes_ref, max_local) in &meses {
         let mes_filter = format!("eq.{}", mes_ref);
-        // MAX(capturado_en) del mes en Supabase
+        // MAX(capturado_en) del mes en Supabase.
+        // SIN count=exact: ese count es full-scan por mes (ver pg_stat_statements).
+        // Si el mes no existe, el array viene vacio -> supa_max None -> se purga
+        // (delete_month_batched retorna 0 rapido al no hallar ids).
         let resp = client
             .get(&base_url)
             .header("apikey", &key)
             .header("Authorization", format!("Bearer {}", key))
-            .header("Prefer", "count=exact")
             .header("Range", "0-0")
             .query(&[
                 ("mes_ref", mes_filter.as_str()),
@@ -460,17 +462,6 @@ pub async fn resync_stale_months(
                 resp.status(), mes_ref,
                 resp.text().await.unwrap_or_default().chars().take(120).collect::<String>()
             );
-        }
-
-        // content-range total: si 0, el mes no existe en Supabase (mes nuevo, no purgar)
-        let total: usize = resp
-            .headers()
-            .get("content-range")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|cr| cr.split('/').nth(1).and_then(|s| s.parse().ok()))
-            .unwrap_or(0);
-        if total == 0 {
-            continue; // mes nuevo en Supabase: no requiere purga
         }
 
         // Comparar: capturado_en max local vs max supabase (ambos ISO strings comparables)
@@ -503,13 +494,15 @@ pub async fn resync_stale_months(
 /// Un DELETE del mes completo puede exceder el `statement_timeout` de PostgREST
 /// (ERROR 57014) cuando el mes tiene decenas de miles de filas o hay bloat; borrar
 /// por lotes de ids mantiene cada statement corto y predecible. Devuelve filas borradas.
+/// BATCH=2000: el DELETE por PK sigue siendo sub-segundo; reduce a la mitad los
+/// round-trips frente a 500 (ver pg_stat_statements: 1729 DELETEs de retencion).
 async fn delete_month_batched(
     client: &reqwest::Client,
     base_url: &str,
     key: &str,
     mes: &str,
 ) -> Result<usize> {
-    const BATCH: usize = 500;
+    const BATCH: usize = 2000;
     let auth = format!("Bearer {}", key);
     let mut deleted = 0usize;
     let mut iter = 0usize;
@@ -535,6 +528,7 @@ async fn delete_month_batched(
                 .query(&[
                     ("mes_ref", mes_filter.as_str()),
                     ("select", "id"),
+                    ("order", "id"),
                     ("limit", limit_s.as_str()),
                 ])
                 .send()
@@ -612,6 +606,124 @@ async fn delete_month_batched(
         deleted += ids.len();
         if ids.len() < BATCH {
             break; // mes vacio
+        }
+    }
+    Ok(deleted)
+}
+
+/// Como `delete_month_batched` pero solo borra los días `>= fecha_floor` (YYYY-MM-DD)
+/// dentro del mes. Sirve al sync incremental por día: evita borrar/re-subir el mes
+/// completo cuando solo cambió un día (menos bloat). Devuelve filas borradas.
+async fn delete_days_in_month_batched(
+    client: &reqwest::Client,
+    base_url: &str,
+    key: &str,
+    mes: &str,
+    fecha_floor: &str,
+) -> Result<usize> {
+    const BATCH: usize = 2000;
+    let auth = format!("Bearer {}", key);
+    let mut deleted = 0usize;
+    let mut iter = 0usize;
+    loop {
+        iter += 1;
+        if iter > 10_000 {
+            return Err(anyhow::anyhow!(
+                "Supabase DELETE días {} >= {}: demasiadas iteraciones",
+                mes, fecha_floor
+            ));
+        }
+        let mes_filter = format!("eq.{}", mes);
+        let floor_filter = format!("gte.{}", fecha_floor);
+        let limit_s = BATCH.to_string();
+
+        let mut ids: Vec<String> = Vec::new();
+        let mut last_err: Option<String> = None;
+        for attempt in 1..=3 {
+            match client
+                .get(base_url)
+                .header("apikey", key)
+                .header("Authorization", &auth)
+                .query(&[
+                    ("mes_ref", mes_filter.as_str()),
+                    ("fecha_orig", floor_filter.as_str()),
+                    ("select", "id"),
+                    ("order", "id"),
+                    ("limit", limit_s.as_str()),
+                ])
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => {
+                    let rows: serde_json::Value =
+                        r.json().await.unwrap_or(serde_json::json!([]));
+                    ids = rows
+                        .as_array()
+                        .map(|a| a.iter().filter_map(|x| x.get("id").map(|v| v.to_string())).collect())
+                        .unwrap_or_default();
+                    last_err = None;
+                    break;
+                }
+                Ok(r) => {
+                    let st = r.status();
+                    if st.is_client_error() {
+                        return Err(anyhow::anyhow!("Supabase GET ids {} {}: {}", mes, fecha_floor, st));
+                    }
+                    last_err = Some(format!("{}", st));
+                }
+                Err(e) => last_err = Some(format!("red: {e}")),
+            }
+            if attempt < 3 {
+                tokio::time::sleep(Duration::from_secs(2 * attempt as u64)).await;
+            }
+        }
+        if let Some(e) = last_err {
+            return Err(anyhow::anyhow!("Supabase GET ids {} {} tras 3 intentos: {}", mes, fecha_floor, e));
+        }
+        if ids.is_empty() {
+            break;
+        }
+
+        let id_filter = format!("in.({})", ids.join(","));
+        let mut last_err: Option<String> = None;
+        let mut ok = false;
+        for attempt in 1..=3 {
+            match client
+                .delete(base_url)
+                .header("apikey", key)
+                .header("Authorization", &auth)
+                .header("Prefer", "return=minimal")
+                .query(&[("id", id_filter.as_str())])
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => {
+                    ok = true;
+                    last_err = None;
+                    break;
+                }
+                Ok(r) => {
+                    let st = r.status();
+                    if st.is_client_error() {
+                        return Err(anyhow::anyhow!("Supabase DELETE ids {} {}: {}", mes, fecha_floor, st));
+                    }
+                    last_err = Some(format!("{}", st));
+                }
+                Err(e) => last_err = Some(format!("red: {e}")),
+            }
+            if attempt < 3 {
+                tokio::time::sleep(Duration::from_secs(2 * attempt as u64)).await;
+            }
+        }
+        if !ok {
+            return Err(anyhow::anyhow!(
+                "Supabase DELETE ids {} {} tras 3 intentos: {}",
+                mes, fecha_floor, last_err.unwrap_or_default()
+            ));
+        }
+        deleted += ids.len();
+        if ids.len() < BATCH {
+            break;
         }
     }
     Ok(deleted)
@@ -858,6 +970,20 @@ pub async fn reconcile_supabase(
         .build()?;
     let base_url = format!("{}/rest/v1/{}", url, SUPABASE_TABLE);
 
+    // 0) Limpieza: eliminar de Supabase los meses FUERA de la ventana de retencion
+    //    (mes_ref < cutoff). Necesario al bajar la retencion: la reconciliacion por
+    //    si sola no toca los meses fuera de ventana. Best-effort (reintenta luego).
+    if let Some(cb) = progress_cb {
+        cb(0, 0, 0.02, "Limpiando meses fuera de la ventana de retención...");
+    }
+    match cleanup_supabase_retention(retention_days, progress_cb).await {
+        Ok(n) if n > 0 => {
+            info!("Reconcile: retención limpió {} filas fuera de ventana", n);
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("Reconcile: limpieza de retención falló (se reintenta): {}", e),
+    }
+
     // 1) Checksums locales ELEGIBLES por mes (mismo filtro del uploader)
     let base_where = if retention_days > 0 {
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
@@ -1010,6 +1136,216 @@ pub async fn reconcile_supabase(
         months_failed: failed,
         rows_uploaded,
         rows_purged,
+        stopped_early,
+    })
+}
+
+/// Enumera los `mes_ref` (YYYY-MM) cubiertos por `[desde, hasta]` (YYYY-MM-DD).
+fn month_span(desde: &str, hasta: &str) -> Result<Vec<String>> {
+    let parse = |s: &str| -> Result<chrono::NaiveDate> {
+        let base = if s.len() >= 7 { &s[..7] } else { s };
+        chrono::NaiveDate::parse_from_str(&format!("{}-01", base), "%Y-%m-%d")
+            .map_err(|e| anyhow::anyhow!("fecha inválida {s}: {e}"))
+    };
+    let a = parse(desde)?;
+    let b = parse(hasta)?;
+    let (a, b) = if a > b { (b, a) } else { (a, b) };
+    let mut meses = Vec::new();
+    let mut cur = a;
+    loop {
+        meses.push(cur.format("%Y-%m").to_string());
+        if cur >= b {
+            break;
+        }
+        cur = cur
+            .checked_add_months(chrono::Months::new(1))
+            .ok_or_else(|| anyhow::anyhow!("overflow de meses"))?;
+    }
+    Ok(meses)
+}
+
+/// Checksum local elegible de UN mes (mismo filtro del uploader).
+async fn local_month_checksum(
+    pool: &sqlx::SqlitePool,
+    mes: &str,
+) -> Result<Option<(String, i64)>> {
+    let where_clause =
+        crate::config::with_line_filter(&format!("WHERE mes_ref = '{}'", mes.replace('\'', "''")));
+    let row: Option<(String, i64)> = sqlx::query_as(&format!(
+        "SELECT printf('%08x-%08x-%08x', COUNT(*), \
+                CAST(ROUND(SUM(soles)*100) AS INTEGER), \
+                CAST(ROUND(SUM(cantidad)*100) AS INTEGER)) AS checksum, COUNT(*) AS filas \
+         FROM ventas {} GROUP BY mes_ref",
+        where_clause
+    ))
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+/// Sincroniza UN mes pero SOLO los días `>= fecha_floor`: purga esos días en
+/// Supabase y re-sube las filas locales elegibles de esos días. Devuelve (purgadas, subidas).
+async fn sync_month_days(
+    pool: &sqlx::SqlitePool,
+    client: &reqwest::Client,
+    base_url: &str,
+    key: &str,
+    mes: &str,
+    fecha_floor: &str,
+) -> Result<(usize, usize)> {
+    let purged = delete_days_in_month_batched(client, base_url, key, mes, fecha_floor).await?;
+
+    let where_clause = crate::config::with_line_filter(&format!(
+        "WHERE mes_ref = '{}' AND fecha_orig >= '{}'",
+        mes.replace('\'', "''"),
+        fecha_floor.replace('\'', "''")
+    ));
+    let select_sql = format!(
+        "SELECT {} FROM ventas {} AND id > ? ORDER BY id LIMIT ?",
+        VENTA_SELECT_COLS, where_clause
+    );
+    let no_cb: ProgressCb = None;
+    let mut last_id = 0i64;
+    let mut uploaded = 0usize;
+    let mut guard = 0usize;
+    loop {
+        guard += 1;
+        if guard > 100_000 {
+            return Err(anyhow::anyhow!("sync_month_days {mes}: demasiados batches"));
+        }
+        let rows: Vec<(i64, Venta)> = sqlx::query(&select_sql)
+            .bind(last_id)
+            .bind(500i64)
+            .map(map_venta_row)
+            .fetch_all(pool)
+            .await
+            .context("sync_month_days fetch failed")?;
+        if rows.is_empty() {
+            break;
+        }
+        let len = rows.len();
+        last_id = rows.last().map(|(id, _)| *id).unwrap_or(last_id);
+        let ventas: Vec<Venta> = rows.into_iter().map(|(_, v)| v).collect();
+        uploaded += upload_to_supabase(&ventas, &no_cb).await?;
+        if len < 500 {
+            break;
+        }
+    }
+    Ok((purged, uploaded))
+}
+
+/// Sync INCREMENTAL por DÍA (día a día): solo purga + re-sube los días en
+/// `[desde, hasta]`, NO el mes completo. Evita duplicados (purga antes de subir) y
+/// reduce el bloat frente a reconciliar meses enteros cuando solo cambió un día.
+/// Tras sincronizar, marca los meses tocados como sincronizados (`sync_months`).
+pub async fn sync_incremental(
+    pool: &sqlx::SqlitePool,
+    retention_days: u32,
+    desde: &str,
+    hasta: &str,
+    progress_cb: &ProgressCb,
+) -> Result<ReconcileResult> {
+    let url = get_supabase_url();
+    let key = get_supabase_service_key();
+    if url.contains("TU_SUPABASE") || key.contains("TU_ANON") {
+        return Err(anyhow::anyhow!("Supabase no configurado"));
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .connect_timeout(Duration::from_secs(15))
+        .build()?;
+    let base_url = format!("{}/rest/v1/{}", url, SUPABASE_TABLE);
+
+    // Limpieza fuera de ventana (best-effort), para que la ventana quede acotada.
+    if let Some(cb) = progress_cb {
+        cb(0, 0, 0.02, "Limpiando meses fuera de la ventana...");
+    }
+    let _ = cleanup_supabase_retention(retention_days, progress_cb).await;
+
+    // Clamp de `desde` al inicio de la ventana de retención (mes alineado).
+    let desde_eff = if retention_days > 0 {
+        let cutoff_mes = (chrono::Utc::now() - chrono::Duration::days(retention_days as i64))
+            .format("%Y-%m")
+            .to_string();
+        let floor = format!("{}-01", cutoff_mes);
+        if desde < floor.as_str() {
+            floor
+        } else {
+            desde.to_string()
+        }
+    } else {
+        desde.to_string()
+    };
+
+    let meses = month_span(&desde_eff, hasta)?;
+    let mut synced = 0usize;
+    let mut failed = 0usize;
+    let mut uploaded = 0usize;
+    let mut purged = 0usize;
+    let mut consecutive = 0usize;
+    let mut stopped_early = false;
+
+    for (i, mes) in meses.iter().enumerate() {
+        if let Some(cb) = progress_cb {
+            let pct = 0.05 + 0.9 * (i as f64 / meses.len().max(1) as f64);
+            cb(
+                0,
+                meses.len(),
+                pct as f32,
+                &format!("Sync incremental {}/{} ({})", i + 1, meses.len(), mes),
+            );
+        }
+        // Día piso: en el mes de `desde` arranca en `desde`; en los siguientes, día 1.
+        let floor = if mes.as_str() == &desde_eff[..7] {
+            desde_eff.clone()
+        } else {
+            format!("{}-01", mes)
+        };
+        match sync_month_days(pool, &client, &base_url, &key, mes, &floor).await {
+            Ok((p, u)) => {
+                purged += p;
+                uploaded += u;
+                synced += 1;
+                consecutive = 0;
+                // Marcar el mes como sincronizado (remote = local).
+                if let Ok(Some((checksum, filas))) = local_month_checksum(pool, mes).await {
+                    let _ = sqlx::query(
+                        "INSERT INTO sync_months (mes_ref, local_checksum, remote_checksum, filas, estado, actualizado_en) \
+                         VALUES (?, ?, ?, ?, 'synced', datetime('now')) \
+                         ON CONFLICT(mes_ref) DO UPDATE SET local_checksum = excluded.local_checksum, \
+                            remote_checksum = excluded.local_checksum, filas = excluded.filas, \
+                            estado = 'synced', actualizado_en = excluded.actualizado_en",
+                    )
+                    .bind(mes)
+                    .bind(&checksum)
+                    .bind(&checksum)
+                    .bind(filas)
+                    .execute(pool)
+                    .await;
+                }
+                info!(
+                    "sync_incremental {}: purgadas {} + subidas {} (>= {})",
+                    mes, p, u, floor
+                );
+            }
+            Err(e) => {
+                failed += 1;
+                consecutive += 1;
+                tracing::warn!("sync_incremental {} fallo: {}", mes, e);
+                if consecutive >= RECONCILE_MAX_CONSECUTIVE_FAILURES {
+                    stopped_early = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok(ReconcileResult {
+        months_total: meses.len(),
+        months_synced: synced,
+        months_failed: failed,
+        rows_uploaded: uploaded,
+        rows_purged: purged,
         stopped_early,
     })
 }

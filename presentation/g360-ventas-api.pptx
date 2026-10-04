@@ -1,0 +1,71 @@
+# g360-ventas-api - Presentación PPTX (10 diapositivas)
+
+## Diapositiva 1: Título
+- Título: g360-ventas-api — API de solo lectura para la intranet
+- Subtítulo: Solución para sincronización de historial de ventas
+- Logo G360
+- Fecha: Octubre 2026
+
+## Diapositiva 2: El problema
+- Clientes ERP dependen de copias manuales (SMB/USB) de historial.db
+- 2,8 millones de filas en historial.db
+- Sin control de frescura: datos desactualizados
+- Procesos ineficientes y propensos a errores
+
+## Diapositiva 3: La solución
+- API Go (solo lectura) que expone historial.db
+- HTTP API en puerto 8090
+- Autenticación por token HMAC
+- Whitelist de 24 objetos permitidos
+- Sin cambios en la base de datos original
+
+## Diapositiva 4: Arquitectura
+- **Productor**: Tauri/Rust → escribe historial.db (WAL)
+- **API**: Go (modernc.org/sqlite), solo lectura, token HMAC
+- **Cliente ERP**: Python → consume API HTTP
+- **Diagrama**: [Visualización de la arquitectura]
+
+## Diapositiva 5: Endpoints de la API
+- GET /historial → lista completa de registros
+- GET /facturas_disponibles → facturas para sincronización
+- GET /vendedores → lista de vendedores
+- GET /clientes → lista de clientes
+- GET /facturas_cliente/{id} → facturas por cliente
+- GET /ordenes_cliente/{id} → órdenes por cliente
+- GET /pedidos_cliente/{id} → pedidos por cliente
+
+## Diapositiva 6: Seguridad y whitelist
+- 24 objetos permitidos (historial, facturas, pedidos, clientes, etc.)
+- Excluye: audit_log, sync_log, sync_months
+- Token HMAC para autenticación
+- Solo lectura garantizada
+
+## Diapositiva 7: Validación y pruebas
+- 27 pruebas automatizadas (todas verdes)
+- Checksums coinciden (201/201 meses)
+- Pruebas en entornos reales (Windows, WSL2)
+- Validación de flujos de sincronización
+
+## Diapositiva 8: Despliegue y ejecución
+- API compilada como binario Go (sin dependencias externas)
+- Ejecutar en Windows o WSL2
+- Copiar historial.db a la ubicación correcta
+- Ejecutar forwarder para exposición en LAN
+- Prueba de humo: 13/13 PASS
+
+## Diapositiva 9: Alternativas consideradas
+1. API en Python/Node (bypass Go block)
+2. Go binario en WSL2 (problemas WAL)
+3. Exención IT (allowlist binario)
+4. Mejor flujo de archivos (robocopy, zip)
+5. Relay server (Windows → WSL2)
+5. Base de datos central (PostgreSQL)
+7. Push model (producer → server)
+
+## Diapositiva 10: Recomendación y próximos pasos
+- Recomendado: WSL2 + snapshot + forwarder (ya validado)
+- Próximos pasos:
+  1. Implementar adaptador Python en ERP
+  2. Validar checksums y folios
+  5. Documentar flujo de sync
+  6. Generar presentación PPTX final

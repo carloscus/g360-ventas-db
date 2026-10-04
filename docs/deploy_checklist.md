@@ -5,7 +5,7 @@
 - [ ] Credenciales intranet configuradas (.env o config.json)
 - [ ] Credenciales Supabase configuradas
 - [ ] allowed_lines configurado (config.json)
-- [ ] Retención configurada (supabase_retention_days = 1277)
+- [ ] Retención configurada (supabase_retention_days = 1095)
 
 ## Post-Deploy (verificar)
 - [ ] BD creada en: %APPDATA%\g360-db-ventas\data\historial.db

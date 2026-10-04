@@ -323,7 +323,7 @@ Almacenado en `%APPDATA%\g360-db-ventas\data\config.json`:
   "auto_sync": true,
   "app_retention_years": 3,
   "supabase_retention_years": 0,
-  "supabase_retention_days": 1277,
+  "supabase_retention_days": 1095,
   "auto_daily_capture": false,
   "capture_times": ["12:00", "20:00"],
   "last_supabase_sync": "2026-09-16T21:46:44Z"
@@ -351,7 +351,7 @@ Almacenado en `%APPDATA%\g360-db-ventas\data\config.json`:
 | Escenario | Comportamiento |
 |-----------|----------------|
 | **Local** | historial completo (sin límite de años) + export RAW del ERP (todas las líneas) |
-| **Supabase** | **ventana ROTATIVA** de `supabase_retention_days` (1277 = 3.5 años): cada subida inserta lo nuevo y elimina los meses con `mes_ref < cutoff` — un mes entra, un mes sale. Tamaño actual ~384 MB (76.9% del plan gratuito de 500 MB) |
+| **Supabase** | **ventana ROTATIVA** de `supabase_retention_days` (1095 = 3 años): cada subida inserta lo nuevo y elimina los meses con `mes_ref < cutoff` — un mes entra, un mes sale. Tras bajar la retención, la reconciliación ejecuta la limpieza fuera de ventana y luego conviene compactar (`VACUUM (ANALYZE)`, y `VACUUM FULL` si el tamaño reportado no baja) |
 | **Apps derivadas** | ventana activa de `app_retention_years` (3 años) |
 | **Líneas no permitidas** | raw-first: viven SOLO en la BD local; se filtran al subir (`config::with_line_filter`: allowlist + regla NC/ND por factura referenciada) |
 
@@ -367,27 +367,49 @@ Almacenado en `%APPDATA%\g360-db-ventas\data\config.json`:
 
 ---
 
-## Sincronización con Supabase (reconciliación por mes)
+## Sincronización con Supabase
 
-El local es la **fuente de verdad** y Supabase un **suscriptor opcional**. La sincronización ya **no** purga la ventana completa (eso agotaba el Disk IO Budget); ahora se **reconcilian mes por mes**:
+El local es la **fuente de verdad** y Supabase un **suscriptor opcional**. Hay **dos modos**, ninguno purga la ventana completa:
 
-- Tabla local `sync_months(mes_ref, local_checksum, remote_checksum, estado, intentos, ultimo_error)`. Por cada mes se calcula un checksum de las filas elegibles (mismo filtro del uploader) y se compara con el último subido.
-- Solo los meses con checksum **distinto** se purgan (borrado por lotes de 500 `id`) y se re-suben. Los meses sin cambios no se tocan.
-- **Resumible**: el estado persiste en `sync_months`; si se interrumpe, la próxima corrida retoma donde quedó.
-- **Circuit breaker**: tras 3 meses fallidos consecutivos (p. ej. `57014`/throttling) se detiene y se reanuda después — no aborta todo el sync ni mata la app.
-- El botón **"🔄 Reconciliar"** (antes "Full Sync") limpia `remote_checksum` y reconcilia todos los meses, sin purga de ventana completa.
+### Modo incremental por día (`sync_incremental`) — día a día
+Usado por **Sync última fecha**, **Flujo completo** y el pipeline diario. En vez de tocar el mes entero, solo toca **los días en `[desde, hasta]`**:
+- Purga en Supabase **solo los días capturados** (`mes_ref` + `fecha_orig >= desde`, por lotes de 500 `id`) y re-sube las filas locales de esos días.
+- **Sin duplicados**: siempre purga esos días antes de re-subir.
+- **Menos bloat**: un día (~cientos de filas) en vez de un mes (~miles) — evita que el uso vuelva a crecer por churn.
+- Clampa `desde` al inicio de la ventana de retención y ejecuta `cleanup_supabase_retention` (fuera de ventana). Tras sincronizar, marca el mes como sincronizado en `sync_months`.
+
+### Modo reconciliación por mes (`reconcile_supabase`) — correcciones
+Usado por el botón **"🔄 Reconciliar"** (y full syncs). Compara **checksums por mes** de las filas elegibles y solo purga + re-sube los meses que cambiaron:
+- Tabla local `sync_months(mes_ref, local_checksum, remote_checksum, estado, intentos, ultimo_error)`.
+- **Resumible** + **circuit breaker** (corta tras 3 meses fallidos consecutivos).
+- Ideal cuando un **re-parseo / cambio de allowlist** afecta meses enteros.
+
+> **Evitar duplicados y re-ocupación**: ambos modos **purgan antes de subir** (no duplican) y el **tamaño queda acotado** por la ventana rotativa (`supabase_retention_days`). El modo por día minimiza el bloat diario; para el bloat residual, compactar de vez en cuando (`VACUUM (ANALYZE)`, y `VACUUM FULL` si el tamaño reportado no baja).
 
 ### Modo solo-local (`supabase_enabled`)
 
-En Configuración → **Destino Supabase** hay un switch **"Supabase habilitado"**. Si se desactiva, la app es **100% local**: captura, parseo, dims y checksums en SQLite; ninguna operación toca Supabase. El sync automático al abrir solo captura y termina con "modo solo local".
+En Configuración → **Destino Supabase** hay un switch **"Supabase habilitado"**. Si se desactiva, la app es **100% local**: captura, parseo, dims y checksums en SQLite; ninguna operación toca Supabase.
 
 ### Flujo automático al abrir (`sync_smart`)
 
 1. Captura desde la última fecha local.
-2. Si Supabase está habilitado y configurado → `reconcile_supabase` (mes por mes, resumible).
+2. Si Supabase está habilitado y configurado → `sync_incremental` (por día).
 3. Si no → solo captura local y termina.
 
 No hace full-scans remotos: los checksums son locales y el display de Supabase usa `count=planned` (estimador del planner).
+
+---
+
+## Base canónica para otras apps
+
+`historial.db` es la **base canónica** de este proyecto. Otras apps consumen una
+**instantánea** en vez del SQLite en caliente: **⋯ más acciones → 🗄 Exportar base
+canónica** genera `base_canonica_<fecha>.db` (copia autocontenida vía `VACUUM INTO`)
++ `base_canonica_<fecha>.manifest.json` (versiones, cobertura y checksums mensuales).
+La app consumidora importa el `.db` a su **propia copia**, valida contra el manifiesto
+y trabaja aislada (tablas/vistas con prefijo propio). No hay sync bidireccional.
+
+Protocolo completo, manifiesto, llaves de join y reglas: [`docs/base-canonica-consumo.md`](docs/base-canonica-consumo.md).
 
 ---
 
@@ -599,3 +621,14 @@ Proyecto interno del ecosistema **G360 - CIPSA**.
 **Isotipo**: 3 puntos verticales paralelos (gris-verde-gris) + chevron `>`  
 **Signature**: G360 by ccusi  
 **Powered by**: [g360-signature](https://github.com/carloscus/g360-signature)
+
+---
+
+## Cambios recientes (oct-2026)
+
+- **Menos I/O en Supabase**: el chequeo mensual del resync ya no usa `count=exact`
+  (un full-count por mes); la cobertura del dashboard se cachea 5 min por sesión
+  (`refreshSupabaseCoverage`, con refresco forzado tras reconciliar/sync); el
+  borrado de retención subió a batches de 2000 con `order=id`.
+- **Fechas en UI**: display en `dd/mm/aaaa` (`fmtFecha()` en `index.html`); el
+  proceso sigue en ISO (`fecha_orig` rechaza el archivo si hay fechas inválidas).

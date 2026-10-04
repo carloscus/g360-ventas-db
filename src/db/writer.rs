@@ -1058,6 +1058,81 @@ pub async fn export_full_db(target_path: &std::path::Path) -> Result<String> {
     Ok(format!("Exportado: {} ({:.1} MB)", target_path.file_name().unwrap_or_default().to_string_lossy(), size / 1024.0 / 1024.0))
 }
 
+/// Exporta una INSTANTANEA canonica para que otra app trabaje sobre una copia
+/// aislada: `VACUUM INTO` (archivo .db autocontenido, sin WAL) + un manifiesto JSON
+/// con versiones, cobertura y checksums mensuales (baseline de validacion).
+pub async fn export_canonical_snapshot(target: &std::path::Path) -> Result<serde_json::Value> {
+    let pool = init_pool().await?;
+    // Dims frescas pero SIN reconstruir si ya estan al dia (ensure_dims_fresh es
+    // barato cuando no hace falta; refresh_dim_tables reconstruye ~2.8M filas y
+    // hacia el export lentisimo). Los checksums faltantes se completan.
+    let _ = ensure_dims_fresh(&pool).await;
+    let _ = recalculate_missing_checksums(&pool).await;
+    let _ = sqlx::query("VACUUM INTO ?")
+        .bind(target.to_string_lossy().to_string())
+        .execute(&pool)
+        .await?;
+    let size = std::fs::metadata(target).map(|m| m.len()).unwrap_or(0);
+
+    let total_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+    let mm: (Option<String>, Option<String>, i64) = sqlx::query_as(
+        "SELECT MIN(mes_ref), MAX(mes_ref), COUNT(DISTINCT mes_ref) \
+         FROM ventas WHERE length(mes_ref)=7",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap_or((None, None, 0));
+    let checksums: Vec<(String, String, i64, f64)> = sqlx::query_as(
+        "SELECT mes_ref, checksum, total_filas, total_soles \
+         FROM mes_checksums ORDER BY mes_ref",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    let manifest = serde_json::json!({
+        "format": "g360-ventas-canonical",
+        "app": "g360-db-ventas",
+        "app_version": env!("CARGO_PKG_VERSION"),
+        "schema_version": crate::db::schema::DIM_SCHEMA_VERSION,
+        "exported_at": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        "db_file": target.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+        "db_size_bytes": size,
+        "total_rows_raw": total_rows,
+        "min_mes": mm.0,
+        "max_mes": mm.1,
+        "total_months": mm.2,
+        "checksum_months": checksums.len(),
+        "checksums": checksums.iter().map(|(m, c, f, s)| serde_json::json!({
+            "mes_ref": m, "checksum": c, "filas": f, "soles": s
+        })).collect::<Vec<_>>(),
+        "filters": "raw-first: TODAS las lineas del ERP; sin filtro de lineas ni retencion",
+        "consumer_hint": "Copia el .db a la app consumidora y valida conteos/checksums por mes contra este manifiesto antes de usarla."
+    });
+    let manifest_path = target.with_extension("manifest.json");
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
+    info!(
+        "Snapshot canonico: {} ({:.1} MB) + manifiesto {}",
+        target.display(),
+        size as f64 / 1024.0 / 1024.0,
+        manifest_path.display()
+    );
+
+    Ok(serde_json::json!({
+        "db_path": target.to_string_lossy().to_string(),
+        "manifest_path": manifest_path.to_string_lossy().to_string(),
+        "db_size_mb": (size as f64) / 1024.0 / 1024.0,
+        "total_rows_raw": total_rows,
+        "min_mes": mm.0,
+        "max_mes": mm.1,
+        "total_months": mm.2,
+        "checksum_months": checksums.len(),
+    }))
+}
+
 /// Métricas de la BD local para la sección "DB Local" del dashboard.
 pub async fn local_metrics(pool: &SqlitePool) -> Result<serde_json::Value> {
     let stat = |key: &'static str| async move {
