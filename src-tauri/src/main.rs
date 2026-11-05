@@ -1845,7 +1845,9 @@ fn main() {
                 // Normalización de IDs para búsquedas
                 normalize_query_id_cmd,
                 // Último cartucho generado
-                get_last_cartucho
+                get_last_cartucho,
+                // Wizard primer inicio
+                is_first_run, save_first_config
             ])
             .run(tauri::generate_context!())
             .expect("error while running tauri application");
@@ -2240,6 +2242,46 @@ fn get_last_cartucho() -> Result<serde_json::Value, String> {
         }
         None => Ok(serde_json::json!({ "exists": false })),
     }
+}
+
+/// Indica si es el primer inicio de la app (no hay config guardada).
+#[tauri::command]
+fn is_first_run() -> bool {
+    g360_db_ventas::config::is_first_run()
+}
+
+/// Guarda la configuración inicial desde el wizard (primer inicio en PC nueva).
+/// Encripta con DPAPI de esta PC/usuario.
+#[tauri::command]
+fn save_first_config(
+    supabase_url: String,
+    supabase_key: String,
+    service_role_key: String,
+    intranet_user: String,
+    intranet_pass: String,
+    allowed_lines: Vec<String>,
+    retention_days: u32,
+) -> Result<serde_json::Value, String> {
+    let mut cfg = g360_db_ventas::config::AppConfig::default_app();
+    cfg.supabase.url = supabase_url;
+    cfg.supabase.key = supabase_key;
+    cfg.supabase.service_role_key = service_role_key;
+    cfg.intranet.user = intranet_user;
+    cfg.intranet.pass = intranet_pass;
+    if !allowed_lines.is_empty() {
+        cfg.allowed_lines = allowed_lines;
+    }
+    cfg.supabase_retention_days = retention_days;
+    cfg.supabase_retention_years = 0;
+    cfg.generado_por = "wizard-primer-inicio".to_string();
+
+    g360_db_ventas::config::save_config(&cfg).map_err(|e| e.to_string())?;
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "message": "Configuración guardada encriptada (DPAPI)",
+        "first_run": false
+    }))
 }
 
 /// Calcula checksums para meses que aun no tienen hash (complementa los 105/121).

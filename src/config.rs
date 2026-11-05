@@ -243,31 +243,132 @@ pub fn config_file_path() -> PathBuf {
     data_dir().join("config.json")
 }
 
+/// Ruta del config encriptado (DPAPI).
+pub fn config_enc_path() -> PathBuf {
+    data_dir().join("config.enc")
+}
+
+/// Encripta datos con Windows DPAPI (solo esta PC/usuario puede desencriptar).
+#[cfg(target_os = "windows")]
+fn dpapi_encrypt(data: &str) -> Option<Vec<u8>> {
+    use windows::Win32::Foundation::LocalFree;
+    use windows::Win32::Security::Cryptography::{CryptProtectData, CRYPT_INTEGER_BLOB};
+
+    unsafe {
+        let mut in_blob = CRYPT_INTEGER_BLOB {
+            cbData: data.len() as u32,
+            pbData: data.as_ptr() as *mut u8,
+        };
+        let mut out_blob = CRYPT_INTEGER_BLOB::default();
+        let result = CryptProtectData(&in_blob, None, None, None, None, 0, &mut out_blob);
+        if result.is_ok() {
+            let encrypted =
+                std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
+            let _ = LocalFree(windows::Win32::Foundation::HLOCAL(
+                out_blob.pbData as *mut _,
+            ));
+            Some(encrypted)
+        } else {
+            None
+        }
+    }
+}
+
+/// Desencripta datos con Windows DPAPI.
+#[cfg(target_os = "windows")]
+fn dpapi_decrypt(data: &[u8]) -> Option<String> {
+    use windows::Win32::Foundation::LocalFree;
+    use windows::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB};
+
+    unsafe {
+        let mut in_blob = CRYPT_INTEGER_BLOB {
+            cbData: data.len() as u32,
+            pbData: data.as_ptr() as *mut u8,
+        };
+        let mut out_blob = CRYPT_INTEGER_BLOB::default();
+        let result = CryptUnprotectData(&in_blob, None, None, None, None, 0, &mut out_blob);
+        if result.is_ok() {
+            let decrypted = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize);
+            let s = String::from_utf8_lossy(decrypted).to_string();
+            let _ = LocalFree(windows::Win32::Foundation::HLOCAL(
+                out_blob.pbData as *mut _,
+            ));
+            Some(s)
+        } else {
+            None
+        }
+    }
+}
+
+// Fallbacks para no-Windows (no usados en producción pero permiten compilar)
+#[cfg(not(target_os = "windows"))]
+fn dpapi_encrypt(data: &str) -> Option<Vec<u8>> {
+    Some(data.as_bytes().to_vec())
+}
+#[cfg(not(target_os = "windows"))]
+fn dpapi_decrypt(data: &[u8]) -> Option<String> {
+    Some(String::from_utf8_lossy(data).to_string())
+}
+
+/// Carga config. Primero intenta .enc (DPAPI), luego .json (legacy/migración).
 pub fn load_config() -> AppConfig {
-    let path = config_file_path();
-    if path.exists() {
-        if let Ok(s) = std::fs::read_to_string(&path) {
+    // 1. Intentar config.enc (encriptado)
+    let enc_path = config_enc_path();
+    if enc_path.exists() {
+        if let Ok(bytes) = std::fs::read(&enc_path) {
+            if let Some(json) = dpapi_decrypt(&bytes) {
+                if let Ok(cfg) = serde_json::from_str(&json) {
+                    return cfg;
+                }
+            }
+        }
+        // Si .enc existe pero falla el decrypt, probablemente es de otra PC
+        // → caer al fallback
+    }
+
+    // 2. Intentar config.json (legacy plano) + migrar automáticamente
+    let plain_path = config_file_path();
+    if plain_path.exists() {
+        if let Ok(s) = std::fs::read_to_string(&plain_path) {
             if let Ok(cfg) = serde_json::from_str(&s) {
+                // Migrar a encriptado automáticamente
+                let _ = save_config_enc(&cfg);
+                // Renombrar .json → .json.bak (backup del plano original)
+                let bak_path = data_dir().join("config.json.bak");
+                let _ = std::fs::rename(&plain_path, &bak_path);
                 return cfg;
             }
         }
     }
+
     AppConfig::default_app()
 }
 
-pub fn save_config(cfg: &AppConfig) -> anyhow::Result<()> {
-    let path = config_file_path();
-    if let Some(p) = path.parent() {
+/// Guarda config encriptada con DPAPI.
+pub fn save_config_enc(cfg: &AppConfig) -> anyhow::Result<()> {
+    let enc_path = config_enc_path();
+    if let Some(p) = enc_path.parent() {
         std::fs::create_dir_all(p)?;
     }
-    // Backup automatico antes de cada cambio (simetria con clear_db)
-    if path.exists() {
-        let backup_dir = data_dir().join("backup");
-        let _ = std::fs::create_dir_all(&backup_dir);
-        let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-        let backup_path = backup_dir.join(format!("config_{}.json", ts));
-        let _ = std::fs::copy(&path, &backup_path);
+    let json = serde_json::to_string_pretty(cfg)?;
+    match dpapi_encrypt(&json) {
+        Some(encrypted) => {
+            std::fs::write(&enc_path, encrypted)?;
+            Ok(())
+        }
+        None => anyhow::bail!("DPAPI encrypt falló"),
     }
+}
+
+/// Indica si es el primer inicio (no hay config .enc ni .json).
+pub fn is_first_run() -> bool {
+    !config_enc_path().exists() && !config_file_path().exists()
+}
+
+pub fn save_config(cfg: &AppConfig) -> anyhow::Result<()> {
+    // Siempre guardar encriptado
+    save_config_enc(cfg)?;
+
     // Audit log: registro de quién cambió qué
     let audit_path = logs_dir().join("audit.log");
     let _ = std::fs::create_dir_all(audit_path.parent().unwrap());
@@ -280,8 +381,6 @@ pub fn save_config(cfg: &AppConfig) -> anyhow::Result<()> {
     let _ = std::fs::OpenOptions::new().create(true).append(true).open(&audit_path)
         .and_then(|mut f| writeln!(f, "[{timestamp}] config saved by {generado} — allowed_lines={}, retention={}y, supabase={}",
             cfg.allowed_lines.len(), cfg.supabase_retention_years, cfg.supabase.is_configured()));
-    let s = serde_json::to_string_pretty(cfg)?;
-    std::fs::write(&path, s)?;
     Ok(())
 }
 

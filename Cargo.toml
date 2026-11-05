@@ -26,6 +26,7 @@ futures-util = "0.3"
 rand = "0.8"
 sha2 = "0.10"
 rust_xlsxwriter = "0.74"
+windows = { version = "0.58", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
 
 [profile.dev]
 panic = "abort"
