@@ -149,6 +149,40 @@ fn normalize_id_pedido(s: &str) -> String {
     raw.split_whitespace().collect::<Vec<_>>().join("_")
 }
 
+/// Normaliza un ID de entrada del usuario para búsquedas en la BD.
+///
+/// La BD almacena IDs ya normalizados (zfill para clientes, sin prefijo '01'
+/// para líneas/vendedores). Si el usuario escribe "10214", esta función la
+/// convierte en "00010214" para que el WHERE la encuentre.
+///
+/// Uso en la app cliente:
+/// ```rust
+/// use g360_db_ventas::processor::parser::{normalize_query_id, IdType};
+/// let search = normalize_query_id("10214", IdType::Cliente);
+/// assert_eq!(search, "00010214");
+/// ```
+pub fn normalize_query_id(input: &str, id_type: IdType) -> String {
+    let t = clean_id(input);
+    if t.is_empty() {
+        return String::new();
+    }
+    match id_type {
+        IdType::Cliente => normalize_client_id(&t),
+        IdType::Linea => normalize_line_id(&t),
+        IdType::Vendedor => normalize_seller_id(&t),
+        IdType::Articulo => t.to_uppercase(),
+    }
+}
+
+/// Tipo de ID para normalización de queries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdType {
+    Cliente,
+    Linea,
+    Vendedor,
+    Articulo,
+}
+
 /// Parsea fecha en ISO (yyyy-mm-dd) desde varios formatos.
 /// Retorna None si no es parseable o es fecha futura.
 fn parse_date(s: &str) -> Option<chrono::NaiveDate> {
@@ -439,4 +473,125 @@ pub struct QualityStats {
     pub invalid_dates: u64,
     pub future_dates: u64,
     pub empty_ids: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── normalize_query_id: Cliente (zfill 8) ──
+
+    #[test]
+    fn cliente_corto_se_completa_con_ceros() {
+        assert_eq!(normalize_query_id("10214", IdType::Cliente), "00010214");
+        assert_eq!(normalize_query_id("2035", IdType::Cliente), "00002035");
+        assert_eq!(normalize_query_id("56101", IdType::Cliente), "00056101");
+    }
+
+    #[test]
+    fn cliente_de_8_digitos_se_mantiene() {
+        assert_eq!(normalize_query_id("00010214", IdType::Cliente), "00010214");
+        assert_eq!(normalize_query_id("00056101", IdType::Cliente), "00056101");
+    }
+
+    #[test]
+    fn cliente_ruc_11_digitos_se_mantiene() {
+        assert_eq!(
+            normalize_query_id("20481150125", IdType::Cliente),
+            "20481150125"
+        );
+    }
+
+    // ── normalize_query_id: Linea (lstrip 01) ──
+
+    #[test]
+    fn linea_con_prefijo_01_se_quita() {
+        assert_eq!(normalize_query_id("0178", IdType::Linea), "78");
+        assert_eq!(normalize_query_id("0185", IdType::Linea), "85");
+        assert_eq!(normalize_query_id("0102", IdType::Linea), "02");
+    }
+
+    #[test]
+    fn linea_sin_prefijo_se_mantiene() {
+        assert_eq!(normalize_query_id("78", IdType::Linea), "78");
+        assert_eq!(normalize_query_id("AD", IdType::Linea), "AD");
+    }
+
+    // ── normalize_query_id: Vendedor (lstrip 01) ──
+
+    #[test]
+    fn vendedor_con_prefijo_01_se_quita() {
+        assert_eq!(normalize_query_id("01M05", IdType::Vendedor), "M05");
+        assert_eq!(normalize_query_id("01177", IdType::Vendedor), "177");
+    }
+
+    #[test]
+    fn vendedor_sin_prefijo_se_mantiene() {
+        assert_eq!(normalize_query_id("052", IdType::Vendedor), "052");
+        assert_eq!(normalize_query_id("177", IdType::Vendedor), "177");
+        assert_eq!(normalize_query_id("M05", IdType::Vendedor), "M05");
+    }
+
+    // ── normalize_query_id: Articulo (sin transformar) ──
+
+    #[test]
+    fn articulo_se_mantiene_igual() {
+        assert_eq!(normalize_query_id("011883", IdType::Articulo), "011883");
+        assert_eq!(normalize_query_id("85007", IdType::Articulo), "85007");
+    }
+
+    // ── normalize_query_id: Edge cases ──
+
+    #[test]
+    fn input_vacio_devuelve_vacio() {
+        assert_eq!(normalize_query_id("", IdType::Cliente), "");
+        assert_eq!(normalize_query_id("  ", IdType::Linea), "");
+    }
+
+    // ── derivar_campos: clasificación NC/ND ──
+
+    #[test]
+    fn ncr_con_cantidad_negativa_es_devolucion() {
+        let mut v = crate::models::Venta::nuevo("test.csv", "2026-11");
+        v.tpo_doc = "NCR".to_string();
+        v.cantidad = -10.0;
+        derivar_campos(&mut v);
+        assert_eq!(v.tipo_operacion, "devolucion");
+    }
+
+    #[test]
+    fn ncr_con_cantidad_cero_es_ajuste_valor() {
+        let mut v = crate::models::Venta::nuevo("test.csv", "2026-11");
+        v.tpo_doc = "NCR".to_string();
+        v.cantidad = 0.0;
+        derivar_campos(&mut v);
+        assert_eq!(v.tipo_operacion, "ajuste_valor");
+    }
+
+    #[test]
+    fn ndb_es_nota_debito() {
+        let mut v = crate::models::Venta::nuevo("test.csv", "2026-11");
+        v.tpo_doc = "NDB".to_string();
+        v.cantidad = 0.0;
+        derivar_campos(&mut v);
+        assert_eq!(v.tipo_operacion, "nota_debito");
+    }
+
+    #[test]
+    fn f01_es_venta() {
+        let mut v = crate::models::Venta::nuevo("test.csv", "2026-11");
+        v.tpo_doc = "F01".to_string();
+        v.cantidad = 10.0;
+        derivar_campos(&mut v);
+        assert_eq!(v.tipo_operacion, "venta");
+    }
+
+    #[test]
+    fn bdi_es_venta() {
+        let mut v = crate::models::Venta::nuevo("test.csv", "2026-11");
+        v.tpo_doc = "BDI".to_string();
+        v.cantidad = 5.0;
+        derivar_campos(&mut v);
+        assert_eq!(v.tipo_operacion, "venta");
+    }
 }
