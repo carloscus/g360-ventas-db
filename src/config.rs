@@ -68,7 +68,8 @@ pub const MONTHS_BACK: u32 = 12;
 pub const SLEEP_BETWEEN_MONTHS: u64 = 3;
 
 /// Fecha mínima disponible en el intranet (cuando comenzaron los registros)
-pub const MIN_AVAILABLE_DATE: chrono::NaiveDate = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+pub const MIN_AVAILABLE_DATE: chrono::NaiveDate =
+    chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupabaseConfig {
@@ -154,9 +155,15 @@ pub struct AppConfig {
     pub capture_times: Vec<String>,
 }
 
-fn default_app_retention() -> u32 { 3 }
-fn default_supabase_retention() -> u32 { 4 }
-fn default_true() -> bool { true }
+fn default_app_retention() -> u32 {
+    3
+}
+fn default_supabase_retention() -> u32 {
+    4
+}
+fn default_true() -> bool {
+    true
+}
 fn default_capture_times() -> Vec<String> {
     vec!["12:00".to_string(), "20:00".to_string()]
 }
@@ -195,13 +202,17 @@ impl AppConfig {
 /// Credenciales efectivas del intranet: primero .env, si no, config.json.
 pub fn effective_intranet_user() -> String {
     let env = std::env::var("G360_INTRANET_USER").unwrap_or_default();
-    if !env.is_empty() { return env; }
+    if !env.is_empty() {
+        return env;
+    }
     load_config().intranet.user
 }
 
 pub fn effective_intranet_pass() -> String {
     let env = std::env::var("G360_INTRANET_PASS").unwrap_or_default();
-    if !env.is_empty() { return env; }
+    if !env.is_empty() {
+        return env;
+    }
     load_config().intranet.pass
 }
 
@@ -222,6 +233,10 @@ pub fn db_path() -> PathBuf {
 
 pub fn logs_dir() -> PathBuf {
     data_dir().join("logs")
+}
+
+pub fn export_dir() -> PathBuf {
+    data_dir().join("export")
 }
 
 pub fn config_file_path() -> PathBuf {
@@ -257,7 +272,11 @@ pub fn save_config(cfg: &AppConfig) -> anyhow::Result<()> {
     let audit_path = logs_dir().join("audit.log");
     let _ = std::fs::create_dir_all(audit_path.parent().unwrap());
     let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
-    let generado = if cfg.generado_por.is_empty() { "sistema" } else { &cfg.generado_por };
+    let generado = if cfg.generado_por.is_empty() {
+        "sistema"
+    } else {
+        &cfg.generado_por
+    };
     let _ = std::fs::OpenOptions::new().create(true).append(true).open(&audit_path)
         .and_then(|mut f| writeln!(f, "[{timestamp}] config saved by {generado} — allowed_lines={}, retention={}y, supabase={}",
             cfg.allowed_lines.len(), cfg.supabase_retention_years, cfg.supabase.is_configured()));
@@ -276,9 +295,12 @@ pub fn get_supabase_key() -> String {
 
 pub fn default_allowed_lines() -> Vec<String> {
     vec![
-        "01","02","09","11","14","72","73","75","76","77","78","79","81","85","99",
-        "MA","CA","AD","CB","CC","CD","CE","CF","CG",
-    ].into_iter().map(String::from).collect()
+        "01", "02", "09", "11", "14", "72", "73", "75", "76", "77", "78", "79", "81", "85", "99",
+        "MA", "CA", "AD", "CB", "CC", "CD", "CE", "CF", "CG",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
 }
 
 pub fn effective_allowed_lines() -> Vec<String> {

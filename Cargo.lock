@@ -872,6 +872,7 @@ dependencies = [
  "mockall",
  "rand 0.8.7",
  "reqwest",
+ "rust_xlsxwriter",
  "serde",
  "serde_json",
  "sha2",
@@ -2316,6 +2317,16 @@ dependencies = [
  "spki",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "rust_xlsxwriter"
+version = "0.74.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a93932326025e1aa7029744f7782284c2fe990589f58c9e0265183a249193cba"
+dependencies = [
+ "regex",
+ "zip",
 ]
 
 [[package]]

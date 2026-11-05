@@ -743,3 +743,288 @@ pub async fn analyze_db(pool: &SqlitePool) -> Result<()> {
     info!("Database analyzed and optimized");
     Ok(())
 }
+
+// ─── Funciones para Tauri UI ─────────────────────────────────────────────────
+
+/// Genera reporte XLSX consolidado con totales por mes para análisis/auditoría.
+pub async fn export_monitor_xlsx(pool: &SqlitePool) -> Result<String> {
+    use rust_xlsxwriter::{Workbook, Format};
+
+    let rows = monthly_monitor(pool).await?;
+
+    let mut wb = Workbook::new();
+
+    // Formatos
+    let header_fmt = Format::new().set_bold().set_background_color("#4472C4").set_font_color("#FFFFFF");
+    let money_fmt = Format::new().set_num_format("#,##0.00");
+    let int_fmt = Format::new().set_num_format("#,##0");
+    let date_fmt = Format::new().set_num_format("yyyy-mm-dd");
+
+    // Hoja 1: Resumen mensual
+    let ws = wb.add_worksheet().set_name("Resumen Mensual")?;
+    let headers = ["Mes", "Filas", "Total S/", "Total US$", "Clientes", "SKU", "Fecha Inicio", "Fecha Fin"];
+    for (i, h) in headers.iter().enumerate() {
+        ws.write_string(0, i as u16, h.to_string())?;
+    }
+    for (i, _) in headers.iter().enumerate() {
+        ws.set_column_width(i as u16, 14.0)?;
+    }
+
+    // Aplicar formato header
+    for col in 0..headers.len() {
+        ws.write_string_with_format(0, col as u16, headers[col].to_string(), &header_fmt)?;
+    }
+
+    for (idx, row) in rows.iter().enumerate() {
+        let r = (idx + 1) as u32;
+        ws.write_string(r, 0, row.mes_ref.clone())?;
+        ws.write_number_with_format(r, 1, row.filas as f64, &int_fmt)?;
+        ws.write_number_with_format(r, 2, row.total_soles, &money_fmt)?;
+        ws.write_number_with_format(r, 3, row.total_dolares, &money_fmt)?;
+        ws.write_number_with_format(r, 4, row.clientes as f64, &int_fmt)?;
+        ws.write_number_with_format(r, 5, row.skus as f64, &int_fmt)?;
+        ws.write_string_with_format(r, 6, row.fecha_inicio.clone(), &date_fmt)?;
+        ws.write_string_with_format(r, 7, row.fecha_fin.clone(), &date_fmt)?;
+    }
+
+    // Hoja 2: Totales generales
+    let ws2 = wb.add_worksheet().set_name("Totales")?;
+    let total_filas: i64 = rows.iter().map(|r| r.filas).sum();
+    let total_soles: f64 = rows.iter().map(|r| r.total_soles).sum();
+    let total_dolares: f64 = rows.iter().map(|r| r.total_dolares).sum();
+    let total_meses = rows.len();
+
+    ws2.write_string_with_format(0, 0, "Concepto".to_string(), &header_fmt)?;
+    ws2.write_string_with_format(0, 1, "Valor".to_string(), &header_fmt)?;
+    ws2.write_string_with_format(1, 0, "Total meses".to_string(), &int_fmt)?;
+    ws2.write_number(1, 1, total_meses as f64)?;
+    ws2.write_string_with_format(2, 0, "Total filas".to_string(), &int_fmt)?;
+    ws2.write_number_with_format(2, 1, total_filas as f64, &int_fmt)?;
+    ws2.write_string_with_format(3, 0, "Total S/".to_string(), &money_fmt)?;
+    ws2.write_number_with_format(3, 1, total_soles, &money_fmt)?;
+    ws2.write_string_with_format(4, 0, "Total US$".to_string(), &money_fmt)?;
+    ws2.write_number_with_format(4, 1, total_dolares, &money_fmt)?;
+    ws2.set_column_width(0, 20.0)?;
+    ws2.set_column_width(1, 18.0)?;
+
+    // Guardar
+    let export_dir = crate::config::export_dir();
+    std::fs::create_dir_all(&export_dir)?;
+    let filename = format!("reporte_ventas_{}.xlsx", chrono::Utc::now().format("%Y%m%d_%H%M%S"));
+    let path = export_dir.join(&filename);
+    wb.save(&path).map_err(|e| anyhow::anyhow!("Error guardando XLSX: {}", e))?;
+
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// Datos del monitor mensual para el reporte.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MonthlyMonitorRow {
+    pub mes_ref: String,
+    pub filas: i64,
+    pub total_soles: f64,
+    pub total_dolares: f64,
+    pub clientes: i64,
+    pub skus: i64,
+    pub fecha_inicio: String,
+    pub fecha_fin: String,
+}
+
+/// Retorna datos del monitor mensual (totales por mes).
+pub async fn monthly_monitor(pool: &SqlitePool) -> Result<Vec<MonthlyMonitorRow>> {
+    let rows = sqlx::query_as::<_, (String, i64, f64, f64, i64, i64, String, String)>(r#"
+        SELECT
+            mes_ref,
+            COUNT(*) as filas,
+            ROUND(SUM(soles), 2) as total_soles,
+            ROUND(COALESCE(SUM(dolares), 0), 2) as total_dolares,
+            COUNT(DISTINCT id_cliente) as clientes,
+            COUNT(DISTINCT id_articulo) as skus,
+            MIN(fecha_orig) as fecha_inicio,
+            MAX(fecha_orig) as fecha_fin
+        FROM ventas
+        WHERE mes_ref IS NOT NULL AND mes_ref != ''
+        GROUP BY mes_ref
+        ORDER BY mes_ref
+    "#).fetch_all(pool).await?;
+
+    Ok(rows.into_iter().map(|r| MonthlyMonitorRow {
+        mes_ref: r.0, filas: r.1, total_soles: r.2, total_dolares: r.3,
+        clientes: r.4, skus: r.5, fecha_inicio: r.6, fecha_fin: r.7,
+    }).collect())
+}
+
+/// Exporta NC/NDB a CSV para auditoría.
+pub async fn export_nc_ndb(pool: &SqlitePool, desde: &str, hasta: &str) -> Result<Vec<String>> {
+    let export_dir = crate::config::export_dir();
+    std::fs::create_dir_all(&export_dir)?;
+
+    let rows = sqlx::query_as::<_, (String, String, String, String, String, f64, f64, String)>(r#"
+        SELECT fecha_orig, tpo_doc, serie_doc, nro_doc, id_cliente,
+               cantidad, soles, tipo_operacion
+        FROM ventas
+        WHERE tipo_operacion IN ('devolucion', 'ajuste_valor')
+          AND fecha_orig >= ? AND fecha_orig <= ?
+        ORDER BY fecha_orig
+    "#).bind(desde).bind(hasta).fetch_all(pool).await?;
+
+    let filename = format!("nc_ndb_{}_{}.csv", desde, hasta);
+    let path = export_dir.join(&filename);
+    let mut wtr = csv::Writer::from_path(&path)?;
+    wtr.write_record(["fecha_orig", "tpo_doc", "serie_doc", "nro_doc", "id_cliente", "cantidad", "soles", "tipo_operacion"])?;
+    for r in rows {
+        wtr.write_record([&r.0, &r.1, &r.2, &r.3, &r.4, &r.5.to_string(), &r.6.to_string(), &r.7])?;
+    }
+    wtr.flush()?;
+    Ok(vec![path.to_string_lossy().to_string()])
+}
+
+/// Backup de la BD a timestamp.
+pub async fn backup_db() -> Result<String> {
+    let db_path = crate::config::db_path();
+    let backup_dir = crate::config::data_dir().join("backups");
+    std::fs::create_dir_all(&backup_dir)?;
+    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let backup_path = backup_dir.join(format!("historial_{}.db", timestamp));
+    std::fs::copy(&db_path, &backup_path)?;
+    info!("Backup creado: {}", backup_path.display());
+    Ok(backup_path.to_string_lossy().to_string())
+}
+
+/// Exporta la BD completa a una ruta específica.
+pub async fn export_full_db(target: &std::path::Path) -> Result<String> {
+    let db_path = crate::config::db_path();
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(&db_path, target)?;
+    info!("BD exportada a: {}", target.display());
+    Ok(target.to_string_lossy().to_string())
+}
+
+/// Vacuum de la BD.
+pub async fn vacuum_db(pool: &SqlitePool) -> Result<()> {
+    sqlx::query("VACUUM").execute(pool).await?;
+    info!("VACUUM completado");
+    Ok(())
+}
+
+/// Verifica integridad de datos.
+pub async fn verify_integrity(pool: &SqlitePool) -> Result<Vec<String>> {
+    let mut issues = Vec::new();
+
+    // Verificar fechas futuras
+    let future: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE fecha_orig > date('now')")
+        .fetch_one(pool).await.unwrap_or(0);
+    if future > 0 {
+        issues.push(format!("{} filas con fecha futura", future));
+    }
+
+    // Verificar montos negativos inesperados
+    let neg: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE soles < 0 AND tipo_operacion = 'venta'")
+        .fetch_one(pool).await.unwrap_or(0);
+    if neg > 0 {
+        issues.push(format!("{} ventas con monto negativo", neg));
+    }
+
+    // Verificar IDs vacíos
+    let empty_ids: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE id_cliente = '' OR id_articulo = ''")
+        .fetch_one(pool).await.unwrap_or(0);
+    if empty_ids > 0 {
+        issues.push(format!("{} filas con ID vacío", empty_ids));
+    }
+
+    Ok(issues)
+}
+
+/// Reporte de calidad de datos.
+pub async fn data_quality_report(pool: &SqlitePool) -> Result<serde_json::Value> {
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas").fetch_one(pool).await.unwrap_or(0);
+    let empty_cliente: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE id_cliente = ''").fetch_one(pool).await.unwrap_or(0);
+    let empty_sku: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE id_articulo = ''").fetch_one(pool).await.unwrap_or(0);
+    let future_dates: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE fecha_orig > date('now')").fetch_one(pool).await.unwrap_or(0);
+
+    let mut critical = Vec::new();
+    let mut warn = Vec::new();
+    let mut info_items = Vec::new();
+
+    if empty_cliente > 0 { critical.push(format!("{} filas sin id_cliente", empty_cliente)); }
+    if empty_sku > 0 { critical.push(format!("{} filas sin id_articulo", empty_sku)); }
+    if future_dates > 0 { warn.push(format!("{} filas con fecha futura", future_dates)); }
+    info_items.push(format!("Total filas: {}", total));
+
+    Ok(serde_json::json!({
+        "total": total,
+        "critical": critical,
+        "warn": warn,
+        "info": info_items
+    }))
+}
+
+/// Asegura que las tablas de auditoría existan.
+pub async fn ensure_audit_tables(pool: &SqlitePool) -> Result<()> {
+    sqlx::query(r#"
+        CREATE TABLE IF NOT EXISTS sync_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT NOT NULL,
+            filas_subidas INTEGER DEFAULT 0,
+            meses_synced INTEGER DEFAULT 0,
+            estado TEXT DEFAULT 'ok',
+            mensaje TEXT
+        )
+    "#).execute(pool).await?;
+
+    sqlx::query(r#"
+        CREATE TABLE IF NOT EXISTS checksum_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mes_ref TEXT NOT NULL,
+            checksum TEXT NOT NULL,
+            filas INTEGER NOT NULL,
+            calculado_en TEXT NOT NULL
+        )
+    "#).execute(pool).await?;
+
+    Ok(())
+}
+
+/// Obtiene historial de sync.
+pub async fn get_sync_history(pool: &SqlitePool, limit: i64) -> Result<Vec<serde_json::Value>> {
+    let rows = sqlx::query_as::<_, (String, i64, i64, String, Option<String>)>(r#"
+        SELECT fecha, filas_subidas, meses_synced, estado, mensaje
+        FROM sync_history ORDER BY id DESC LIMIT ?
+    "#).bind(limit).fetch_all(pool).await?;
+
+    Ok(rows.into_iter().map(|r| serde_json::json!({
+        "fecha": r.0, "filas_subidas": r.1, "meses_synced": r.2,
+        "estado": r.3, "mensaje": r.4
+    })).collect())
+}
+
+/// Obtiene historial de checksums.
+pub async fn get_checksum_history(pool: &SqlitePool) -> Result<Vec<serde_json::Value>> {
+    let rows = sqlx::query_as::<_, (String, String, i64, String)>(r#"
+        SELECT mes_ref, checksum, filas, calculado_en
+        FROM checksum_history ORDER BY id DESC LIMIT 50
+    "#).fetch_all(pool).await?;
+
+    Ok(rows.into_iter().map(|r| serde_json::json!({
+        "mes_ref": r.0, "checksum": r.1, "filas": r.2, "calculado_en": r.3
+    })).collect())
+}
+
+/// Métricas locales para el dashboard.
+pub async fn local_metrics(pool: &SqlitePool) -> Result<serde_json::Value> {
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas").fetch_one(pool).await.unwrap_or(0);
+    let meses: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT mes_ref) FROM ventas").fetch_one(pool).await.unwrap_or(0);
+    let clientes: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT id_cliente) FROM ventas").fetch_one(pool).await.unwrap_or(0);
+    let skus: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT id_articulo) FROM ventas").fetch_one(pool).await.unwrap_or(0);
+    let total_soles: f64 = sqlx::query_scalar("SELECT ROUND(SUM(soles), 2) FROM ventas").fetch_one(pool).await.unwrap_or(0.0);
+
+    Ok(serde_json::json!({
+        "total_records": total,
+        "total_months": meses,
+        "total_clients": clientes,
+        "total_skus": skus,
+        "total_sales": total_soles
+    }))
+}
