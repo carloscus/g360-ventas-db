@@ -17,7 +17,7 @@ async fn main() -> anyhow::Result<()> {
     println!("  de ellos NC/ND: {}", nc_pending);
 
     // Comparar con parse sin cross (solo en-archivo)
-    let ventas_sin = g360_db_ventas::processor::parser::parse_export_csv(&csv)?;
+    let (ventas_sin, _) = g360_db_ventas::processor::parser::parse_export_csv(&csv)?;
     println!("parse_export_csv (sin cross): {} regs", ventas_sin.len());
 
     println!("delta cross-mes: +{} regs", ventas.len() as i64 - ventas_sin.len() as i64);

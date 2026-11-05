@@ -33,9 +33,10 @@ async fn venta(pool: &SqlitePool, mes_ref: &str, linea: &str, sku: &str, cant: f
     sqlx::query(
         r#"INSERT INTO ventas
            (id_articulo, original_sku, nom_articulo, id_linea, nom_linea,
-            id_cliente, nom_cliente, tpo_doc, cantidad, soles,
-            anho, mes, fecha_orig, mes_ref, tipo_operacion)
-           VALUES (?,?,?,?,?, 'C1','CLIENTE','F01',?,?, 2025,1,?,?, 'venta')"#,
+            id_cliente, nom_cliente, id_vendedor, nom_vendedor, tpo_doc, serie_doc, nro_doc,
+            cantidad, soles, anho, mes, fecha_orig, mes_ref, tipo_operacion, folio_unico)
+           VALUES (?,?,?,?,?, 'C1','CLIENTE','V1','VENDEDOR','F01','001','0001',?,?,
+                   2025,1,?,?,'venta','F01/001/0001')"#,
     )
     .bind(sku)
     .bind(sku)

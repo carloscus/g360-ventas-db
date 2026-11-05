@@ -21,15 +21,23 @@ fn test_xls_to_csv_humo() {
         "2026,01,00012345,12345678901,CLIENTE DOS,0102,LINEA B,SKU2,ARTICULO DOS,NCR,F02,900,F01/201-100,03/01/2026,Soles,-2,-2,-100.00,0.00\n",
     )).unwrap();
 
-    let ventas = g360_db_ventas::processor::parser::parse_export_csv(&csv)
+    let (ventas, _stats) = g360_db_ventas::processor::parser::parse_export_csv(&csv)
         .map_err(|e| eprintln!("parse: {e}"))
         .expect("parse");
     assert_eq!(ventas.len(), 3, "deben parsearse las 3 filas");
 
     let v1 = &ventas[0];
-    assert!((v1.soles - 1000.50).abs() < 0.01, "miles latino: soles={}", v1.soles);
+    assert!(
+        (v1.soles - 1000.50).abs() < 0.01,
+        "miles latino: soles={}",
+        v1.soles
+    );
     let v2 = &ventas[1];
-    assert!((v2.cantidad - 25.056).abs() < 0.0001, "cantidad decimal: {}", v2.cantidad);
+    assert!(
+        (v2.cantidad - 25.056).abs() < 0.0001,
+        "cantidad decimal: {}",
+        v2.cantidad
+    );
     let nc = &ventas[2];
     assert_eq!(nc.tipo_operacion, "devolucion");
     assert_eq!(nc.factura_ref_serie, "201");
@@ -42,11 +50,16 @@ fn test_xls_to_csv_humo() {
 fn test_merge_csvs_puro() {
     let tmp = std::env::temp_dir().join("test_merge_g360");
     std::fs::create_dir_all(&tmp).unwrap();
-    let a = tmp.join("a.csv"); let b = tmp.join("b.csv"); let m = tmp.join("m.csv");
+    let a = tmp.join("a.csv");
+    let b = tmp.join("b.csv");
+    let m = tmp.join("m.csv");
     std::fs::write(&a, "H1,H2\n1,2\n3,4\n").unwrap();
     std::fs::write(&b, "H1,H2\n5,6\n").unwrap();
     let n = g360_db_ventas::capture::merge_csvs(&[a, b], &m).unwrap();
-    assert_eq!(n, 3, "esperado 3 filas data (header solo una vez, sin contar header)");
+    assert_eq!(
+        n, 3,
+        "esperado 3 filas data (header solo una vez, sin contar header)"
+    );
     let content = std::fs::read_to_string(&m).unwrap();
     assert_eq!(content.lines().count(), 4); // 1 header + 3 data
     assert_eq!(content.lines().next().unwrap(), "H1,H2");
@@ -68,7 +81,18 @@ fn test_parser_descarta_fecha_invalida() {
     )
     .unwrap();
 
-    let error = g360_db_ventas::processor::parser::parse_export_csv(&csv)
-        .expect_err("una fecha invalida debe bloquear el archivo completo");
-    assert!(error.to_string().contains("fecha_orig invalida"));
+    // NUEVO comportamiento: el parser NO bloquea el archivo entero.
+    // Cuenta las filas inválidas en QualityStats y devuelve las válidas.
+    let (rows, stats) =
+        g360_db_ventas::processor::parser::parse_export_csv(&csv).expect("parse debe completarse");
+    assert_eq!(
+        rows.len(),
+        1,
+        "solo 1 fila valida (la otra tiene fecha 32/01)"
+    );
+    assert_eq!(
+        stats.invalid_dates, 1,
+        "la fila con fecha 32/01 se cuenta como inválida"
+    );
+    assert_eq!(stats.total_rows, 2, "total leído = 2 filas");
 }

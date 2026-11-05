@@ -234,6 +234,9 @@ details#rangeBox[open] summary:before{content:'▾ '}
 <div class="info-item"><div class="info-v" id="k5">—</div><div class="info-l">últ. captura</div></div>
 <div class="info-item"><div class="info-v" id="lmVerif">—</div><div class="info-l">últ. verificación</div></div>
 </div>
+<div class="info" style="margin-top:2px;grid-template-columns:1fr">
+<div class="info-item"><div class="info-v" id="contractVer">—</div><div class="info-l">versión contrato</div></div>
+</div>
 <div class="ctrl">
 <button class="btn btn-p" id="updateNow" title="Captura lo nuevo de la intranet y publica en Supabase">⟳ Actualizar ahora</button>
 <div class="config-help" style="margin:3px 0 0">Trae lo nuevo desde la intranet y publica la ventana válida en Supabase (incremental por día).</div>
@@ -541,6 +544,15 @@ async function load(){
     document.getElementById('widgetAlertText').textContent='Faltan credenciales del intranet — abre ⚙ Configuración';
     wA.onclick=()=>document.getElementById('cfgBtn').click();
   }
+  // Verificar versión de contrato
+  try{
+    const cm=await invoke('get_contract_metadata');
+    if(cm.contracto_version !== cm.contracto_esperado){
+      wA.style.display='flex';wA.className='widget-alert err';
+      document.getElementById('widgetAlertText').textContent=
+        `Versión contrato: DB v${cm.contracto_version}, esperado v${cm.contracto_esperado}. Solicite cartucho actualizado.`;
+    }
+  }catch(e){}
    updateDbProgress(h.status);
    // NO resetear badges si hay captura activa (lo maneja updateTaskFlowPhase)
    if(lastCaptureState==='idle'){
@@ -584,6 +596,20 @@ async function load(){
      document.getElementById('lmNcTotal').textContent=fn(lm.ncndb_total);
      document.getElementById('lmNcLinked').textContent=fn(lm.ncndb_linked);
      document.getElementById('lmNcOrf').textContent=fn(lm.ncndb_orphans);
+      // Versi�n de contrato
+      try{
+        const cm=await invoke('get_contract_metadata');
+        const cvEl=document.getElementById('contractVer');
+        if(cvEl){
+          if(cm.contracto_version===cm.contracto_esperado){
+            cvEl.textContent='? v'+cm.contracto_version;
+            cvEl.style.color='#86efac';
+          }else{
+            cvEl.textContent='? v'+cm.contracto_version+' (esperado v'+cm.contracto_esperado+')';
+            cvEl.style.color='#fbbf24';
+          }
+        }
+      }catch(e){}
    }catch(e){}
     
    // Estado vacío (ya no hay tabla de meses)

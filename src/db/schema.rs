@@ -1,3 +1,44 @@
+/// Schema de la base de datos canonica para g360-ventas-db.
+/// Diseñado para soportar historial desde 2010 hasta hoy,
+/// con versionado de contrato, esquema y normalización.
+///
+/// Conceptos clave:
+/// - CONTRACTO_VERSION: formato de tabla `ventas` y tablas auditables.
+///   Si un consumidor (cliente offline) lee una versión distinta, bloquea.
+/// - DIM_SCHEMA_VERSION: semántica de las tablas `dim_*`. Usa `PRAGMA user_version`.
+/// - NORMALIZACION_VERSION: reglas de saneamiento aplicadas. No bloquea consumidores.
+///
+/// Nota: El código actual vive en schema.rs para centralizarlo y evitar drifts
+/// entre versiones documentadas y reales.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Versiones de contrato
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Versión del esquema/semántica de las tablas `dim_*`. Se guarda en
+/// `PRAGMA user_version` para forzar UN rebuild en bases existentes cuando
+/// cambia la semántica (no solo columnas).
+///   v1 -> inicial
+///   v2 -> 2026-09-15: atributos por "fila más reciente"
+///   v3 -> 2026-09-15: agrega fact_venta_mes (comparativos YoY/MoM instantáneos).
+pub const DIM_SCHEMA_VERSION: i64 = 3;
+
+/// Versión del contrato de datos entre productor (g360-ventas-db) y consumidores.
+/// Se almacena en `g360_meta.contracto_version`.
+/// Los consumidores leen esta tabla (NO PRAGMA user_version) para decidir si bloquean.
+/// Bump cuando: nueva columna en `ventas`, nueva tabla del contrato, cambio
+/// de semántica de columna existente. No bump: índices, vistas, tablas locales.
+pub const CONTRACTO_VERSION: i64 = 4;
+
+/// Versión de las reglas de saneamiento/normalización aplicadas a los datos.
+/// Se almacena en `g360_meta.normalizacion_version`.
+/// Bump cuando cambia una regla de normalización; el consumidor NO bloquea.
+pub const NORMALIZACION_VERSION: i64 = 1;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tabla principal: ventas (normalizada, con CHECKs para historial extensivo)
+// ─────────────────────────────────────────────────────────────────────────────
+
 pub const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS ventas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     id_articulo TEXT NOT NULL, original_sku TEXT, nom_articulo TEXT,
@@ -15,10 +56,10 @@ pub const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS ventas (
     fecha_ref TEXT, fecha_venc TEXT,
     cod_sucursal TEXT, nom_sucursal TEXT,
     departamento TEXT, provincia TEXT,     distrito TEXT,
-    id_vendedor TEXT, nom_vendedor TEXT,
+    id_vendedor TEXT NOT NULL, nom_vendedor TEXT,
     id_pedido TEXT, ord_compra TEXT,
     file_source TEXT, mes_ref TEXT NOT NULL,
-    capturado_en TEXT DEFAULT (datetime('now')),
+    capturado_en TEXT DEFAULT '',
     tipo_operacion TEXT DEFAULT 'venta',
     factura_ref_serie TEXT,
     factura_ref_nro TEXT,
@@ -32,7 +73,10 @@ pub const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS ventas (
     id_guia TEXT
 )";
 
+// ─────────────────────────────────────────────────────────────────────────────
 // Tablas de auditoría e integridad
+// ─────────────────────────────────────────────────────────────────────────────
+
 pub const CREATE_AUDIT_TABLES_SQL: &str = "
 -- Log de sincronizaciones
 CREATE TABLE IF NOT EXISTS sync_log (
@@ -44,8 +88,19 @@ CREATE TABLE IF NOT EXISTS sync_log (
     filas_limpiadas INTEGER DEFAULT 0,
     duracion_segundos REAL,
     error_message TEXT,
-    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    started_at TEXT NOT NULL DEFAULT '',
     finished_at TEXT
+);
+
+-- Metadata del contrato: versiones y estado.
+-- Consumidores leen desde aquí (NO de PRAGMA user_version).
+-- key='contracto_version' -> valor = CONTRACTO_VERSION (leido por consumidores)
+-- key='dim_schema_version' -> valor = DIM_SCHEMA_VERSION (leido por init_pool)
+-- key='normalizacion_version' -> valor = NORMALIZACION_VERSION
+CREATE TABLE IF NOT EXISTS g360_meta (
+    key TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL,
+    actualizado_en TEXT NOT NULL DEFAULT ''
 );
 
 -- Checksums mensuales para detectar cambios
@@ -55,13 +110,25 @@ CREATE TABLE IF NOT EXISTS mes_checksums (
     total_filas INTEGER NOT NULL,
     total_soles REAL NOT NULL,
     total_cantidad REAL,
-    calculado_en TEXT NOT NULL DEFAULT (datetime('now')),
+    calculado_en TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (mes_ref)
 );
 
+-- Checksums diarios para ETL incremental por día (publish_incremental).
+-- Key: COUNT(*) || ':' || ROUND(COALESCE(SUM(soles), 0), 2).
+-- publish_incremental compara este valor con el último publicado en etl_state.
+-- NOTA: calculado_en se llena desde calculate_day_checksums() con timestamp
+-- pasado como parametro, porque DEFAULT '' no es determinista
+-- en SQLite in-memory y causa error de no-determinismo en el indice PRIMARY KEY.
+CREATE TABLE IF NOT EXISTS day_checksums (
+    dia TEXT NOT NULL PRIMARY KEY,
+    filas INTEGER NOT NULL,
+    soles REAL NOT NULL,
+    checksum TEXT NOT NULL,
+    calculado_en TEXT
+);
+
 -- Estado de sincronizacion por mes con Supabase (reconciliacion resumible).
--- Reemplaza el full-window purge: solo los meses con checksum distinto se
--- purgan + re-suben, y el estado persiste entre corridas (checkpoint).
 CREATE TABLE IF NOT EXISTS sync_months (
     mes_ref TEXT PRIMARY KEY,
     local_checksum TEXT NOT NULL,
@@ -70,7 +137,15 @@ CREATE TABLE IF NOT EXISTS sync_months (
     filas INTEGER DEFAULT 0,
     intentos INTEGER DEFAULT 0,
     ultimo_error TEXT,
-    actualizado_en TEXT NOT NULL DEFAULT (datetime('now'))
+    actualizado_en TEXT NOT NULL DEFAULT ''
+);
+
+-- Estado del ETL incremental hacia Supabase (por día).
+-- Keys: 'ultimo_dia_publicado' = '2026-11-03'
+CREATE TABLE IF NOT EXISTS etl_state (
+    key TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT ''
 );
 
 -- Auditoría de cambios
@@ -82,95 +157,80 @@ CREATE TABLE IF NOT EXISTS audit_log (
     id_articulo TEXT,
     filas_afectadas INTEGER DEFAULT 1,
     detalle TEXT,
-    creado_en TEXT NOT NULL DEFAULT (datetime('now'))
+    creado_en TEXT NOT NULL DEFAULT ''
 );
-
--- Dimensión RUC: agrupa clientes por RUC para evitar duplicados
--- Un RUC puede tener múltiples id_cliente históricos (renombres/fusiones ERP)
--- Se usa el nom_cliente más reciente como versión canonical
-CREATE TABLE IF NOT EXISTS dim_ruc (
-    ruc TEXT PRIMARY KEY,
-    nom_cliente TEXT NOT NULL,
-    departamento TEXT,
-    provincia TEXT,
-    distrito TEXT,
-    n_clientes_unicos INTEGER DEFAULT 0,
-    actualizado_en TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_dim_ruc_nombre ON dim_ruc(nom_cliente);
 ";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Índices (optimizados para queries frecuentes)
+// ─────────────────────────────────────────────────────────────────────────────
+
 pub const CREATE_INDEXES_SQL: &[&str] = &[
-    // ── Limpieza de índices REDUNDANTES (idempotente, una vez) ──────────
-    // Cada índice extra encarece cada INSERT del capture y agranda la BD.
-    // - idx_venta_linea_exact  == idx_venta_linea (duplicado exacto)
-    // - idx_retorno_ref        == idx_venta_fact_ref (duplicado exacto)
-    // - idx_venta_doc_cliente  = prefijo de idx_venta_doc_cliente_id
-    // - idx_venta_fecha        = prefijo de idx_venta_fecha_soles
-    // - idx_venta_linea_sufijo = substr(id_linea,-2), compat de formato viejo (ya normalizado)
-    "DROP INDEX IF EXISTS idx_venta_linea_exact;",
-    "DROP INDEX IF EXISTS idx_retorno_ref;",
-    "DROP INDEX IF EXISTS idx_venta_doc_cliente;",
-    "DROP INDEX IF EXISTS idx_venta_fecha;",
-    "DROP INDEX IF EXISTS idx_venta_linea_sufijo;",
-    // ── Índices vigentes ────────────────────────────────────────────────
+    // Index para busquedas directas por mes_ref (rango 5 años)
     "CREATE INDEX IF NOT EXISTS idx_venta_mes ON ventas(mes_ref);",
+    // Index para busquedas directas por cliente
     "CREATE INDEX IF NOT EXISTS idx_venta_cliente ON ventas(id_cliente);",
+    // Index para busquedas directas por SKU
     "CREATE INDEX IF NOT EXISTS idx_venta_sku ON ventas(id_articulo);",
+    // Index para busquedas directas por original_sku
     "CREATE INDEX IF NOT EXISTS idx_venta_orig_sku ON ventas(original_sku);",
+    // Index para busquedas directas por línea
     "CREATE INDEX IF NOT EXISTS idx_venta_linea ON ventas(id_linea);",
     // Index para dedup y lookups por folio+articulo
     "CREATE INDEX IF NOT EXISTS idx_venta_folio_articulo ON ventas(folio_unico, id_articulo);",
     // Index para verificacion de RUC duplicados (doc_cliente + id_cliente)
     "CREATE INDEX IF NOT EXISTS idx_venta_doc_cliente_id ON ventas(doc_cliente, id_cliente);",
+    // Index para verificacion por documento completo
     "CREATE INDEX IF NOT EXISTS idx_venta_doc ON ventas(tpo_doc, serie_doc, nro_doc);",
-    // Busqueda directa por (serie_doc, nro_doc): sin esto el EXISTS del filtro
-    // NC/ND (with_line_filter) cae en idx_venta_linea y el plan se vuelve
-    // O(n^2) sobre toda la tabla -> stats/upload tardaban horas. Fix 2026-09-15.
+    // Index para busquedas directas por serie+nro (sin cruzar con línea)
     "CREATE INDEX IF NOT EXISTS idx_venta_serie_nro ON ventas(serie_doc, nro_doc);",
+    // Index para busquedas directas por referencia
     "CREATE INDEX IF NOT EXISTS idx_venta_ref ON ventas(referencia);",
+    // Index para busquedas directas por tipo_operacion
     "CREATE INDEX IF NOT EXISTS idx_venta_tipo_op ON ventas(tipo_operacion);",
+    // Index para cruzar factura con NC/ND
     "CREATE INDEX IF NOT EXISTS idx_venta_fact_ref ON ventas(factura_ref_serie, factura_ref_nro);",
+    // Index para consultas monetarias
     "CREATE INDEX IF NOT EXISTS idx_venta_soles ON ventas(soles);",
+    // Index para ordenar por fecha y monto (queries de ultimos 5 anos)
     "CREATE INDEX IF NOT EXISTS idx_venta_fecha_soles ON ventas(fecha_orig, soles);",
+    // Index para devolver por cliente+articulo+fecha
     "CREATE INDEX IF NOT EXISTS idx_retorno_cliente_sku ON ventas(id_cliente, id_articulo, fecha_orig);",
+    // Index para dedup por folio unico
     "CREATE INDEX IF NOT EXISTS idx_retorno_folio ON ventas(folio_unico);",
+    // Index para ordenar por fecha en historicos (queries 2010-2018)
+    // NOTA: sin WHERE date('now') porque no es determinista en SQLite in-memory.
+    // En producción se puede agregar via ALTER TABLE ADD INDEX si es necesario.
+    "CREATE INDEX IF NOT EXISTS idx_venta_fecha_historico ON ventas(fecha_orig);",
 ];
 
-/// Tabla de cache para dashboard: evita full-scan en BD grande (791 MB / 1.1M filas).
-/// Se refresca tras cada insercion/borrado via refresh_stats_cache().
+// ─────────────────────────────────────────────────────────────────────────────
+// Tablas de cache para dashboard (performance)
+// ─────────────────────────────────────────────────────────────────────────────
+
 pub const CREATE_STATS_CACHE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS stats_cache (
     key TEXT PRIMARY KEY,
     value REAL NOT NULL DEFAULT 0,
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_stats_key ON stats_cache(key);
 
--- Agregado mensual precomputado para el dashboard (evita GROUP BY en vivo sobre 2.8M).
--- Mismo filtro de lineas que el uploader -> coherente con Supabase.
+-- Agregado mensual precomputado para el dashboard (evita GROUP BY en vivo sobre millones de filas).
 CREATE TABLE IF NOT EXISTS stats_por_mes (
     mes_ref TEXT PRIMARY KEY,
     filas INTEGER NOT NULL DEFAULT 0,
     ventas_soles REAL NOT NULL DEFAULT 0,
     clientes INTEGER NOT NULL DEFAULT 0,
     cantidad REAL NOT NULL DEFAULT 0,
-    actualizado_en TEXT NOT NULL DEFAULT (datetime('now'))
+    actualizado_en TEXT NOT NULL DEFAULT ''
 );
 ";
 
-/// Versión del esquema/semántica de las tablas `dim_*`. Se guarda en
-/// `PRAGMA user_version` para forzar UN rebuild en bases existentes cuando
-/// cambia la semántica (no solo columnas), evitando reconstruir en cada arranque.
-///   v1 -> inicial
-///   v2 -> 2026-09-15: atributos por "fila más reciente" en vez de MAX()
-///         alfabético (nombres vigentes al renombrar cliente/SKU/línea/vendedor).
-///   v3 -> 2026-09-15: agrega fact_venta_mes (comparativos YoY/MoM instantáneos).
-pub const DIM_SCHEMA_VERSION: i64 = 3;
+// ─────────────────────────────────────────────────────────────────────────────
+// Tablas de dimensiones derivadas de ventas
+// ─────────────────────────────────────────────────────────────────────────────
 
-/// Tablas de dimensiones derivadas de ventas.
-/// Cada tabla se reconstruye con refresh_dim_tables() tras cada dedup/insert.
-/// Son la fuente de verdad para navegación local (clientes, vendedores, documentos, SKUs, lineas).
 pub const CREATE_DIM_TABLES_SQL: &str = "
 -- Clientes unicos (ultima info conocida + KPIs)
 CREATE TABLE IF NOT EXISTS dim_cliente (
@@ -184,7 +244,7 @@ CREATE TABLE IF NOT EXISTS dim_cliente (
     total_soles REAL DEFAULT 0,
     total_dolares REAL DEFAULT 0,
     ultima_compra TEXT,
-    actualizado_en TEXT NOT NULL DEFAULT (datetime('now'))
+    actualizado_en TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_dim_cliente_nombre ON dim_cliente(nom_cliente);
 CREATE INDEX IF NOT EXISTS idx_dim_cliente_ruc ON dim_cliente(doc_cliente);
@@ -197,7 +257,7 @@ CREATE TABLE IF NOT EXISTS dim_vendedor (
     total_soles REAL DEFAULT 0,
     n_clientes INTEGER DEFAULT 0,
     ultima_venta TEXT,
-    actualizado_en TEXT NOT NULL DEFAULT (datetime('now'))
+    actualizado_en TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_dim_vendedor_nombre ON dim_vendedor(nom_vendedor);
 
@@ -219,7 +279,7 @@ CREATE TABLE IF NOT EXISTS dim_articulo (
     total_soles REAL DEFAULT 0,
     precio_promedio REAL DEFAULT 0,
     ultima_venta TEXT,
-    actualizado_en TEXT NOT NULL DEFAULT (datetime('now'))
+    actualizado_en TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_dim_articulo_sku ON dim_articulo(original_sku);
 CREATE INDEX IF NOT EXISTS idx_dim_articulo_nombre ON dim_articulo(nom_articulo);
@@ -239,7 +299,7 @@ CREATE TABLE IF NOT EXISTS dim_documento (
     total_soles REAL DEFAULT 0,
     total_dolares REAL DEFAULT 0,
     moneda TEXT DEFAULT 'Soles',
-    actualizado_en TEXT NOT NULL DEFAULT (datetime('now'))
+    actualizado_en TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_dim_documento_cliente ON dim_documento(id_cliente, fecha_orig);
 CREATE INDEX IF NOT EXISTS idx_dim_documento_vendedor ON dim_documento(id_vendedor, fecha_orig);
@@ -257,23 +317,20 @@ CREATE TABLE IF NOT EXISTS dim_linea (
     n_ventas INTEGER DEFAULT 0,
     total_soles REAL DEFAULT 0,
     n_clientes INTEGER DEFAULT 0,
-    actualizado_en TEXT NOT NULL DEFAULT (datetime('now'))
+    actualizado_en TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_dim_linea_grupo ON dim_linea(id_grupo);
 
 -- Agregado mensual precomputado por linea+SKU (fact table derivada).
--- Existe para que los comparativos por periodo (YoY/MoM) sean INSTANTANEOS:
--- una vista equivalente agregaria los 2.8M de filas en cada consulta (~60s),
--- mientras que esta tabla (decenas de miles de filas) responde en milisegundos.
--- Se reconstruye en refresh_dim_tables junto con las dims.
+-- Existe para que los comparativos por periodo (YoY/MoM) sean INSTANTANEOS.
 CREATE TABLE IF NOT EXISTS fact_venta_mes (
     id_linea TEXT NOT NULL,
     id_articulo TEXT NOT NULL,
     mes_ref TEXT NOT NULL,
-    cantidad REAL DEFAULT 0,      -- unidades vendidas (tipo_operacion='venta')
-    soles REAL DEFAULT 0,         -- monto vendido
-    devuelto REAL DEFAULT 0,      -- unidades devueltas (magnitud positiva)
-    soles_netos REAL DEFAULT 0,   -- monto neto (ventas - devoluciones/ajustes)
+    cantidad REAL DEFAULT 0,
+    soles REAL DEFAULT 0,
+    devuelto REAL DEFAULT 0,
+    soles_netos REAL DEFAULT 0,
     PRIMARY KEY (id_linea, id_articulo, mes_ref)
 );
 CREATE INDEX IF NOT EXISTS idx_fvm_mes ON fact_venta_mes(mes_ref);
@@ -281,13 +338,12 @@ CREATE INDEX IF NOT EXISTS idx_fvm_linea ON fact_venta_mes(id_linea, mes_ref);
 CREATE INDEX IF NOT EXISTS idx_fvm_sku ON fact_venta_mes(id_articulo, mes_ref);
 ";
 
-/// Vistas listas para consumir por CRM / dashboard / plataforma de devoluciones.
-/// Son VIEWS virtuales (no ocupan almacenamiento extra; se calculan al consultar).
+// ─────────────────────────────────────────────────────────────────────────────
+// Vistas listas para consumir por CRM / dashboard
+// ─────────────────────────────────────────────────────────────────────────────
+
 pub const CREATE_VIEWS_SQL: &[&str] = &[
     // ─── Dimensiones ─────────────────────────────────────────────────
-    // Clientes unicos (fuente de verdad: cada cliente con su ultimo nombre conocido).
-    // DROP + CREATE (no IF NOT EXISTS) para que la definicion del codigo siempre
-    // reemplace una vista existente: las vistas son metadatos (recrear es instantaneo).
     r#"
     DROP VIEW IF EXISTS vw_dim_cliente;
     CREATE VIEW vw_dim_cliente AS
@@ -298,7 +354,7 @@ pub const CREATE_VIEWS_SQL: &[&str] = &[
       FROM ventas WHERE id_cliente != ''
     ) WHERE rn = 1
     "#,
-    // Articulos unicos: todas las dimensiones de producto (nombre vigente)
+    // Articulos unicos
     r#"
     DROP VIEW IF EXISTS vw_dim_articulo;
     CREATE VIEW vw_dim_articulo AS
@@ -311,9 +367,7 @@ pub const CREATE_VIEWS_SQL: &[&str] = &[
       FROM ventas WHERE id_articulo != ''
     ) WHERE rn = 1
     "#,
-    // Lineas / categorias del ERP (jerarquia de producto).
-    // Clave estable = id_linea; nombres por fila MAS RECIENTE (si el ERP renombra
-    // una linea sin cambiar el codigo, se muestra el nombre vigente).
+    // Lineas / categorias del ERP
     r#"
     DROP VIEW IF EXISTS vw_dim_linea;
     CREATE VIEW vw_dim_linea AS
@@ -328,9 +382,7 @@ pub const CREATE_VIEWS_SQL: &[&str] = &[
       FROM ventas WHERE id_linea != ''
     ) WHERE rn = 1
     "#,
-
     // ─── Hechos / analisis ───────────────────────────────────────────
-    // Cabecera por documento (una fila por factura/NC/ND — para CRM y conciliacion)
     r#"
     CREATE VIEW IF NOT EXISTS vw_documento AS
     SELECT
@@ -344,7 +396,6 @@ pub const CREATE_VIEWS_SQL: &[&str] = &[
     FROM ventas
     GROUP BY tpo_doc, serie_doc, nro_doc
     "#,
-    // Devoluciones/ajustes por factura origen (plataforma de devoluciones y cantidades verdaderas)
     r#"
     CREATE VIEW IF NOT EXISTS vw_devoluciones AS
     SELECT
@@ -363,7 +414,6 @@ pub const CREATE_VIEWS_SQL: &[&str] = &[
         AND (f.tpo_doc LIKE 'F01%' OR f.tpo_doc = 'F01')
     WHERE (n.tpo_doc LIKE '%NCR%' OR n.tpo_doc LIKE '%NDB%')
     "#,
-    // Ventas netas por articulo x mes: vendido - devuelto = cantidad verdadera (dashboard/inventario)
     r#"
     CREATE VIEW IF NOT EXISTS vw_venta_neta_producto AS
     SELECT
@@ -377,17 +427,54 @@ pub const CREATE_VIEWS_SQL: &[&str] = &[
     FROM ventas v
     GROUP BY v.id_articulo, v.mes_ref
     "#,
-    // Historial por SKU x mes: evolucion de NOMBRE, LINEA y PRECIO UNITARIO.
-    // Clave estable = id_articulo; el nombre/linea de cada mes es el del ULTIMO
-    // movimiento de ese mes. LAG da el mes anterior, los flags cambio_* marcan
-    // renombres/reclasificaciones y variacion_precio_pct el salto de precio.
-    // Patron de consulta: WHERE id_articulo = ? ORDER BY mes_ref
-    //
-    // Convencion de signos: `devolucion` puede venir con cantidad negativa (local)
-    // o positiva (Supabase tiene check cantidad>=0). Se usa ABS() para expresar
-    // `devuelto` como magnitud positiva y `cantidad_neta = vendido - devuelto` es
-    // correcto en AMBOS casos. `ajuste_valor` (descuento) no es movimiento fisico:
-    // solo aporta a soles_netos, no a las cantidades.
+    // ─── Comparativos YoY/MoM ───────────────────────────────────────────
+    r#"
+    DROP VIEW IF EXISTS vw_comparativo_ventas;
+    CREATE VIEW vw_comparativo_ventas AS
+    SELECT
+      p.id_linea, p.id_articulo, p.mes_ref,
+      p.cantidad, p.soles, p.devuelto, p.soles_netos,
+      y.cantidad AS cantidad_anio_ant, y.soles AS soles_anio_ant,
+      CASE WHEN y.cantidad IS NOT NULL AND y.cantidad != 0
+           THEN ROUND((p.cantidad - y.cantidad) * 100.0 / y.cantidad, 2) END AS var_cantidad_pct,
+      CASE WHEN y.soles IS NOT NULL AND y.soles != 0
+           THEN ROUND((p.soles - y.soles) * 100.0 / y.soles, 2) END AS var_soles_pct,
+      m.cantidad AS cantidad_mes_ant, m.soles AS soles_mes_ant,
+      CASE WHEN m.cantidad IS NOT NULL AND m.cantidad != 0
+           THEN ROUND((p.cantidad - m.cantidad) * 100.0 / m.cantidad, 2) END AS var_cantidad_mom_pct,
+      CASE WHEN m.soles IS NOT NULL AND m.soles != 0
+           THEN ROUND((p.soles - m.soles) * 100.0 / m.soles, 2) END AS var_soles_mom_pct
+    FROM fact_venta_mes p
+    LEFT JOIN fact_venta_mes y
+      ON y.id_linea = p.id_linea AND y.id_articulo = p.id_articulo
+     AND y.mes_ref = strftime('%Y-%m', date(p.mes_ref || '-01', '-12 months'))
+    LEFT JOIN fact_venta_mes m
+      ON m.id_linea = p.id_linea AND m.id_articulo = p.id_articulo
+     AND m.mes_ref = strftime('%Y-%m', date(p.mes_ref || '-01', '-1 month'))
+    "#,
+    r#"
+    DROP VIEW IF EXISTS vw_comparativo_linea;
+    CREATE VIEW vw_comparativo_linea AS
+    SELECT
+      id_linea, mes_ref,
+      SUM(cantidad) AS cantidad, SUM(soles) AS soles,
+      SUM(devuelto) AS devuelto, SUM(soles_netos) AS soles_netos,
+      SUM(cantidad_anio_ant) AS cantidad_anio_ant,
+      SUM(soles_anio_ant)    AS soles_anio_ant,
+      SUM(CASE WHEN cantidad_anio_ant IS NOT NULL THEN cantidad ELSE 0 END) AS cantidad_comparable,
+      SUM(CASE WHEN soles_anio_ant    IS NOT NULL THEN soles    ELSE 0 END) AS soles_comparable,
+      CASE WHEN SUM(soles_anio_ant) != 0
+           THEN ROUND((SUM(CASE WHEN soles_anio_ant IS NOT NULL THEN soles ELSE 0 END)
+                       - SUM(soles_anio_ant)) * 100.0 / SUM(soles_anio_ant), 2) END AS var_soles_pct,
+      CASE WHEN SUM(cantidad_anio_ant) != 0
+           THEN ROUND((SUM(CASE WHEN cantidad_anio_ant IS NOT NULL THEN cantidad ELSE 0 END)
+                       - SUM(cantidad_anio_ant)) * 100.0 / SUM(cantidad_anio_ant), 2) END AS var_cantidad_pct,
+      SUM(cantidad_mes_ant) AS cantidad_mes_ant,
+      SUM(soles_mes_ant)    AS soles_mes_ant
+    FROM vw_comparativo_ventas
+    GROUP BY id_linea, mes_ref
+    "#,
+    // ─── Historial por SKU x mes (evolución de precio/nombre/línea) ────
     r#"
     CREATE VIEW IF NOT EXISTS vw_historial_articulo AS
     WITH por_mes AS (
@@ -442,95 +529,7 @@ pub const CREATE_VIEWS_SQL: &[&str] = &[
     JOIN attr_mes a ON a.id_articulo = m.id_articulo AND a.mes_ref = m.mes_ref
     WINDOW w AS (PARTITION BY a.id_articulo ORDER BY m.mes_ref)
     "#,
-    // Comparativo por SKU x linea x mes: cantidad y monto del periodo vs
-    // año anterior (YoY) y mes anterior (MoM), con variacion %. Lee de la tabla
-    // precomputada `fact_venta_mes` para responder en ms (una vista sobre ventas
-    // agregaria 2.8M filas por consulta). El mismo-mes-otro-año se resuelve por
-    // join exacto al mes_ref calculado (LAG no sirve si faltan meses).
-    // Patron: WHERE id_linea=? AND mes_ref=?   |   WHERE id_articulo=?
-    r#"
-    DROP VIEW IF EXISTS vw_comparativo_ventas;
-    CREATE VIEW vw_comparativo_ventas AS
-    SELECT
-      p.id_linea, p.id_articulo, p.mes_ref,
-      p.cantidad, p.soles, p.devuelto, p.soles_netos,
-      y.cantidad AS cantidad_anio_ant, y.soles AS soles_anio_ant,
-      CASE WHEN y.cantidad IS NOT NULL AND y.cantidad != 0
-           THEN ROUND((p.cantidad - y.cantidad) * 100.0 / y.cantidad, 2) END AS var_cantidad_pct,
-      CASE WHEN y.soles IS NOT NULL AND y.soles != 0
-           THEN ROUND((p.soles - y.soles) * 100.0 / y.soles, 2) END AS var_soles_pct,
-      m.cantidad AS cantidad_mes_ant, m.soles AS soles_mes_ant,
-      CASE WHEN m.cantidad IS NOT NULL AND m.cantidad != 0
-           THEN ROUND((p.cantidad - m.cantidad) * 100.0 / m.cantidad, 2) END AS var_cantidad_mom_pct,
-      CASE WHEN m.soles IS NOT NULL AND m.soles != 0
-           THEN ROUND((p.soles - m.soles) * 100.0 / m.soles, 2) END AS var_soles_mom_pct
-    FROM fact_venta_mes p
-    LEFT JOIN fact_venta_mes y
-      ON y.id_linea = p.id_linea AND y.id_articulo = p.id_articulo
-     AND y.mes_ref = strftime('%Y-%m', date(p.mes_ref || '-01', '-12 months'))
-    LEFT JOIN fact_venta_mes m
-      ON m.id_linea = p.id_linea AND m.id_articulo = p.id_articulo
-     AND m.mes_ref = strftime('%Y-%m', date(p.mes_ref || '-01', '-1 month'))
-    "#,
-    // Comparativo por LINEA x mes: agrega vw_comparativo_ventas y recalcula el %
-    // al nivel de linea. Solo suma al comparativo los SKUs que EXISTEN en el mes
-    // de referencia (cantidad_comparable) para que el % sea peras-con-peras y no
-    // se infle por SKUs nuevos.
-    r#"
-    DROP VIEW IF EXISTS vw_comparativo_linea;
-    CREATE VIEW vw_comparativo_linea AS
-    SELECT
-      id_linea, mes_ref,
-      SUM(cantidad) AS cantidad, SUM(soles) AS soles,
-      SUM(devuelto) AS devuelto, SUM(soles_netos) AS soles_netos,
-      SUM(cantidad_anio_ant) AS cantidad_anio_ant,
-      SUM(soles_anio_ant)    AS soles_anio_ant,
-      SUM(CASE WHEN cantidad_anio_ant IS NOT NULL THEN cantidad ELSE 0 END) AS cantidad_comparable,
-      SUM(CASE WHEN soles_anio_ant    IS NOT NULL THEN soles    ELSE 0 END) AS soles_comparable,
-      CASE WHEN SUM(soles_anio_ant) != 0
-           THEN ROUND((SUM(CASE WHEN soles_anio_ant IS NOT NULL THEN soles ELSE 0 END)
-                       - SUM(soles_anio_ant)) * 100.0 / SUM(soles_anio_ant), 2) END AS var_soles_pct,
-      CASE WHEN SUM(cantidad_anio_ant) != 0
-           THEN ROUND((SUM(CASE WHEN cantidad_anio_ant IS NOT NULL THEN cantidad ELSE 0 END)
-                       - SUM(cantidad_anio_ant)) * 100.0 / SUM(cantidad_anio_ant), 2) END AS var_cantidad_pct,
-      SUM(cantidad_mes_ant) AS cantidad_mes_ant,
-      SUM(soles_mes_ant)    AS soles_mes_ant
-    FROM vw_comparativo_ventas
-    GROUP BY id_linea, mes_ref
-    "#,
-    // NC totales (>=99% cantidad vendida) por factura referencia — para precio neto
-    r#"
-    CREATE VIEW IF NOT EXISTS vw_nc_totales AS
-    WITH base AS (
-      SELECT v.id as venta_id, v.serie_doc, v.nro_doc, v.cantidad as cant_venta
-      FROM ventas v WHERE v.tpo_doc LIKE 'F01%'
-    )
-    SELECT b.serie_doc, b.nro_doc,
-           SUM(abs(n.cantidad_fae)) as total_fae,
-           SUM(abs(n.soles)) as total_monto,
-           COUNT(*) as nc_count
-    FROM base b
-    JOIN ventas n ON n.factura_ref_serie = b.serie_doc AND n.factura_ref_nro = b.nro_doc
-      AND n.tipo_operacion = 'ajuste_valor'
-      AND abs(n.cantidad_fae) >= b.cant_venta * 0.99
-    GROUP BY b.serie_doc, b.nro_doc
-    "#,
-    // NC parciales (<99%) — solo informativo, no afecta precio
-    r#"
-    CREATE VIEW IF NOT EXISTS vw_nc_parciales AS
-    SELECT n.factura_ref_serie, n.factura_ref_nro, n.folio_unico as nc_folio,
-           abs(n.cantidad_fae) as cantidad_fae, abs(n.soles) as monto
-    FROM ventas n
-    WHERE n.tipo_operacion = 'ajuste_valor'
-      AND NOT EXISTS (
-        SELECT 1 FROM vw_nc_totales t
-        WHERE t.serie_doc = n.factura_ref_serie AND t.nro_doc = n.factura_ref_nro
-      )
-    "#,
     // ─── Cockpit de ventas (apps de campo) ──────────────────────────────────
-    // Historial de venta por cliente+SKU con precios comparados (LAG).
-    // La cadena LAG corre solo sobre 'venta' (ajuste_valor contaminaría el
-    // precio); NC/ND se exponen via UNION ALL con precio NULL.
     r#"
     CREATE VIEW IF NOT EXISTS vw_historial_venta_cliente AS
     WITH cadena AS (
@@ -554,86 +553,5 @@ pub const CREATE_VIEWS_SQL: &[&str] = &[
            NULL, NULL, NULL, NULL
     FROM ventas
     WHERE tipo_operacion IN ('ajuste_valor', 'devolucion')
-    "#,
-    // Radar de recompra: cadencia por cliente+SKU (fallback a línea si <3 compras).
-    // 'VENCIDO' = dias_silencio > cadencia_efectiva * 1.5
-    r#"
-    CREATE VIEW IF NOT EXISTS vw_radar_recompra AS
-    WITH compras AS (
-      SELECT id_cliente, nom_cliente, id_articulo, nom_articulo,
-             id_linea, nom_linea, fecha_orig, cantidad, precio_unitario,
-             LAG(fecha_orig) OVER (PARTITION BY id_cliente, id_articulo
-                                   ORDER BY fecha_orig) AS fecha_previa
-      FROM ventas
-      WHERE tipo_operacion = 'venta' AND cantidad > 0
-    ),
-    gaps AS (
-      SELECT id_cliente, nom_cliente, id_articulo, nom_articulo,
-             id_linea, nom_linea, fecha_orig, cantidad, precio_unitario,
-             CAST(julianday(fecha_orig) - julianday(fecha_previa) AS INTEGER) AS dias_gap
-      FROM compras
-      WHERE fecha_previa IS NOT NULL
-    ),
-    cadencia_sku AS (
-      SELECT id_cliente, nom_cliente, id_articulo, nom_articulo, id_linea, nom_linea,
-             COUNT(*)                                AS n_compras,
-             MAX(fecha_orig)                         AS ultima_compra,
-             CAST(ROUND(AVG(dias_gap)) AS INTEGER)   AS dias_cadencia,
-             CAST(ROUND(AVG(precio_unitario), 4) AS REAL) AS precio_promedio,
-             CAST(SUM(cantidad) AS REAL) / MAX(CAST(julianday(MAX(fecha_orig)) - julianday(MIN(fecha_orig)) AS INTEGER), 1)
-                                                     AS und_por_dia
-      FROM gaps
-      GROUP BY 1,2,3,4,5,6
-    ),
-    cadencia_linea AS (
-      SELECT id_cliente, id_linea, CAST(ROUND(AVG(dias_gap)) AS INTEGER) AS cadencia_linea
-      FROM gaps
-      GROUP BY 1,2
-    )
-    SELECT cs.*,
-           CAST(julianday('now') - julianday(cs.ultima_compra) AS INTEGER) AS dias_silencio,
-           COALESCE(cs.dias_cadencia, cl.cadencia_linea)                   AS cadencia_efectiva,
-           CASE
-             WHEN CAST(julianday('now') - julianday(cs.ultima_compra) AS INTEGER)
-                  > COALESCE(cs.dias_cadencia, cl.cadencia_linea) * 1.5
-             THEN 'VENCIDO'
-             ELSE 'OK'
-           END AS estado_oportunidad
-    FROM cadencia_sku cs
-    LEFT JOIN cadencia_linea cl
-      ON cl.id_cliente = cs.id_cliente AND cl.id_linea = cs.id_linea
-     AND cs.n_compras < 3
-    "#,
-    // Facturas disponibles con saldo y precio neto — para App devoluciones (LIFO)
-    r#"
-    CREATE VIEW IF NOT EXISTS vw_facturas_disponibles AS
-    WITH ventas_agg AS (
-      SELECT 
-        v.id, v.folio_unico, v.serie_doc, v.nro_doc,
-        v.id_cliente, v.id_articulo, v.nom_articulo,
-        v.fecha_orig, v.cantidad as cantidad_vendida,
-        v.precio_unitario, v.moneda, v.mes_ref,
-        COALESCE(SUM(CASE WHEN d.tipo_operacion='devolucion' THEN abs(d.cantidad) ELSE 0 END), 0) as devuelto
-      FROM ventas v
-      LEFT JOIN ventas d ON d.factura_ref_serie = v.serie_doc AND d.factura_ref_nro = v.nro_doc
-        AND d.tipo_operacion = 'devolucion'
-      WHERE v.tpo_doc LIKE 'F01%'
-      GROUP BY v.id, v.folio_unico, v.serie_doc, v.nro_doc, v.id_cliente, v.id_articulo,
-               v.nom_articulo, v.fecha_orig, v.cantidad, v.precio_unitario, v.moneda, v.mes_ref
-    )
-    SELECT va.*,
-      va.cantidad_vendida - va.devuelto as saldo_disponible,
-      CASE 
-        WHEN nt.total_fae IS NOT NULL THEN 
-          ROUND(va.precio_unitario - (nt.total_monto / nt.total_fae), 4)
-        ELSE va.precio_unitario
-      END as precio_para_devolucion,
-      CASE 
-        WHEN date(va.fecha_orig) < date('now', '-3 years') THEN 'FUERA_PERIOD'
-        ELSE 'DENTRO_PERIOD'
-      END as estado_periodo
-    FROM ventas_agg va
-    LEFT JOIN vw_nc_totales nt ON nt.serie_doc = va.serie_doc AND nt.nro_doc = va.nro_doc
-    ORDER BY va.fecha_orig DESC
     "#,
 ];

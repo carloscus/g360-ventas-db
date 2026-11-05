@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
     }
 
     info!("Exportando base canonica -> {}", target.display());
-    match g360_db_ventas::db::writer::export_canonical_snapshot(&target).await {
+    match g360_db_ventas::db::writer::export_canonical_snapshot(&target, None).await {
         Ok(info_json) => {
             println!("{}", serde_json::to_string_pretty(&info_json).unwrap_or_default());
             info!("Listo: comparte el .db + el .manifest.json con la app consumidora");

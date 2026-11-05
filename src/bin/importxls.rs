@@ -47,12 +47,15 @@ async fn main() -> Result<()> {
     let n_csv = g360_db_ventas::processor::xls::xls_to_csv(&dest_xls, &dest_csv)?;
     info!("xls_to_csv: {} filas -> {}", n_csv, dest_csv.display());
 
-    let ventas = g360_db_ventas::processor::parser::parse_export_csv(&dest_csv)?;
+    let (ventas, stats) = g360_db_ventas::processor::parser::parse_export_csv(&dest_csv)?;
     if ventas.is_empty() {
         error!("Parse devolvio 0 filas (¿reporte Estadistica11?)");
         std::process::exit(1);
     }
-    info!("parse: {} filas", ventas.len());
+    info!("parse: {} filas ({} invalidas: {} fechas, {} futuras, {} sin ID)",
+        ventas.len(),
+        stats.invalid_dates + stats.future_dates + stats.empty_ids,
+        stats.invalid_dates, stats.future_dates, stats.empty_ids);
 
     let pool = g360_db_ventas::db::writer::init_pool().await?;
     let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE mes_ref = ?")

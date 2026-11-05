@@ -25,7 +25,7 @@ async fn main() -> anyhow::Result<()> {
             if size > 512 {
                 let rows = g360_db_ventas::processor::xls::xls_to_csv(&xls, &csv)?;
                 println!("filas: {rows}");
-                let ventas = g360_db_ventas::processor::parser::parse_export_csv(&csv)?;
+                let (ventas, _stats) = g360_db_ventas::processor::parser::parse_export_csv(&csv)?;
                 println!("ventas filtradas: {}", ventas.len());
             }
         }

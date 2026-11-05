@@ -24,6 +24,15 @@ url = "2"
 anyhow = "1"
 futures-util = "0.3"
 rand = "0.8"
+sha2 = "0.10"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
 
 [dev-dependencies]
 tempfile = "3"

@@ -31,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
     let rows = g360_db_ventas::processor::xls::xls_to_csv(&xls, &csv_path)?;
     println!("calamine rows={rows}");
 
-    let ventas = g360_db_ventas::processor::parser::parse_export_csv(&csv_path)?;
+    let (ventas, _stats) = g360_db_ventas::processor::parser::parse_export_csv(&csv_path)?;
     let soles: f64 = ventas.iter().map(|v| v.soles).sum();
     let dol: f64 = ventas.iter().map(|v| v.dolares).sum();
     println!("filtradas={} soles={soles:.2} dolares={dol:.2}", ventas.len());
@@ -39,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = g360_db_ventas::db::writer::init_pool().await?;
     let n = g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, true).await?;
-    let _ = g360_db_ventas::db::writer::dedup_ventas(&pool).await;
+    // dedup ya no existe: el parser ahora normaliza todo al insertar
     use sqlx::Row;
     let r: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM ventas WHERE mes_ref=?").bind(&label).fetch_one(&pool).await?;
     println!("insertadas={n} | DB {label} total={}", r.0);

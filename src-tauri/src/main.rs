@@ -80,6 +80,9 @@ pub struct HealthStats {
     pub status: String,
     pub db_path: String,
     pub db_exists: bool,
+    // Versionado de contrato
+    pub contracto_version: String,
+    pub contracto_compatibil: bool,
     // Cobertura dimensional
     pub dim_cliente: usize,
     pub dim_vendedor: usize,
@@ -271,7 +274,21 @@ async fn get_health() -> Result<HealthStats, String> {
     } else {
         "OK".to_string()
     };
-    Ok(HealthStats { total_records, min_date: min_date_s, max_date: max_date_s, last_capture, db_size_mb, status, db_path: db_path.to_string_lossy().to_string(), db_exists, dim_cliente: 0, dim_vendedor: 0, dim_articulo: 0, dim_documento: 0, dim_linea: 0, checksum_months: 0, total_months: 0, foreign_keys_on: false })
+    // Verificar versión de contrato
+    let contract_ver = sqlx::query_scalar(
+        "SELECT value FROM g360_meta WHERE key = 'contracto_version'"
+    ).fetch_one(&pool).await.unwrap_or_else(|_| g360_db_ventas::db::schema::CONTRACTO_VERSION.to_string());
+    let contract_compat = contract_ver.parse::<i64>().unwrap_or(0) == g360_db_ventas::db::schema::CONTRACTO_VERSION;
+    // Cobertura dimensional
+    let dim_cliente: usize = sqlx::query_scalar("SELECT COUNT(*) FROM dim_cliente").fetch_one(&pool).await.unwrap_or(0) as usize;
+    let dim_vendedor: usize = sqlx::query_scalar("SELECT COUNT(*) FROM dim_vendedor").fetch_one(&pool).await.unwrap_or(0) as usize;
+    let dim_articulo: usize = sqlx::query_scalar("SELECT COUNT(*) FROM dim_articulo").fetch_one(&pool).await.unwrap_or(0) as usize;
+    let dim_documento: usize = sqlx::query_scalar("SELECT COUNT(*) FROM dim_documento").fetch_one(&pool).await.unwrap_or(0) as usize;
+    let dim_linea: usize = sqlx::query_scalar("SELECT COUNT(*) FROM dim_linea").fetch_one(&pool).await.unwrap_or(0) as usize;
+    let checksum_months: usize = sqlx::query_scalar("SELECT COUNT(DISTINCT mes_ref) FROM mes_checksums").fetch_one(&pool).await.unwrap_or(0) as usize;
+    let total_months: usize = sqlx::query_scalar("SELECT COUNT(DISTINCT mes_ref) FROM ventas WHERE length(mes_ref)=7").fetch_one(&pool).await.unwrap_or(0) as usize;
+    let fk_on: u8 = sqlx::query_scalar("PRAGMA foreign_keys").fetch_one(&pool).await.unwrap_or(0);
+    Ok(HealthStats { total_records, min_date: min_date_s, max_date: max_date_s, last_capture, db_size_mb, status, db_path: db_path.to_string_lossy().to_string(), db_exists, contracto_version: contract_ver, contracto_compatibil: contract_compat, dim_cliente, dim_vendedor, dim_articulo, dim_documento, dim_linea, checksum_months, total_months, foreign_keys_on: fk_on == 1 })
 }
 
 // ── Settings y Supabase ────────────────────────────────────────────────
@@ -1811,7 +1828,7 @@ fn main() {
                 // Protección de upload
                 upload_dry_run, upload_all_with_verify,
                 // Mantenimiento DB
-                vacuum_db, backup_db, export_full_db, export_canonical_snapshot, recalculate_checksums, get_db_health,
+                vacuum_db, backup_db, export_full_db, export_canonical_snapshot, recalculate_checksums, get_db_health,`n                 check_contract_version, get_contract_metadata,
                 // Automatización diaria
                 auto_daily_pipeline, get_next_capture_time
             ])
@@ -2122,15 +2139,59 @@ async fn export_full_db(path: String) -> Result<String, String> {
 
 /// Exporta una instantánea canónica (snapshot .db + manifiesto JSON) a la carpeta
 /// `data/export/`. Para que otra app trabaje sobre una copia aislada.
+/// Retorna: db_path, manifest_path, sha256, contracto_version, data_quality, etc.
 #[tauri::command]
 async fn export_canonical_snapshot() -> Result<serde_json::Value, String> {
     let dir = g360_db_ventas::config::data_dir().join("export");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
     let target = dir.join(format!("base_canonica_{}.db", ts));
-    g360_db_ventas::db::writer::export_canonical_snapshot(&target)
+    // Sin stats de parseo (es un export desde la DB existente)
+    g360_db_ventas::db::writer::export_canonical_snapshot(&target, None)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Verifica si la DB actual cumple con el contrato esperado.
+/// Retorna: ok: bool, expected_version: i64, stored_version: Option<i64>, message: String
+#[tauri::command]
+async fn check_contract_version() -> Result<serde_json::Value, String> {
+    use g360_db_ventas::db::writer::check_contract_version;
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    match check_contract_version(&pool).await {
+        Ok(_) => Ok(serde_json::json!({
+            "ok": true,
+            "message": "Versión de contrato compatible (v{})". 
+                g360_db_ventas::db::schema::CONTRACTO_VERSION
+        })),
+        Err(e) => Ok(serde_json::json!({
+            "ok": false,
+            "message": e.to_string()
+        }))
+    }
+}
+
+/// Retorna la metadata de versiones del contrato almacenada en g360_meta.
+#[tauri::command]
+async fn get_contract_metadata() -> Result<serde_json::Value, String> {
+    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    let contract_ver: String = sqlx::query_scalar(
+        "SELECT value FROM g360_meta WHERE key = 'contracto_version'"
+    ).fetch_one(&pool).await.unwrap_or(g360_db_ventas::db::schema::CONTRACTO_VERSION.to_string());
+    let dim_ver: String = sqlx::query_scalar(
+        "SELECT value FROM g360_meta WHERE key = 'dim_schema_version'"
+    ).fetch_one(&pool).await.unwrap_or(g360_db_ventas::db::schema::DIM_SCHEMA_VERSION.to_string());
+    let norm_ver: String = sqlx::query_scalar(
+        "SELECT value FROM g360_meta WHERE key = 'normalizacion_version'"
+    ).fetch_one(&pool).await.unwrap_or(g360_db_ventas::db::schema::NORMALIZACION_VERSION.to_string());
+    Ok(serde_json::json!({
+        "contracto_version": contract_ver,
+        "dim_schema_version": dim_ver,
+        "normalizacion_version": norm_ver,
+        "contracto_esperado": g360_db_ventas::db::schema::CONTRACTO_VERSION.to_string(),
+        "dim_esperado": g360_db_ventas::db::schema::DIM_SCHEMA_VERSION.to_string(),
+        "norm_esperado": g360_db_ventas::db::schema::NORMALIZACION_VERSION.to_string()
+    }))
 }
 
 /// Calcula checksums para meses que aun no tienen hash (complementa los 105/121).

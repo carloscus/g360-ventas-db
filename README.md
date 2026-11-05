@@ -411,6 +411,43 @@ y trabaja aislada (tablas/vistas con prefijo propio). No hay sync bidireccional.
 
 Protocolo completo, manifiesto, llaves de join y reglas: [`docs/base-canonica-consumo.md`](docs/base-canonica-consumo.md).
 
+### Cartucho (seed para clientes offline)
+
+El motor genera **cartuchos** (`.db` + `.manifest.json`) que se distribuyen a clientes
+offline por USB o red compartida. Cada cartucho incluye:
+
+- **SHA256** del archivo para verificación de integridad en transporte
+- **`contracto_version`** / **`dim_schema_version`** / **`normalizacion_version`** — el consumidor bloquea si no coincide
+- **`day_checksums`** y **`mes_checksums`** — baseline para detectar corrupción
+- **`data_quality`** — estado de calidad (excellent / good / needs_review)
+- **`attributes_applied`** — normalizaciones ejecutadas (id_pedido, mes_ref, fechas)
+
+**Uso desde CLI:**
+
+```powershell
+# Generar cartucho inicial desde una BD existente
+.\target\release\build_initial_cartucho.exe --db .\data\historial.db --output .\exports\base_canonica
+
+# Verificar integridad de un cartucho
+.\target\release\compare_checksums.exe --db .\exports\base_canonica.db --output check.json
+
+# Comparar dos cartuchos (offline)
+.\target\release\compare_checksums.exe --db cartucho1.db --output c1.json
+.\target\release\compare_checksums.exe --db cartucho2.db --output c2.json
+diff c1.json c2.json
+```
+
+**Flujo del cliente offline:**
+1. Recibe `.db` + `.manifest.json` por USB/red
+2. Copia a su directorio de datos
+3. Verifica SHA256 (opcional)
+4. Inicia app → `init_pool()` detecta versiones automáticamente
+5. `check_contract_version()` bloquea si la versión no es compatible
+
+> **Versión de contrato:** `CONTRACTO_VERSION = 4`. Si se bumpa, los consumidores
+> existentes bloquean hasta actualizarse. El frontend muestra una alerta en la
+> sección "DB Local" si detecta mismatch.
+
 ---
 
 ## Auditoría e integridad

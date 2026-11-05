@@ -31,9 +31,9 @@ async fn venta(
     sqlx::query(
         r#"INSERT INTO ventas
            (id_articulo, original_sku, nom_articulo, id_linea, nom_linea,
-            id_cliente, nom_cliente, tpo_doc, cantidad, soles,
+            id_cliente, nom_cliente, id_vendedor, nom_vendedor, tpo_doc, cantidad, soles,
             anho, mes, fecha_orig, mes_ref, tipo_operacion)
-           VALUES (?,?,?,?,?, 'C1','CLIENTE','F01',?,?, 2024,1,?,?, 'venta')"#,
+           VALUES (?,?,?,?,?, 'C1','CLIENTE','V1','VENDEDOR','F01',?,?, 2024,1,?,?, 'venta')"#,
     )
     .bind(sku)
     .bind(sku)
@@ -110,9 +110,9 @@ async fn historial_no_contamina_precio_con_devoluciones() {
     sqlx::query(
         r#"INSERT INTO ventas
            (id_articulo, original_sku, nom_articulo, id_linea, nom_linea,
-            id_cliente, nom_cliente, tpo_doc, cantidad, soles,
+            id_cliente, nom_cliente, id_vendedor, nom_vendedor, tpo_doc, cantidad, soles,
             anho, mes, fecha_orig, mes_ref, tipo_operacion)
-           VALUES ('77777','77777','PRODUCTO','01','LINEA 01','C1','CLIENTE',
+           VALUES ('77777','77777','PRODUCTO','01','LINEA 01','C1','CLIENTE','V1','VENDEDOR',
                    'NCR', -2, -20, 2024, 1, '2024-01-20', '2024-01', 'devolucion')"#,
     )
     .execute(&pool)

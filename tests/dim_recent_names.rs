@@ -47,10 +47,10 @@ async fn insert(
         r#"INSERT INTO ventas
            (id_articulo, original_sku, nom_articulo, id_linea, nom_linea,
             id_cliente, doc_cliente, nom_cliente, id_vendedor, nom_vendedor,
-            tpo_doc, serie_doc, nro_doc, cantidad, soles, anho, mes,
+            tpo_doc, serie_doc, nro_doc, cantidad, soles, precio_unitario, anho, mes,
             fecha_orig, mes_ref, tipo_operacion)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'F01', '201', '1',
-                   ?, ?, 2025, 1, ?, ?, 'venta')"#,
+                   ?, ?, ?, 2025, 1, ?, ?, 'venta')"#,
     )
     .bind(id_articulo)
     .bind(id_articulo) // original_sku
@@ -64,6 +64,7 @@ async fn insert(
     .bind(nom_vendedor)
     .bind(cantidad)
     .bind(soles)
+    .bind(soles / cantidad) // precio_unitario
     .bind(fecha)
     .bind(mes_ref)
     .execute(pool)
@@ -126,7 +127,11 @@ async fn dims_muestran_el_nombre_mas_reciente() {
     assert_eq!(r.get::<i64, _>("n_ventas"), 2);
     assert!((r.get::<f64, _>("total_cantidad") - 30.0).abs() < 0.01);
     assert!((r.get::<f64, _>("total_soles") - 300.0).abs() < 0.01);
-    assert!((r.get::<f64, _>("precio_promedio") - 10.0).abs() < 0.01);
+    // precio_unitario se recalcula como soles/cantidad en init_pool():
+    //   fila 1: 10.0 / 100 = 0.1, fila 2: 20.0 / 200 = 0.1, AVG = 0.1
+    let pp = r.get::<f64, _>("precio_promedio");
+    println!("DEBUG precio_promedio = {}", pp);
+    assert!((pp - 10.0).abs() < 0.01);
 
     // ── Linea ──
     let r = sqlx::query("SELECT nom_linea, n_ventas, total_soles FROM dim_linea WHERE id_linea='L1'")

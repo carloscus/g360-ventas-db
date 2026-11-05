@@ -60,7 +60,7 @@ fn parser_raw_first_conserva_todas_las_filas() {
     let csv = dir.join("ventas_2026_01.csv");
     std::fs::write(&csv, CSV).unwrap();
 
-    let ventas = parse_export_csv(&csv).expect("parse");
+    let (ventas, _stats) = parse_export_csv(&csv).expect("parse");
     // Las 6 filas deben llegar a la BD local, incluidas las de linea 0103
     // (fuera del allowlist por defecto) y la NC sin referencia.
     assert_eq!(ventas.len(), 6, "raw-first: el parser NO debe filtrar por linea");
@@ -84,7 +84,7 @@ async fn filtro_upload_sql_coincide_con_espejo_rust() {
     std::fs::create_dir_all(&dir).unwrap();
     let csv = dir.join("ventas_2026_01.csv");
     std::fs::write(&csv, CSV).unwrap();
-    let ventas = parse_export_csv(&csv).expect("parse");
+    let (ventas, _stats) = parse_export_csv(&csv).expect("parse");
 
     // BD en memoria con el schema real del proyecto
     let pool = sqlx::sqlite::SqlitePoolOptions::new()

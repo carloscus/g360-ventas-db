@@ -1,7 +1,7 @@
-use g360_db_ventas::db::writer::{init_pool, insert_ventas, dedup_ventas};
+use g360_db_ventas::db::writer::{init_pool, insert_ventas};
 use g360_db_ventas::processor::parser::parse_export_csv_with_cross;
 use g360_db_ventas::config::load_dotenv;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
 /// Re-parsea todos los CSVs mensuales de raw/ usando el parser nuevo con NC/ND cross-month.
@@ -55,13 +55,13 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Dedup final
-    let dupes = dedup_ventas(&pool).await?;
-    println!("duplicados removidos: {dupes}");
+    // Verificar integridad
+    println!("\nResumen: {} meses re-parseados", csv_files.len());
 
+    println!("\nResumen: {} meses re-parseados", csv_files.len());
     let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas")
         .fetch_one(&pool).await?;
     println!("registros despues: {after} (antes: {before}, delta: {:+})", after - before);
-    println!("re-parse completado: {} meses procesados", csv_files.len());
+    println!("re-parse completado");
     Ok(())
 }
