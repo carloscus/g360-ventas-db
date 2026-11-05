@@ -1,3 +1,4 @@
+pub mod alerts;
 pub mod browser;
 pub mod capture;
 pub mod capture_state;
