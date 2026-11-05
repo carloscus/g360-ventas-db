@@ -604,9 +604,13 @@ async fn delete_month_batched(
             ));
         }
         deleted += ids.len();
-        if ids.len() < BATCH {
-            break; // mes vacio
-        }
+        // NOTA: NO cortar cuando ids.len() < BATCH. Supabase PostgREST tiene
+        // max-rows=1000 por defecto: aunque pidamos limit=BATCH el servidor
+        // devuelve ≤1000, y 1000 < BATCH haría creer que el mes está vacío
+        // dejando filas viejas (bug: purga parcial -> duplicados ~2x).
+        // El unico criterio de "mes vacio" es que el GET devuelva 0 ids
+        // (manejado arriba con ids.is_empty()). El guard de iteraciones
+        // protege contra un DELETE que no borra nada.
     }
     Ok(deleted)
 }
@@ -722,9 +726,9 @@ async fn delete_days_in_month_batched(
             ));
         }
         deleted += ids.len();
-        if ids.len() < BATCH {
-            break;
-        }
+        // Mismo fix que delete_month_batched: no cortar con partial batch
+        // (PostgREST max-rows=1000 < BATCH haria cortar prematuramente).
+        // Criterio unico de fin: GET devolvio 0 ids (arriba).
     }
     Ok(deleted)
 }

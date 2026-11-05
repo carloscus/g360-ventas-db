@@ -37,6 +37,7 @@ flowchart TD
 - [Descripción](#descripción)
 - [Objetivo](#objetivo)
 - [Arquitectura](#arquitectura)
+- [Contrato de datos](#contrato-de-datos)
 - [Pipeline de captura](#pipeline-de-captura)
 - [Esquema de datos](#esquema-de-datos)
 - [Campos derivados](#campos-derivados)
@@ -661,7 +662,40 @@ Proyecto interno del ecosistema **G360 - CIPSA**.
 
 ---
 
-## Cambios recientes (oct-2026)
+## Contrato de datos
+
+La documentación de contrato para apps consumidoras (cartucho offline y
+Supabase online) vive en **[`docs/CONTRATO.md`](docs/CONTRATO.md)**. Cubre:
+
+- Versionado (`CONTRACTO_VERSION = 4`) y reglas de compatibilidad
+- Estructura del manifest del cartucho + verificación con SHA256
+- Esquema de la tabla `ventas` (53 columnas, ★ = esencial para Supabase)
+- Reglas de normalización de IDs (`id_cliente` zfill8, `id_linea`/`id_vendedor` quitan `01`)
+- Clasificación de `tipo_operacion` (NCR/NDB/BDI/F01)
+- Endpoints Supabase (PostgREST + vistas)
+- Checklist de integración para app nueva
+
+## Cambios recientes (nov-2026)
+
+- **Config encriptada (DPAPI)**: credenciales en `config.enc` (Windows DPAPI,
+  solo esa PC/usuario). Migración automática desde `config.json` plano → `.enc`
+  + `.bak`. Wizard de primer inicio en PC nueva.
+- **Allowlist en cartucho**: `manifest.json` incluye `allowed_lines` y
+  `retention_days` para que el consumidor sepa el filtro aplicado.
+- **Buffer -1 día**: `sync_smart` captura desde (última fecha − 1 día) para no
+  perder documentos posteados con retraso en el ERP.
+- **UI minimalista**: 3 tarjetas de estado (Principal/Supabase/Cartucho),
+  inicio rápido diario, 3 módulos (Reportes XLSX, Config, Cartucho/Backup).
+- **Reporte XLSX**: `export_monitor_xlsx` genera consolidado por mes (2 hojas:
+  resumen mensual + totales) para análisis y auditoría.
+- **NDB → `ajuste_valor`**: notas de débito clasificadas igual que NCR sin
+  cantidad negativa (corrige vistas Supabase que no las reconocían).
+- **`normalize_query_id`**: normaliza IDs de entrada del usuario para que
+  búsquedas como `10214` encuentren `00010214` en la BD.
+- **Captura completa 2010-2026**: 203 meses, 2.8M filas, retry automático
+  ante `database is locked` (backoff 2s/4s/8s).
+- **Alertas estructuradas**: `AlertCollector` con severidad (Critical/
+  Warning/Info), acción sugerida y reporte JSON al final de cada corrida.
 
 - **Menos I/O en Supabase**: el chequeo mensual del resync ya no usa `count=exact`
   (un full-count por mes); la cobertura del dashboard se cachea 5 min por sesión
