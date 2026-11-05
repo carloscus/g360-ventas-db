@@ -452,8 +452,7 @@ pub fn derivar_campos(v: &mut crate::models::Venta) {
     let has_ref = !v.referencia.trim().is_empty();
     v.tipo_operacion = match tpo {
         "NCR" if cant < 0.0 => "devolucion".to_string(),
-        "NCR" => "ajuste_valor".to_string(),
-        "NDB" => "nota_debito".to_string(),
+        "NCR" | "NDB" => "ajuste_valor".to_string(),
         _ => "venta".to_string(),
     };
     if has_ref {
@@ -569,12 +568,12 @@ mod tests {
     }
 
     #[test]
-    fn ndb_es_nota_debito() {
+    fn ndb_es_ajuste_valor() {
         let mut v = crate::models::Venta::nuevo("test.csv", "2026-11");
         v.tpo_doc = "NDB".to_string();
         v.cantidad = 0.0;
         derivar_campos(&mut v);
-        assert_eq!(v.tipo_operacion, "nota_debito");
+        assert_eq!(v.tipo_operacion, "ajuste_valor");
     }
 
     #[test]

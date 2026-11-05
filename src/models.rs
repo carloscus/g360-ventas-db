@@ -56,10 +56,10 @@ pub struct Venta {
     pub file_source: String,
     pub mes_ref: String,
     // Derivados para CRM
-    pub tipo_operacion: String,      // venta | devolucion | ajuste_valor | nota_debito
-    pub factura_ref_serie: String,   // serie de la factura referenciada (si NCR/NDB)
-    pub factura_ref_nro: String,     // nro de la factura referenciada
-    pub folio_unico: String,         // tpo_doc/serie-nro unico para dedup y lookups
+    pub tipo_operacion: String,    // venta | devolucion | ajuste_valor
+    pub factura_ref_serie: String, // serie de la factura referenciada (si NCR/NDB)
+    pub factura_ref_nro: String,   // nro de la factura referenciada
+    pub folio_unico: String,       // tpo_doc/serie-nro unico para dedup y lookups
     // Columnas adicionales del ERP (no siempre presentes en export antiguo)
     pub id_ubigeo: String,
     pub canal_distribucion: String,

@@ -264,6 +264,8 @@ details#rangeBox[open] summary:before{content:'▾ '}
       <button id="previewBtn" title="Primeras filas de la BD local">👁 Vista previa CSV</button>
       <button id="qualityBtn" title="Reporte de calidad de datos: críticos, warnings e info">🚦 Calidad de datos</button>
       <button id="checksumBtn" title="Genera checksums mensuales para detectar cambios">🔐 Checksums</button>
+      <div class="msec">Automatización</div>
+      <button id="dailyPipelineBtn" title="Pipeline diario: captura día anterior + verifica + checksums + sube a Supabase">📅 Pipeline diario</button>
       <div class="msec">Respaldo / limpieza</div>
       <button id="exportDbBtn" title="Genera una copia .db + manifiesto JSON para que otra app trabaje aislada">🗄 Exportar base canónica</button>
       <button id="shareDbBtn" title="Abre la carpeta local para copiarla a un extraíble o compartirla en la red">📂 Compartir / respaldar BD</button>
@@ -483,7 +485,7 @@ function setAppUnavailable(message){
   textEl.textContent=message;
   document.getElementById('st').className='status act err';
   document.getElementById('stxt').textContent='sin entorno tauri';
-  ['cap','updateNow','clr','shareDbBtn','dbclr','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','previewBtn','qualityBtn','monitorBtn','reconcileBtn','fullFlowBtn','exportDbBtn','moreBtn'].forEach(id=>{
+  ['cap','updateNow','clr','shareDbBtn','dbclr','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','previewBtn','qualityBtn','monitorBtn','reconcileBtn','fullFlowBtn','exportDbBtn','moreBtn','dailyPipelineBtn'].forEach(id=>{
     const el=document.getElementById(id);
     if (el) el.disabled=true;
   });
@@ -596,7 +598,7 @@ async function load(){
      document.getElementById('lmNcTotal').textContent=fn(lm.ncndb_total);
      document.getElementById('lmNcLinked').textContent=fn(lm.ncndb_linked);
      document.getElementById('lmNcOrf').textContent=fn(lm.ncndb_orphans);
-      // Versi�n de contrato
+      // Versi�n de contrato
       try{
         const cm=await invoke('get_contract_metadata');
         const cvEl=document.getElementById('contractVer');
@@ -764,7 +766,7 @@ function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInter
 
     // 5) Deshabilitar TODO botón de acción durante operación (P2 critique:
     //    el menú quedaba activo y permitia reparse/upload en paralelo)
-    ['cap','updateNow','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','clr','dbclr','previewBtn','qualityBtn','monitorBtn','reconcileBtn','fullFlowBtn','exportDbBtn','moreBtn'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=true;}});
+    ['cap','updateNow','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','clr','dbclr','previewBtn','qualityBtn','monitorBtn','reconcileBtn','fullFlowBtn','exportDbBtn','moreBtn','dailyPipelineBtn'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=true;}});
     document.getElementById('stopBtn').classList.remove('hid');
 
     // 6) Mensaje en barra de estado
@@ -780,7 +782,7 @@ function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInter
       document.getElementById('pctLabel').textContent='';
       document.getElementById('dbProgressBar').style.transform='scaleX(0)';
       // Reactivar acciones, ocultar detener
-      ['cap','updateNow','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','clr','dbclr','previewBtn','qualityBtn','monitorBtn','reconcileBtn','fullFlowBtn','exportDbBtn','moreBtn'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=false;}});
+      ['cap','updateNow','importBtn','reparse','manageMonths','resetSyncBtn','verifyBtn','checksumBtn','clr','dbclr','previewBtn','qualityBtn','monitorBtn','reconcileBtn','fullFlowBtn','exportDbBtn','moreBtn','dailyPipelineBtn'].forEach(id=>{const e=document.getElementById(id);if(e){e.disabled=false;}});
       document.getElementById('stopBtn').classList.add('hid');
       // Resetear badges a estado idle
       updateTaskFlow(r.state==='error'?'error':'DB lista');
@@ -984,6 +986,17 @@ document.getElementById('checksumBtn').addEventListener('click',async()=>{
     const hist = await invoke('get_checksum_history');
     console.log('Checksum history:', hist);
   }catch(err){show(humanizeError(err),true)}
+});
+// Pipeline diario: captura día anterior + verifica + checksums + sube a Supabase
+document.getElementById('dailyPipelineBtn').addEventListener('click',async()=>{
+  if(!confirm('Ejecutar pipeline diario?\n\n1. Captura datos del día anterior\n2. Verifica integridad\n3. Calcula checksums\n4. Sube a Supabase\n\n¿Continuar?'))return;
+  show('⏳ Ejecutando pipeline diario...');startPolling();
+  try{
+    const r=await invoke('auto_daily_pipeline');
+    show(`✅ ${r.message||'Pipeline completado'}`);
+    await refreshSupabaseCoverage(true);
+  }catch(err){show(humanizeError(err),true)}
+  stopPolling();
 });
 // Re-parse raw sin intranet (raw-first: consolida TODO el CSV en la BD local, sin filtrar)
 document.getElementById('reparse').addEventListener('click',async()=>{

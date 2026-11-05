@@ -1830,7 +1830,9 @@ fn main() {
                 // Mantenimiento DB
                 vacuum_db, backup_db, export_full_db, export_canonical_snapshot, recalculate_checksums, get_db_health,`n                 check_contract_version, get_contract_metadata,
                 // Automatización diaria
-                auto_daily_pipeline, get_next_capture_time
+                auto_daily_pipeline, get_next_capture_time,
+                // Normalización de IDs para búsquedas
+                normalize_query_id_cmd
             ])
             .run(tauri::generate_context!())
             .expect("error while running tauri application");
@@ -2192,6 +2194,22 @@ async fn get_contract_metadata() -> Result<serde_json::Value, String> {
         "dim_esperado": g360_db_ventas::db::schema::DIM_SCHEMA_VERSION.to_string(),
         "norm_esperado": g360_db_ventas::db::schema::NORMALIZACION_VERSION.to_string()
     }))
+}
+
+/// Normaliza un ID de entrada del usuario para búsquedas en la BD.
+/// Cliente: zfill(8) → "10214" se convierte en "00010214"
+/// Linea/Vendedor: lstrip('01') → "0178" se convierte en "78"
+/// Articulo: sin transformar (clave natural)
+#[tauri::command]
+fn normalize_query_id_cmd(input: String, id_type: String) -> String {
+    use g360_db_ventas::processor::parser::{normalize_query_id, IdType};
+    let t = match id_type.to_lowercase().as_str() {
+        "cliente" => IdType::Cliente,
+        "linea" => IdType::Linea,
+        "vendedor" => IdType::Vendedor,
+        _ => IdType::Articulo,
+    };
+    normalize_query_id(&input, t)
 }
 
 /// Calcula checksums para meses que aun no tienen hash (complementa los 105/121).
