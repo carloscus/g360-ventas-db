@@ -217,27 +217,26 @@ fn fmt_hora_local(secs: u64) -> String {
 async fn get_health() -> Result<HealthStats, String> {
     let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
     // Cache TTL de los conteos crudos (COUNT(*) tarda ~2s; el UI hace polling cada ~2s).
-    let (total_records, min_date_s, max_date_s) = {
-        let cached = {
-            let c = HEALTH_CACHE.lock().unwrap();
-            c.as_ref().and_then(|(t, n, mn, mx)| {
-                if t.elapsed().as_secs() < HEALTH_CACHE_TTL_SECS {
-                    Some((*n, mn.clone(), mx.clone()))
-                } else {
-                    None
-                }
-            })
-        };
-        match cached {
-            Some(v) => v,
-            None => {
-                let total_records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas").fetch_one(&pool).await.map_err(|e| e.to_string())?;
-                let min_date: Option<String> = sqlx::query_scalar("SELECT MIN(fecha_orig) FROM ventas").fetch_one(&pool).await.map_err(|e| e.to_string())?;
-                let max_date: Option<String> = sqlx::query_scalar("SELECT MAX(fecha_orig) FROM ventas").fetch_one(&pool).await.map_err(|e| e.to_string())?;
-                let v = (total_records, min_date.unwrap_or_default(), max_date.unwrap_or_default());
-                *HEALTH_CACHE.lock().unwrap() = Some((Instant::now(), v.0, v.1.clone(), v.2.clone()));
-                v
+    // Nota: el MutexGuard se dropea explícitamente antes de cualquier await para que el future sea Send.
+    let cached = {
+        let c = HEALTH_CACHE.lock().unwrap();
+        c.as_ref().and_then(|(t, n, mn, mx)| {
+            if t.elapsed().as_secs() < HEALTH_CACHE_TTL_SECS {
+                Some((*n, mn.clone(), mx.clone()))
+            } else {
+                None
             }
+        })
+    };
+    let (total_records, min_date_s, max_date_s) = match cached {
+        Some(v) => v,
+        None => {
+            let total_records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas").fetch_one(&pool).await.map_err(|e| e.to_string())?;
+            let min_date: Option<String> = sqlx::query_scalar("SELECT MIN(fecha_orig) FROM ventas").fetch_one(&pool).await.map_err(|e| e.to_string())?;
+            let max_date: Option<String> = sqlx::query_scalar("SELECT MAX(fecha_orig) FROM ventas").fetch_one(&pool).await.map_err(|e| e.to_string())?;
+            let v = (total_records, min_date.unwrap_or_default(), max_date.unwrap_or_default());
+            *HEALTH_CACHE.lock().unwrap() = Some((Instant::now(), v.0, v.1.clone(), v.2.clone()));
+            v
         }
     };
     let db_path = g360_db_ventas::config::db_path();
@@ -249,9 +248,10 @@ async fn get_health() -> Result<HealthStats, String> {
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| fmt_hora_local(d.as_secs()))
         .unwrap_or_else(|| "n/a".into());
-    let st = CAPTURE_STATE.lock().unwrap();
-    let running = st.phase != CapturePhase::Idle && st.phase != CapturePhase::Done && st.phase != CapturePhase::Error;
-    drop(st);
+    let running = {
+        let st = CAPTURE_STATE.lock().unwrap();
+        st.phase != CapturePhase::Idle && st.phase != CapturePhase::Done && st.phase != CapturePhase::Error
+    };
     let lock_path = g360_db_ventas::config::raw_dir().join("capture.lock");
     let lock_exists = lock_path.exists();
     // Auto-limpiar lock huerfano en health check (no bloquear UI con STALE)
@@ -741,22 +741,32 @@ async fn sync_smart() -> Result<CaptureStatus, String> {
             .fetch_one(&pool)
             .await
             .unwrap_or(None);
-        last.unwrap_or_else(|| {
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-            let secs_pe = now.saturating_sub(5 * 3600);
-            let days = (secs_pe / 86400) as i64;
-            let z = days + 719468;
-            let era = if z >= 0 { z } else { z - 146096 } / 146097;
-            let doe = (z - era * 146097) as i64;
-            let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-            let mut y = yoe + era * 400;
-            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-            let mp = (5 * doy + 2) / 153;
-            let d = doy - (153 * mp + 2) / 5 + 1;
-            let m = if mp < 10 { mp + 3 } else { mp - 9 };
-            if m <= 2 { y += 1; }
-            format!("{:04}-{:02}-{:02}", y, m, d)
-        })
+        match last {
+            Some(d) => {
+                // Buffer -1 día: cubre documentos posteados con retraso en el ERP
+                if let Ok(dt) = chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d") {
+                    (dt - chrono::Duration::days(1)).format("%Y-%m-%d").to_string()
+                } else {
+                    d
+                }
+            }
+            None => {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                let secs_pe = now.saturating_sub(5 * 3600);
+                let days = (secs_pe / 86400) as i64;
+                let z = days + 719468;
+                let era = if z >= 0 { z } else { z - 146096 } / 146097;
+                let doe = (z - era * 146097) as i64;
+                let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+                let mut y = yoe + era * 400;
+                let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+                let mp = (5 * doy + 2) / 153;
+                let d = doy - (153 * mp + 2) / 5 + 1;
+                let m = if mp < 10 { mp + 3 } else { mp - 9 };
+                if m <= 2 { y += 1; }
+                format!("{:04}-{:02}-{:02}", y, m, d)
+            }
+        }
     };
 
     CAPTURE_ABORT.store(false, Ordering::Relaxed);
@@ -1302,7 +1312,7 @@ async fn import_manual_day(day: String, xls_path: String) -> Result<String, Stri
     }
     // Parsear e insertar en la BD (insert_ventas reemplaza el rango del dia)
     match g360_db_ventas::processor::parser::parse_export_csv(&dest_csv) {
-        Ok(ventas) if !ventas.is_empty() => {
+        Ok((ventas, _stats)) if !ventas.is_empty() => {
             let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
             let n = g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, true).await.map_err(|e| e.to_string())?;
             // Limpiar failed_*.json del mes
@@ -1345,7 +1355,7 @@ async fn import_manual_month(month: String, xls_path: String) -> Result<String, 
     }
     // Parsear + insertar (insert_ventas reemplaza el mes completo)
     match g360_db_ventas::processor::parser::parse_export_csv(&dest_csv) {
-        Ok(ventas) if !ventas.is_empty() => {
+        Ok((ventas, _stats)) if !ventas.is_empty() => {
             let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
             let n = g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, true).await.map_err(|e| e.to_string())?;
             // Limpiar failed json del mes
@@ -1375,7 +1385,7 @@ async fn preview_import(xls_path: String) -> Result<PreviewResult, String> {
     // Convertir a CSV temporal via calamine (no toca raw/)
     let tmp_csv = std::env::temp_dir().join(format!("preview_{}.csv", chrono::Utc::now().timestamp_millis()));
     g360_db_ventas::processor::xls::xls_to_csv(src, &tmp_csv).map_err(|e| e.to_string())?;
-    let ventas = g360_db_ventas::processor::parser::parse_export_csv(&tmp_csv).map_err(|e| e.to_string())?;
+    let (ventas, _stats) = g360_db_ventas::processor::parser::parse_export_csv(&tmp_csv).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_file(&tmp_csv);
     let mut tipo_desglose: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for v in &ventas { *tipo_desglose.entry(v.tipo_operacion.clone()).or_insert(0) += 1; }
@@ -1828,11 +1838,14 @@ fn main() {
                 // Protección de upload
                 upload_dry_run, upload_all_with_verify,
                 // Mantenimiento DB
-                vacuum_db, backup_db, export_full_db, export_canonical_snapshot, recalculate_checksums, get_db_health,`n                 check_contract_version, get_contract_metadata,
+                vacuum_db, backup_db, export_full_db, export_canonical_snapshot, recalculate_checksums, get_db_health,
+                check_contract_version, get_contract_metadata,
                 // Automatización diaria
                 auto_daily_pipeline, get_next_capture_time,
                 // Normalización de IDs para búsquedas
-                normalize_query_id_cmd
+                normalize_query_id_cmd,
+                // Último cartucho generado
+                get_last_cartucho
             ])
             .run(tauri::generate_context!())
             .expect("error while running tauri application");
@@ -1880,7 +1893,9 @@ async fn get_monthly_monitor() -> Result<serde_json::Value, String> {
         .map_err(|e| e.to_string())?;
     let arr: Vec<serde_json::Value> = rows
         .iter()
-        .map(|(m, f, c, s)| serde_json::json!({"mes": m, "filas": f, "unidades": c, "soles": s}))
+        .map(|r| serde_json::json!({
+            "mes": r.mes_ref, "filas": r.filas, "unidades": r.clientes, "soles": r.total_soles
+        }))
         .collect();
     Ok(serde_json::Value::Array(arr))
 }
@@ -1903,17 +1918,8 @@ async fn calculate_checksums() -> Result<serde_json::Value, String> {
     let checksums = g360_db_ventas::db::writer::calculate_monthly_checksums(&pool)
         .await
         .map_err(|e| e.to_string())?;
-    // Convert to JSON array of objects
-    let mut result = Vec::new();
-    for (mes, checksum, filas, soles) in checksums {
-        result.push(serde_json::json!({
-            "mes_ref": mes,
-            "checksum": checksum,
-            "total_filas": filas,
-            "total_soles": soles
-        }));
-    }
-    Ok(serde_json::to_value(result).unwrap_or(serde_json::json!({"error": "serialization failed"})))
+    // checksums es un usize (count de meses calculados)
+    Ok(serde_json::json!({ "meses_calculados": checksums }))
 }
 
 #[tauri::command]
@@ -1922,19 +1928,8 @@ async fn get_sync_history(limit: i64) -> Result<serde_json::Value, String> {
     let history = g360_db_ventas::db::writer::get_sync_history(&pool, limit)
         .await
         .map_err(|e| e.to_string())?;
-    let mut result = Vec::new();
-    for (id, tipo, estado, solicitadas, subidas, limpiadas, fecha) in history {
-        result.push(serde_json::json!({
-            "id": id,
-            "tipo": tipo,
-            "estado": estado,
-            "filas_solicitadas": solicitadas,
-            "filas_subidas": subidas,
-            "filas_limpiadas": limpiadas,
-            "started_at": fecha
-        }));
-    }
-    Ok(serde_json::to_value(result).unwrap_or(serde_json::json!({"error": "serialization failed"})))
+    // history es Vec<serde_json::Value> — ya viene serializado
+    Ok(serde_json::Value::Array(history))
 }
 
 #[tauri::command]
@@ -1943,17 +1938,8 @@ async fn get_checksum_history() -> Result<serde_json::Value, String> {
     let history = g360_db_ventas::db::writer::get_checksum_history(&pool)
         .await
         .map_err(|e| e.to_string())?;
-    let mut result = Vec::new();
-    for (mes, checksum, filas, soles, calculado_en) in history {
-        result.push(serde_json::json!({
-            "mes_ref": mes,
-            "checksum": checksum,
-            "total_filas": filas,
-            "total_soles": soles,
-            "calculado_en": calculado_en
-        }));
-    }
-    Ok(serde_json::to_value(result).unwrap_or(serde_json::json!({"error": "serialization failed"})))
+    // history es Vec<serde_json::Value> — ya viene serializado
+    Ok(serde_json::Value::Array(history))
 }
 
 // ─── COMANDOS DE PROTECCIÓN PARA UPLOAD ─────────────────────────────────────
@@ -2118,11 +2104,12 @@ async fn get_next_capture_time() -> Result<serde_json::Value, String> {
 
 // ─── MANTENIMIENTO BD ─────────────────────────────────────────────────
 
-/// Ejecuta VACUUM para recomprar la BD. Tarda 30-120s en BD de ~1GB.
+/// Ejecuta VACUUM para recomprimir la BD. Tarda 30-120s en BD de ~1GB.
 #[tauri::command]
 async fn vacuum_db() -> Result<String, String> {
     let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
-    g360_db_ventas::db::writer::vacuum_db(&pool).await.map_err(|e| e.to_string())
+    g360_db_ventas::db::writer::vacuum_db(&pool).await.map_err(|e| e.to_string())?;
+    Ok("VACUUM completado".to_string())
 }
 
 /// Crea backup con fecha/hora de historial.db. Conserva ultimas 7 copias.
@@ -2163,8 +2150,7 @@ async fn check_contract_version() -> Result<serde_json::Value, String> {
     match check_contract_version(&pool).await {
         Ok(_) => Ok(serde_json::json!({
             "ok": true,
-            "message": "Versión de contrato compatible (v{})". 
-                g360_db_ventas::db::schema::CONTRACTO_VERSION
+            "message": format!("Versión de contrato compatible (v{})", g360_db_ventas::db::schema::CONTRACTO_VERSION)
         })),
         Err(e) => Ok(serde_json::json!({
             "ok": false,
@@ -2210,6 +2196,50 @@ fn normalize_query_id_cmd(input: String, id_type: String) -> String {
         _ => IdType::Articulo,
     };
     normalize_query_id(&input, t)
+}
+
+/// Retorna info del último cartucho generado (lee el .manifest.json más reciente).
+#[tauri::command]
+fn get_last_cartucho() -> Result<serde_json::Value, String> {
+    let export_dir = g360_db_ventas::config::export_dir();
+    if !export_dir.exists() {
+        return Ok(serde_json::json!({ "exists": false }));
+    }
+
+    // Buscar el .manifest.json más reciente
+    let mut manifests: Vec<std::path::PathBuf> = std::fs::read_dir(&export_dir)
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
+        .map(|e| e.path())
+        .filter(|p| p.file_name().map(|x| x.to_string_lossy().contains("manifest")).unwrap_or(false))
+        .collect();
+    manifests.sort();
+
+    match manifests.last() {
+        Some(path) => {
+            let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+            let manifest: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+
+            // Verificar contrato contra BD actual
+            let db_version = g360_db_ventas::db::schema::CONTRACTO_VERSION.to_string();
+            let manifest_version = manifest.get("contracto_version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let synced = manifest_version == db_version;
+
+            Ok(serde_json::json!({
+                "exists": true,
+                "path": path.to_string_lossy(),
+                "manifest": manifest,
+                "contracto_synced": synced,
+                "db_contracto_version": db_version,
+                "manifest_contracto_version": manifest_version
+            }))
+        }
+        None => Ok(serde_json::json!({ "exists": false })),
+    }
 }
 
 /// Calcula checksums para meses que aun no tienen hash (complementa los 105/121).
