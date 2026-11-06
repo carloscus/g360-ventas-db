@@ -153,6 +153,13 @@ pub struct AppConfig {
     /// Horarios de captura diaria (formato "HH:MM", timezone local)
     #[serde(default = "default_capture_times")]
     pub capture_times: Vec<String>,
+    /// Recordatorio de backup local (días). 0 = deshabilitado.
+    #[serde(default = "default_backup_reminder")]
+    pub backup_reminder_days: u32,
+}
+
+fn default_backup_reminder() -> u32 {
+    7
 }
 
 fn default_app_retention() -> u32 {
@@ -195,6 +202,7 @@ impl AppConfig {
             supabase_enabled: true,
             auto_daily_capture: false,
             capture_times: default_capture_times(),
+            backup_reminder_days: default_backup_reminder(),
         }
     }
 }

@@ -115,6 +115,7 @@ pub struct AppSettings {
     pub auto_daily_capture: bool,
     pub capture_times: Vec<String>,
     pub db_path: String,
+    pub backup_reminder_days: u32,
 }
 
 fn set_state(state: &str, msg: &str, progress: f32) {
@@ -318,6 +319,7 @@ async fn get_settings() -> Result<AppSettings, String> {
         auto_daily_capture: cfg.auto_daily_capture,
         capture_times: cfg.capture_times.clone(),
         db_path,
+        backup_reminder_days: cfg.backup_reminder_days,
     })
 }
 
@@ -336,6 +338,7 @@ async fn save_settings(
     auto_daily_capture: bool,
     capture_times: Vec<String>,
     supabase_enabled: Option<bool>,
+    backup_reminder_days: Option<u32>,
 ) -> Result<AppSettings, String> {
     let mut cfg = g360_db_ventas::config::load_config();
     cfg.supabase.url = supabase_url;
@@ -363,6 +366,9 @@ async fn save_settings(
      if !capture_times.is_empty() {
          cfg.capture_times = capture_times;
      }
+     if let Some(d) = backup_reminder_days {
+         cfg.backup_reminder_days = d;
+     }
      g360_db_ventas::config::save_config(&cfg).map_err(|e| e.to_string())?;
     let db_path = g360_db_ventas::config::db_path().to_string_lossy().to_string();
     let sb_retention_days_eff = cfg.supabase_retention_days_effective();
@@ -385,6 +391,7 @@ async fn save_settings(
         auto_daily_capture: cfg.auto_daily_capture,
         capture_times: cfg.capture_times.clone(),
         db_path,
+        backup_reminder_days: cfg.backup_reminder_days,
     })
 }
 
@@ -1847,7 +1854,9 @@ fn main() {
                 // Último cartucho generado
                 get_last_cartucho,
                 // Wizard primer inicio
-                is_first_run, save_first_config
+                is_first_run, save_first_config,
+                // ZIP cartucho + recordatorio backup
+                zip_cartucho_cmd, get_backup_status
             ])
             .run(tauri::generate_context!())
             .expect("error while running tauri application");
@@ -2285,6 +2294,31 @@ fn save_first_config(
         "message": "Configuración guardada encriptada (DPAPI)",
         "first_run": false
     }))
+}
+
+/// Comprime el último cartucho (.db + manifest) en un ZIP para transporte fácil.
+#[tauri::command]
+fn zip_cartucho_cmd() -> Result<serde_json::Value, String> {
+    let (zip_path, db_bytes, zip_bytes) =
+        g360_db_ventas::db::writer::zip_cartucho().map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "zip_path": zip_path,
+        "db_mb": (db_bytes as f64 / 1048576.0).round(),
+        "zip_mb": (zip_bytes as f64 / 1048576.0).round(),
+        "ratio_pct": if db_bytes > 0 { (zip_bytes * 100 / db_bytes) } else { 0 },
+        "message": format!(
+            "ZIP creado ({:.0}% del original): {}",
+            zip_bytes as f64 * 100.0 / db_bytes.max(1) as f64,
+            zip_path
+        )
+    }))
+}
+
+/// Estado del recordatorio de backup local (basado en el backup más reciente).
+#[tauri::command]
+fn get_backup_status() -> serde_json::Value {
+    let days = g360_db_ventas::config::load_config().backup_reminder_days;
+    g360_db_ventas::db::writer::backup_status(days)
 }
 
 /// Calcula checksums para meses que aun no tienen hash (complementa los 105/121).

@@ -893,6 +893,104 @@ pub async fn backup_db() -> Result<String> {
     Ok(backup_path.to_string_lossy().to_string())
 }
 
+/// Comprime el último cartucho (.db + .manifest.json) en un ZIP para transporte.
+/// Devuelve (ruta_zip, bytes_original, bytes_zip).
+pub fn zip_cartucho() -> Result<(String, u64, u64)> {
+    use zip::write::SimpleFileOptions;
+    use zip::CompressionMethod;
+
+    let export_dir = crate::config::export_dir();
+    if !export_dir.exists() {
+        anyhow::bail!("No hay carpeta de exportaciones: {}", export_dir.display());
+    }
+
+    // Buscar el .db de cartucho más reciente (excluir *_ejemplo si hay base_canonica)
+    let mut dbs: Vec<std::path::PathBuf> = std::fs::read_dir(&export_dir)?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "db").unwrap_or(false))
+        .collect();
+    dbs.sort();
+    let db_path = dbs
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("No hay cartucho .db en {}", export_dir.display()))?;
+
+    let manifest_path = db_path.with_extension("manifest.json");
+    let zip_path = db_path.with_extension("zip");
+
+    let db_size = std::fs::metadata(db_path)?.len();
+    info!("Comprimiendo cartucho: {} ({:.1} MB)", db_path.display(), db_size as f64 / 1048576.0);
+
+    let file = std::fs::File::create(&zip_path)?;
+    let mut zip = zip::ZipWriter::new(file);
+    let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+    zip.start_file(db_path.file_name().unwrap().to_string_lossy(), opts)?;
+    let mut src = std::fs::File::open(db_path)?;
+    std::io::copy(&mut src, &mut zip)?;
+
+    if manifest_path.exists() {
+        zip.start_file(
+            manifest_path.file_name().unwrap().to_string_lossy(),
+            opts,
+        )?;
+        let mut src = std::fs::File::open(&manifest_path)?;
+        std::io::copy(&mut src, &mut zip)?;
+    }
+    zip.finish()?;
+
+    let zip_size = std::fs::metadata(&zip_path)?.len();
+    info!(
+        "ZIP creado: {} ({:.1} MB, {:.0}% del original)",
+        zip_path.display(),
+        zip_size as f64 / 1048576.0,
+        zip_size as f64 * 100.0 / db_size.max(1) as f64
+    );
+    Ok((
+        zip_path.to_string_lossy().to_string(),
+        db_size,
+        zip_size,
+    ))
+}
+
+/// Estado del backup local para el recordatorio de la UI.
+/// Deriva de la fecha del archivo más reciente en `backups/`.
+/// `reminder_days` viene de config (default 7).
+pub fn backup_status(reminder_days: u32) -> serde_json::Value {
+    let backup_dir = crate::config::data_dir().join("backups");
+    let newest = std::fs::read_dir(&backup_dir)
+        .ok()
+        .and_then(|entries| {
+            entries
+                .flatten()
+                .filter(|e| e.path().extension().map(|x| x == "db").unwrap_or(false))
+                .filter_map(|e| e.metadata().ok()?.modified().ok())
+                .max()
+        });
+
+    match newest {
+        Some(t) => {
+            let age_days = t
+                .elapsed()
+                .map(|d| d.as_secs() / 86400)
+                .unwrap_or(0);
+            let needs = age_days >= reminder_days as u64;
+            serde_json::json!({
+                "exists": true,
+                "age_days": age_days,
+                "reminder_days": reminder_days,
+                "needs_backup": needs
+            })
+        }
+        None => serde_json::json!({
+            "exists": false,
+            "age_days": null,
+            "reminder_days": reminder_days,
+            "needs_backup": true
+        }),
+    }
+}
+
 /// Exporta la BD completa a una ruta específica.
 pub async fn export_full_db(target: &std::path::Path) -> Result<String> {
     let db_path = crate::config::db_path();
