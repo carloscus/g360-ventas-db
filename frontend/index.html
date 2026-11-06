@@ -191,7 +191,10 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
         <span>Incluir actualización Supabase</span>
       </label>
     </div>
-    <button class="qs-btn" id="quickStartBtn">Ejecutar</button>
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <button class="qs-btn" id="quickStartBtn">Ejecutar</button>
+      <button class="btn btn-d hid" id="stopBtn" title="Abortar la captura en curso" style="margin-top:0;padding:5px 8px;font-size:11px">⏹ Detener</button>
+    </div>
   </div>
 
   <!-- Alerta de backup (se muestra si el último backup supera el recordatorio) -->
@@ -662,6 +665,12 @@ document.getElementById('qualityBtn').addEventListener('click', async () => {
 document.getElementById('cfgSaveBtn').addEventListener('click', async () => {
   try {
     const cfg = await invoke('get_settings');
+    // Service Role Key: si el campo tiene contenido, guardarlo (comando dedicado)
+    const svcKey = document.getElementById('cfgKey').value.trim();
+    if (svcKey) {
+      await invoke('save_service_role_key', { serviceRoleKey: svcKey });
+      document.getElementById('cfgKey').value = ''; // limpiar tras guardar
+    }
     // Allowlist desde los chips multiselección → String comma-joined
     const selected = getSelectedLines();
     const linesStr = selected.join(',');
@@ -804,9 +813,13 @@ document.getElementById('cfgGeneralCancelBtn').addEventListener('click', () => {
 });
 
 // ─── Polling ─────────────────────────────────────────────────────────────────
+function setStopVisible(visible) {
+  document.getElementById('stopBtn').classList.toggle('hid', !visible);
+}
 function startPolling() {
   if (polling) return;
   polling = true;
+  setStopVisible(true);
   const iv = setInterval(async () => {
     try {
       const s = await invoke('get_capture_status');
@@ -814,6 +827,7 @@ function startPolling() {
         document.getElementById('statusDot').className = 'dot';
         document.getElementById('quickStartBtn').disabled = false;
         document.getElementById('quickStartBtn').textContent = 'Ejecutar';
+        setStopVisible(false);
         clearInterval(iv);
         polling = false;
         loadStatus();
@@ -822,6 +836,7 @@ function startPolling() {
         document.getElementById('statusDot').className = 'dot';
         document.getElementById('quickStartBtn').disabled = false;
         document.getElementById('quickStartBtn').textContent = 'Ejecutar';
+        setStopVisible(false);
         clearInterval(iv);
         polling = false;
         show('statusMsg', '❌ ' + s.message, 'err');
@@ -834,9 +849,22 @@ function startPolling() {
     } catch(e) {
       clearInterval(iv);
       polling = false;
+      setStopVisible(false);
     }
   }, 2000);
 }
+
+// Abortar captura en curso (botón ⏹ Detener)
+document.getElementById('stopBtn').addEventListener('click', async () => {
+  if (!confirm('¿Detener la captura en curso?\n\nLo ya capturado se conserva.')) return;
+  try {
+    const r = await invoke('abort_capture');
+    show('statusMsg', '⏹ ' + (r.message || 'Abortando...'), '');
+    startPolling(); // el polling verá la transición a error/idle y oculta el botón
+  } catch(e) {
+    show('statusMsg', '❌ No se pudo abortar: ' + e, 'err');
+  }
+});
 
 // ─── Wizard Primer Inicio ────────────────────────────────────────────────────
 async function checkFirstRun() {

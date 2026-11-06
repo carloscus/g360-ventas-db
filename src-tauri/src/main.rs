@@ -160,25 +160,14 @@ fn main() {
         }
         
         tauri::Builder::default()
-            .invoke_handler(tauri::generate_handler![
-                get_dashboard, get_health, get_settings, save_settings,
-                test_supabase, get_supabase_info, get_local_metrics, upload_all, admin_reset, reset_sync_marker, save_service_role_key,
-                capture_range, sync_from_last, sync_smart, reconcile_supabase_cmd, run_full_flow,
-                clear_cache, open_data_folder, clear_db,
-                get_capture_status,
-                list_months, delete_month, delete_months, get_completeness, get_failed_days, import_manual_day, import_manual_month,
-                preview_import, reparse_raw,
-                abort_capture, test_intranet, get_credentials_status, preview_csv,
-                // Auditoría e integridad
-                verify_integrity, calculate_checksums, get_sync_history, get_checksum_history,
+            .invoke_handler(tauri::generate_handler![get_health, get_settings, save_settings,
+                test_supabase, get_supabase_info, save_service_role_key,
+                sync_smart, open_data_folder, get_capture_status,
+                abort_capture, // Auditoría e integridad
                 get_data_quality, export_nc_ndb, get_monthly_monitor, export_monitor_xlsx,
                 // Protección de upload
-                upload_dry_run, upload_all_with_verify,
                 // Mantenimiento DB
-                vacuum_db, backup_db, export_full_db, export_canonical_snapshot, recalculate_checksums, get_db_health,
-                check_contract_version, get_contract_metadata,
-                // Automatización diaria
-                auto_daily_pipeline, get_next_capture_time,
+                backup_db, export_canonical_snapshot, check_contract_version, // Automatización diaria
                 // Normalización de IDs para búsquedas
                 normalize_query_id_cmd,
                 // Último cartucho generado
@@ -188,8 +177,7 @@ fn main() {
                 // ZIP cartucho + recordatorio backup
                 zip_cartucho_cmd, get_backup_status,
                 // Tarea programada (Task Scheduler)
-                get_scheduled_task, create_scheduled_task, delete_scheduled_task
-            ])
+                get_scheduled_task, create_scheduled_task, delete_scheduled_task])
             .run(tauri::generate_context!())
             .expect("error while running tauri application");
     }

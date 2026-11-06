@@ -6,48 +6,6 @@ use crate::state::*;
 use crate::types::*;
 
 // ── Dashboard y Health ─────────────────────────────────────────────────
-#[tauri::command]
-pub async fn get_dashboard() -> Result<DashboardStats, String> {
-    // Cache TTL: el UI hace polling cada ~2s y la query GROUP BY tarda 4-24s.
-    {
-        let c = DASHBOARD_CACHE.lock().unwrap();
-        if let Some((t, stats)) = c.as_ref() {
-            if t.elapsed().as_secs() < DASHBOARD_CACHE_TTL_SECS {
-                return Ok(stats.clone());
-            }
-        }
-    }
-    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
-    // Stats cache: evita full-scan de 1.1M filas en queries lentas.
-    // La columna value es REAL -> leer como f64 y castear (REAL->i64 falla en sqlx).
-    let total_records: i64 = sqlx::query_scalar("SELECT value FROM stats_cache WHERE key='total_records'")
-        .fetch_one(&pool).await.map_err(|e| e.to_string()).unwrap_or(0.0) as i64;
-    let total_sales: f64 = sqlx::query_scalar("SELECT value FROM stats_cache WHERE key='total_sales'")
-        .fetch_one(&pool).await.map_err(|e| e.to_string()).unwrap_or(0.0) as f64;
-    let total_clients: i64 = sqlx::query_scalar("SELECT value FROM stats_cache WHERE key='total_clients'")
-        .fetch_one(&pool).await.map_err(|e| e.to_string()).unwrap_or(0.0) as i64;
-    let total_skus: i64 = sqlx::query_scalar("SELECT value FROM stats_cache WHERE key='total_skus'")
-        .fetch_one(&pool).await.map_err(|e| e.to_string()).unwrap_or(0.0) as i64;
-    // Agregado precomputado en stats_por_mes (instantaneo). Fallback a calculo en
-    // vivo solo si la tabla esta vacia (BD recien creada).
-    let mut months: Vec<MonthStats> = sqlx::query_as(
-        "SELECT mes_ref, filas AS rows, ventas_soles AS sales, clientes AS clients \
-         FROM stats_por_mes ORDER BY mes_ref",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| e.to_string())?;
-    if months.is_empty() {
-        months = sqlx::query_as("SELECT mes_ref, COUNT(*) as rows, COALESCE(SUM(soles), 0.0) as sales, COUNT(DISTINCT id_cliente) as clients FROM ventas GROUP BY mes_ref ORDER BY mes_ref")
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| e.to_string())?;
-    }
-    let stats = DashboardStats { total_records, total_sales, total_clients, total_skus, months };
-    *DASHBOARD_CACHE.lock().unwrap() = Some((Instant::now(), stats.clone()));
-    Ok(stats)
-}
-
 /// Unix secs -> "YYYY-MM-DD HH:MM" en hora Peru (GMT-5). Formato unificado con el
 /// resto de fechas de la UI (ISO).
 pub fn fmt_hora_local(secs: u64) -> String {
@@ -145,46 +103,5 @@ pub async fn get_health() -> Result<HealthStats, String> {
     let total_months: usize = sqlx::query_scalar("SELECT COUNT(DISTINCT mes_ref) FROM ventas WHERE length(mes_ref)=7").fetch_one(&pool).await.unwrap_or(0) as usize;
     let fk_on: u8 = sqlx::query_scalar("PRAGMA foreign_keys").fetch_one(&pool).await.unwrap_or(0);
     Ok(HealthStats { total_records, min_date: min_date_s, max_date: max_date_s, last_capture, db_size_mb, status, db_path: db_path.to_string_lossy().to_string(), db_exists, contracto_version: contract_ver, contracto_compatibil: contract_compat, dim_cliente, dim_vendedor, dim_articulo, dim_documento, dim_linea, checksum_months, total_months, foreign_keys_on: fk_on == 1 })
-}
-
-/// Metricas de la BD local para la seccion "DB Local".
-#[tauri::command]
-pub async fn get_local_metrics() -> Result<serde_json::Value, String> {
-    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
-    g360_db_ventas::db::writer::local_metrics(&pool)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Retorna coverage health: conteo de dims, checksums y estado de foreign_keys.
-#[tauri::command]
-pub async fn get_db_health() -> Result<serde_json::Value, String> {
-    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
-    let dim_cliente: usize = sqlx::query_scalar("SELECT COUNT(*) FROM dim_cliente")
-        .fetch_one(&pool).await.unwrap_or(0) as usize;
-    let dim_vendedor: usize = sqlx::query_scalar("SELECT COUNT(*) FROM dim_vendedor")
-        .fetch_one(&pool).await.unwrap_or(0) as usize;
-    let dim_articulo: usize = sqlx::query_scalar("SELECT COUNT(*) FROM dim_articulo")
-        .fetch_one(&pool).await.unwrap_or(0) as usize;
-    let dim_documento: usize = sqlx::query_scalar("SELECT COUNT(*) FROM dim_documento")
-        .fetch_one(&pool).await.unwrap_or(0) as usize;
-    let dim_linea: usize = sqlx::query_scalar("SELECT COUNT(*) FROM dim_linea")
-        .fetch_one(&pool).await.unwrap_or(0) as usize;
-    let checksum_months: usize = sqlx::query_scalar("SELECT COUNT(DISTINCT mes_ref) FROM mes_checksums")
-        .fetch_one(&pool).await.unwrap_or(0) as usize;
-    let total_months: usize = sqlx::query_scalar("SELECT COUNT(DISTINCT mes_ref) FROM ventas")
-        .fetch_one(&pool).await.unwrap_or(0) as usize;
-    let fk_on: u8 = sqlx::query_scalar("PRAGMA foreign_keys")
-        .fetch_one(&pool).await.unwrap_or(0);
-    Ok(serde_json::json!({
-        "dim_cliente": dim_cliente,
-        "dim_vendedor": dim_vendedor,
-        "dim_articulo": dim_articulo,
-        "dim_documento": dim_documento,
-        "dim_linea": dim_linea,
-        "checksum_months": checksum_months,
-        "total_months": total_months,
-        "foreign_keys_on": fk_on == 1
-    }))
 }
 

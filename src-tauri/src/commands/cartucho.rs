@@ -7,14 +7,6 @@ pub async fn backup_db() -> Result<String, String> {
     g360_db_ventas::db::writer::backup_db().await.map_err(|e| e.to_string())
 }
 
-/// Exporta la BD completa a un archivo standalone (VACUUM INTO) listo para compartir.
-/// Pobla dims y recalcula checksums antes de exportar.
-#[tauri::command]
-pub async fn export_full_db(path: String) -> Result<String, String> {
-    let target = std::path::Path::new(&path);
-    g360_db_ventas::db::writer::export_full_db(target).await.map_err(|e| e.to_string())
-}
-
 /// Exporta una instantánea canónica (snapshot .db + manifiesto JSON) a la carpeta
 /// `data/export/`. Para que otra app trabaje sobre una copia aislada.
 /// Retorna: db_path, manifest_path, sha256, contracto_version, data_quality, etc.
@@ -46,29 +38,6 @@ pub async fn check_contract_version() -> Result<serde_json::Value, String> {
             "message": e.to_string()
         }))
     }
-}
-
-/// Retorna la metadata de versiones del contrato almacenada en g360_meta.
-#[tauri::command]
-pub async fn get_contract_metadata() -> Result<serde_json::Value, String> {
-    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
-    let contract_ver: String = sqlx::query_scalar(
-        "SELECT value FROM g360_meta WHERE key = 'contracto_version'"
-    ).fetch_one(&pool).await.unwrap_or(g360_db_ventas::db::schema::CONTRACTO_VERSION.to_string());
-    let dim_ver: String = sqlx::query_scalar(
-        "SELECT value FROM g360_meta WHERE key = 'dim_schema_version'"
-    ).fetch_one(&pool).await.unwrap_or(g360_db_ventas::db::schema::DIM_SCHEMA_VERSION.to_string());
-    let norm_ver: String = sqlx::query_scalar(
-        "SELECT value FROM g360_meta WHERE key = 'normalizacion_version'"
-    ).fetch_one(&pool).await.unwrap_or(g360_db_ventas::db::schema::NORMALIZACION_VERSION.to_string());
-    Ok(serde_json::json!({
-        "contracto_version": contract_ver,
-        "dim_schema_version": dim_ver,
-        "normalizacion_version": norm_ver,
-        "contracto_esperado": g360_db_ventas::db::schema::CONTRACTO_VERSION.to_string(),
-        "dim_esperado": g360_db_ventas::db::schema::DIM_SCHEMA_VERSION.to_string(),
-        "norm_esperado": g360_db_ventas::db::schema::NORMALIZACION_VERSION.to_string()
-    }))
 }
 
 /// Retorna info del último cartucho generado (lee el .manifest.json más reciente).

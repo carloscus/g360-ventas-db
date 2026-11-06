@@ -3,7 +3,6 @@ use std::time::Instant;
 
 use crate::state::*;
 use crate::types::*;
-use super::verify_intranet_credentials;
 
 // ── Settings y Supabase ────────────────────────────────────────────────
 #[tauri::command]
@@ -130,32 +129,6 @@ pub async fn get_supabase_info() -> Result<g360_db_ventas::processor::uploader::
         .map_err(|e| e.to_string())?;
     *SUPABASE_INFO_CACHE.lock().unwrap() = Some((Instant::now(), info.clone()));
     Ok(info)
-}
-
-#[tauri::command]
-pub async fn test_intranet() -> Result<String, String> {
-    // Verificacion REAL: presencia + Chrome + login contra el intranet.
-    // (Antes solo validaba presencia y podia reportar "OK" con credenciales invalidas.)
-    if let Err(e) = g360_db_ventas::browser::captor::preflight_checks() {
-        return Err(e);
-    }
-    verify_intranet_credentials().await?;
-    Ok("Credenciales válidas · Chrome detectado".into())
-}
-
-/// Estado (barato, sin red) de las credenciales configuradas, para el arranque.
-#[tauri::command]
-pub async fn get_credentials_status() -> Result<serde_json::Value, String> {
-    use g360_db_ventas::config::{effective_intranet_pass, effective_intranet_user};
-    let cfg = g360_db_ventas::config::load_config();
-    let user = effective_intranet_user();
-    let pass = effective_intranet_pass();
-    Ok(serde_json::json!({
-        "intranet_configured": !user.is_empty() && !pass.is_empty(),
-        "intranet_user": user,
-        "supabase_configured": cfg.supabase.is_configured(),
-        "supabase_enabled": cfg.supabase_enabled,
-    }))
 }
 
 #[tauri::command]

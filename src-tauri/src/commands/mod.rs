@@ -18,8 +18,6 @@ pub use cartucho::*;
 pub use config::*;
 pub use dashboard::*;
 pub use maintenance::*;
-pub use months::*;
-pub use sync::*;
 
 /// Verifica credenciales de intranet con un login real al ERP.
 /// Compartido: lo usan commands de meses (delete/import) y maintenance (clear_db).
