@@ -832,10 +832,9 @@ pub async fn run_batch_history(
     let num_workers = if workers == 0 { 1 } else { workers };
     if num_workers == 1 {
         // Ruta secuencial (comportamiento original)
-        let session = create_transport().await?;
+        let mut session = create_transport().await?;
         for (idx, m) in pending.iter().enumerate() {
             let pct = (idx as f32 / total as f32) * 0.85;
-            let t_item = Instant::now();
             let aborted = abort_flag.as_ref().map(|f| f.load(Ordering::Relaxed)).unwrap_or(false)
                 || CAPTURE_ABORT_GLOBAL.load(Ordering::Relaxed);
             if aborted {
@@ -849,96 +848,32 @@ pub async fn run_batch_history(
                 info!("  refresh sesion (mes {} de {})", idx + 1, total);
                 let _ = session.login().await;
             }
-            {
-                let mut s = shared.lock().unwrap();
-                s.set_phase(CapturePhase::Downloading, format!("Descargando {}...", m.label));
-                s.set_current(&m.label);
-                s.update_progress(pct, format!("[{}/{}] Descargando {}", idx + 1, total, m.label));
-            }
-            info!("=== {}/{}: {} ===", idx + 1, total, m.label);
-            let is_enero = m.label.ends_with("-01");
-            let mut success = false;
-            let mut systemic = false;
-            if !is_enero {
-                for attempt in 1..=3 {
-                    {
-                        let mut s = shared.lock().unwrap();
-                        s.update_progress(pct, format!("Intento {}/3 — {}", attempt, m.label));
-                        s.set_current(&format!("{} (intento {})", m.label, attempt));
-                    }
-                    info!("  intento {}/3", attempt);
-                    let res = session.download(m, &raw).await;
-                    match res {
-                        Ok(xls) => {
-                            info!("  Descargado: {}", xls.display());
-                            let csv_path = raw.join(format!("ventas_{}.csv", m.label));
-                            // El .xls recien descargado SIEMPRE se reconvierte (aunque exista un
-                            // CSV viejo): el mes actual se re-descarga a diario.
-                            if xls.exists() {
-                                if let Err(e) = crate::processor::xls::xls_to_csv(&xls, &csv_path) {
-                                    let msg = format!("Error convirtiendo {}: {e:#}", m.label);
-                                    warn!("  {msg}");
-                                    let mut s = shared.lock().unwrap();
-                                    s.update_progress(pct, &msg);
-                                    continue;
-                                }
-                            }
-                            {
-                                let mut s = shared.lock().unwrap();
-                                s.set_phase(CapturePhase::Parsing, format!("Parseando {}", m.label));
-                                s.set_current(&m.label);
-                                s.update_progress(pct + 0.02, format!("[{}/{}] Parseando {}", idx + 1, total, m.label));
-                            }
-                            if csv_path.exists() {
-                                let pool = init_pool().await?;
-                                if let Ok(ventas) = parse_export_csv_with_cross(&csv_path, &pool).await {
-                                    let n = insert_with_retry(&pool, &ventas, &m.label).await?;
-                                    info!("  Normalizado: {} filas -> {}", m.label, n);
-                                    {
-                                        let mut s = shared.lock().unwrap();
-                                        s.set_phase(CapturePhase::Parsing, format!("Insertadas {} filas", n));
-                                        s.update_progress(pct + 0.03, format!("[{}/{}] {} filas insertadas", idx + 1, total, n));
-                                    }
-                                }
-                            }
-                            let _ = std::fs::remove_file(raw.join(format!("failed_{}.json", m.label)));
-                            success = true;
-                            sys_fail = 0;
-                            break;
-                        }
-                        Err(e) => {
-                            warn!("  fail {}: {}", attempt, e);
-                            let es = format!("{e}");
-                            if es.contains("Timeout") || es.contains("timed out") || es.contains("deadline") {
-                                warn!("  timeout detectado — probe rapido de 1 dia para confirmar");
-                                let probe_label = format!("{}-probe", m.start.format("%Y-%m-%d"));
-                                let probe = MonthRange { start: m.start, end: m.start, label: probe_label };
-                                let probe_res = tokio::time::timeout(
-                                    StdDuration::from_secs(120),
-                                    session.download(&probe, &raw),
-                                ).await;
-                                let _ = std::fs::remove_file(raw.join(format!("ventas_{}.xls", probe.label)));
-                                let _ = std::fs::remove_file(raw.join(format!("ventas_{}.csv", probe.label)));
-                                let server_dead = matches!(probe_res, Ok(Err(_))) || probe_res.is_err();
-                                if server_dead {
-                                    systemic = true;
-                                    break;
-                                }
-                                info!("  probe OK — servidor volvio, reintentando mes");
-                            } else {
-                                sleep(StdDuration::from_secs(3)).await;
-                            }
-                        }
-                    }
-                }
-            }
-            if systemic {
+            // Cuerpo unico del mes: process_month. Antes existia aqui una copia
+            // inline de ~390 lineas (ruta secuencial) divergente en refresh de
+            // sesion/sys_fail/comentarios; unificada en el paso 4 de
+            // docs/REFACTOR_PLAN.md. process_month hace: descarga con reintentos,
+            // fallbacks (merge diario / granular / por dia / HTML), parse+insert,
+            // ETA y pacing inter-mes.
+            let sys = process_month(
+                &mut session, m, &raw, &shared, idx, total, &start_instant,
+                abort_flag.as_ref(), &mut ok, &mut fail,
+            ).await?;
+            if sys {
+                // process_month retorna systemic sin registrar en `fail` (igual
+                // que la ruta concurrente). Aqui se conserva el registro que
+                // tenia la ruta secuencial.
                 sys_fail += 1;
-                fail.push((m.label.clone(), "servidor intranet sin respuesta (timeout)".to_string()));
+                fail.push((
+                    m.label.clone(),
+                    "servidor intranet sin respuesta (timeout)".to_string(),
+                ));
                 warn!("  {} SYSTEMIC ({}/3)", m.label, sys_fail);
                 {
                     let mut s = shared.lock().unwrap();
-                    s.update_progress(pct, format!("{}: servidor sin respuesta ({}/{})", m.label, sys_fail, 3));
+                    s.update_progress(
+                        pct,
+                        format!("{}: servidor sin respuesta ({}/{})", m.label, sys_fail, 3),
+                    );
                 }
                 if sys_fail >= 3 {
                     let msg = "Servidor intranet caido (3 meses seguidos sin respuesta). Reintente en 30-60 min o en horario laboral.".to_string();
@@ -953,299 +888,6 @@ pub async fn run_batch_history(
                 continue;
             }
             sys_fail = 0;
-            if !success {
-                let mut recovered = false;
-                {
-                    let mut dias_ok = 0usize;
-                    let mut dias_tot = 0usize;
-                    let mut cur0 = m.start;
-                    while cur0 <= m.end {
-                        dias_tot += 1;
-                        let f = raw.join(format!("ventas_{}.csv", cur0.format("%Y-%m-%d")));
-                        if f.exists() && std::fs::metadata(&f).map(|mm| mm.len()>1000).unwrap_or(false) { dias_ok += 1; }
-                        cur0 = cur0 + Duration::days(1);
-                    }
-                    if dias_tot > 0 && dias_ok == dias_tot {
-                        info!("  {} todos los dailies presentes ({}/{}), merge directo", m.label, dias_ok, dias_tot);
-                        let merged = raw.join(format!("ventas_{}.csv", m.label));
-                        let mut parts0 = Vec::new();
-                        let mut cur1 = m.start;
-                        while cur1 <= m.end {
-                            let f = raw.join(format!("ventas_{}.csv", cur1.format("%Y-%m-%d")));
-                            if f.exists() { parts0.push(f); }
-                            cur1 = cur1 + Duration::days(1);
-                        }
-                        if merge_csvs(&parts0, &merged).is_ok() && merged.exists() && std::fs::metadata(&merged).map(|mm| mm.len()>1000).unwrap_or(false) {
-                            let pool = init_pool().await?;
-                            match parse_export_csv_with_cross(&merged, &pool).await {
-                                Ok(ventas) => match insert_with_retry(&pool, &ventas, &m.label).await {
-                                    Ok(n) => {
-                                        info!("  merge directo {} filas -> {}", m.label, n);
-                                        recovered = true;
-                                        ok.push(m.label.clone());
-                                        let _ = std::fs::remove_file(raw.join(format!("failed_{}.json", m.label)));
-                                    }
-                                    Err(e) => warn!("  merge directo insert fail: {}", e),
-                                },
-                                Err(e) => warn!("  merge directo parse fail: {}", e),
-                            }
-                        }
-                    }
-                }
-                if !recovered {
-                    let parts_list: Vec<usize> = if is_enero { vec![4,6,10] } else { vec![2,4,6,10] };
-                    for parts in parts_list {
-                        warn!("  {} fallo, probando {} partes", m.label, parts);
-                        let chunks = split_month_n(m, parts);
-                        let mut ok_chunks = 0;
-                        for h in &chunks {
-                            let mut h_ok = false;
-                            for ha in 1..=2 {
-                                let res_h = session.download(h, &raw).await;
-                                match res_h {
-                                    Ok(xls_h) => {
-                                        let csv_h = raw.join(format!("ventas_{}.csv", h.label));
-                                        match crate::processor::xls::xls_to_csv(&xls_h, &csv_h) {
-                                            Ok(_) if csv_h.exists() && std::fs::metadata(&csv_h).map(|m| m.len() > 500).unwrap_or(false) => {
-                                                h_ok = true;
-                                                break;
-                                            }
-                                            Ok(_) => warn!("  chunk {} xls_to_csv sin csv valido", h.label),
-                                            Err(e) => warn!("  chunk {} xls_to_csv failed: {}", h.label, e),
-                                        }
-                                    }
-                                    Err(e) => {
-                                        warn!("  chunk {} intento {} fail: {}", h.label, ha, e);
-                                        sleep(StdDuration::from_secs(2)).await;
-                                    }
-                                }
-                            }
-                            if h_ok { ok_chunks += 1; } else { break; }
-                            sleep(StdDuration::from_secs(1)).await;
-                        }
-                        if ok_chunks == chunks.len() {
-                            let merged = raw.join(format!("ventas_{}.csv", m.label));
-                            let mut parts = Vec::new();
-                            for h in &chunks {
-                                let part_csv = raw.join(format!("ventas_{}.csv", h.label));
-                                if part_csv.exists() { parts.push(part_csv); }
-                            }
-                            match merge_csvs(&parts, &merged) {
-                                Ok(n) => info!("  granular merge rust: {} filas -> {}", n, merged.display()),
-                                Err(e) => warn!("  granular merge rust failed: {e:#}"),
-                            }
-                            let merged_exists = merged.exists() && std::fs::metadata(&merged).map(|m| m.len() > 1000).unwrap_or(false);
-                            if merged_exists {
-                                match parse_export_csv_with_cross(&merged, &init_pool().await?).await {
-                                    Ok(ventas) if !ventas.is_empty() => {
-                                        match init_pool().await {
-                                            Ok(pool) => {
-                                                match insert_with_retry(&pool, &ventas, &m.label).await {
-                                                    Ok(n) => {
-                                                        info!("  granular insert {} filas -> {}", m.label, n);
-                                                        recovered = true;
-                                                        info!("  granular {} partes OK {}", parts.len(), m.label);
-                                                    },
-                                                    Err(e) => warn!("  granular insert fail {}: {}", m.label, e),
-                                                }
-                                            }
-                                            Err(e) => warn!("  pool fail: {}", e),
-                                        }
-                                    }
-                                    Ok(_) => warn!("  granular parse vacio {} (0 filas)", m.label),
-                                    Err(e) => warn!("  granular parse fail {}: {}", m.label, e),
-                                }
-                            } else {
-                                warn!("  granular {} merge no produjo CSV valido ({} bytes)", parts.len(), std::fs::metadata(&merged).map(|m| m.len()).unwrap_or(0));
-                            }
-                            if recovered {
-                                let _ = std::fs::remove_file(raw.join(format!("failed_{}.json", m.label)));
-                                break;
-                            } else { continue; }
-                        }
-                    }
-                }
-                if !recovered {
-                    warn!("  {} granular 10 fallo, probando dia-a-dia", m.label);
-                    let mut cur = m.start;
-                    let mut day_ok = 0;
-                    let mut day_total = 0;
-                    let mut consec_fail = 0usize;
-                    while cur <= m.end {
-                        day_total += 1;
-                        let label = cur.format("%Y-%m-%d").to_string();
-                        let day_range = MonthRange { start: cur, end: cur, label: label.clone() };
-                        let day_csv = raw.join(format!("ventas_{}.csv", label));
-                        let day_xls = raw.join(format!("ventas_{}.xls", label));
-                        let mut d_ok = false;
-                        if day_csv.exists() && std::fs::metadata(&day_csv).map(|m| m.len() > 1000).unwrap_or(false) {
-                            d_ok = true;
-                        } else if day_xls.exists() && std::fs::metadata(&day_xls).map(|m| m.len() > 1000).unwrap_or(false) {
-                            if crate::processor::xls::xls_to_csv(&day_xls, &day_csv).is_ok() && day_csv.exists() && std::fs::metadata(&day_csv).map(|m| m.len() > 500).unwrap_or(false) {
-                                d_ok = true;
-                            }
-                        } else {
-                            for _ha in 1..=2 {
-                                if _ha == 2 { let _ = session.login().await; }
-                                let res_d = session.download(&day_range, &raw).await;
-                                match res_d {
-                                    Ok(xls_d) => {
-                                        let csv_d = raw.join(format!("ventas_{}.csv", label));
-                                        if crate::processor::xls::xls_to_csv(&xls_d, &csv_d).is_ok() && csv_d.exists() && std::fs::metadata(&csv_d).map(|m| m.len() > 500).unwrap_or(false) {
-                                            d_ok = true;
-                                            break;
-                                        } else { warn!("  day {} xls_to_csv fallo", label); }
-                                    }
-                                    Err(_) => {}
-                                }
-                                sleep(StdDuration::from_secs(2)).await;
-                            }
-                            if !d_ok {
-                                warn!("  dia {} fail normal, probando split Art", label);
-                                match session.download_day_split(&day_range, &raw).await {
-                                    Ok(_) => {
-                                        if day_csv.exists() && std::fs::metadata(&day_csv).map(|m| m.len()>1000).unwrap_or(false) {
-                                            d_ok = true;
-                                            info!("  dia {} split Art OK", label);
-                                        }
-                                    }
-                                    Err(e) => warn!("  dia {} split Art fail: {}", label, e),
-                                }
-                            }
-                        }
-                        if d_ok {
-                            day_ok += 1;
-                            consec_fail = 0;
-                        } else {
-                            consec_fail += 1;
-                            if consec_fail == 3 {
-                                warn!("  3 dias seguidos fallan — backoff 15s + re-login");
-                                sleep(StdDuration::from_secs(15)).await;
-                                let _ = session.login().await;
-                            } else if consec_fail >= 6 {
-                                warn!("  {} dias seguidos sin exito — servidor caido", consec_fail);
-                                {
-                                    let mut s = shared.lock().unwrap();
-                                    s.update_progress(pct, format!("{}: servidor no responde tras {} días", m.label, consec_fail));
-                                }
-                                break;
-                            }
-                        }
-                        cur = cur + Duration::days(1);
-                        sleep(StdDuration::from_secs(1)).await;
-                    }
-                    if day_ok == day_total && day_total > 0 {
-                        let merged = raw.join(format!("ventas_{}.csv", m.label));
-                        let mut parts2 = Vec::new();
-                        let mut cur2 = m.start;
-                        while cur2 <= m.end {
-                            let f = raw.join(format!("ventas_{}.csv", cur2.format("%Y-%m-%d")));
-                            if f.exists() { parts2.push(f); }
-                            cur2 = cur2 + Duration::days(1);
-                        }
-                        match merge_csvs(&parts2, &merged) {
-                            Ok(n) => info!("  day-a-day merge rust: {} filas -> {}", n, merged.display()),
-                            Err(e) => warn!("  day-a-day merge rust failed: {e:#}"),
-                        }
-                        if merged.exists() {
-                            let pool = init_pool().await?;
-                            match parse_export_csv_with_cross(&merged, &pool).await {
-                                Ok(ventas) => {
-                                    match insert_with_retry(&pool, &ventas, &m.label).await {
-                                        Ok(n) => info!("  dia-a-dia insert {} filas -> {}", m.label, n),
-                                        Err(e) => warn!("  dia-a-dia insert fail {}: {}", m.label, e),
-                                    }
-                                }
-                                Err(e) => warn!("  dia-a-dia parse fail {}: {}", m.label, e),
-                            }
-                            let _ = std::fs::remove_file(raw.join(format!("failed_{}.json", m.label)));
-                            recovered = true;
-                            info!("  dia-a-dia OK {} ({}/{})", m.label, day_ok, day_total);
-                        }
-                    } else {
-                        let mut faltantes: Vec<String> = Vec::new();
-                        let mut cur_missing = m.start;
-                        while cur_missing <= m.end {
-                            let f = raw.join(format!("ventas_{}.csv", cur_missing.format("%Y-%m-%d")));
-                            if !(f.exists() && std::fs::metadata(&f).map(|mm| mm.len() > 1000).unwrap_or(false)) {
-                                faltantes.push(cur_missing.format("%Y-%m-%d").to_string());
-                            }
-                            cur_missing += Duration::days(1);
-                        }
-                        warn!("  {} incompleto ({}/{} dias); no se inserta", m.label, day_ok, day_total);
-                        let fail_path = raw.join(format!("failed_{}.json", m.label));
-                        let _ = std::fs::write(&fail_path, serde_json::to_string(&faltantes).unwrap_or_default());
-                        let _ = std::fs::remove_file(raw.join(format!("ventas_{}.csv", m.label)));
-                    }
-                    if !recovered {
-                        warn!("  {} dia-a-dia incompleto, probando fallback HTML L0", m.label);
-                        match session.scrape_html(m, &raw).await {
-                            Ok(_xls) => {
-                                let csv = raw.join(format!("ventas_{}.csv", m.label));
-                                if csv.exists() {
-                                    let pool = init_pool().await?;
-                                    match parse_export_csv_with_cross(&csv, &pool).await {
-                                        Ok(ventas) if !ventas.is_empty() => {
-                                            match insert_with_retry(&pool, &ventas, &m.label).await {
-                                                Ok(n) => { info!("  HTML fallback insert {} filas -> {}", m.label, n); recovered = true; let _ = std::fs::remove_file(raw.join(format!("failed_{}.json", m.label))); },
-                                                Err(e) => warn!("  HTML insert fail: {}", e),
-                                            }
-                                        }
-                                        Ok(_) => warn!("  HTML parse vacio"),
-                                        Err(e) => warn!("  HTML parse fail: {}", e),
-                                    }
-                                }
-                            }
-                            Err(e) => warn!("  HTML fallback fail {}: {}", m.label, e),
-                        }
-                    }
-                }
-                if recovered {
-                    ok.push(m.label.clone());
-                } else {
-                    let mut faltantes: Vec<String> = Vec::new();
-                    let mut cur3 = m.start;
-                    while cur3 <= m.end {
-                        let f = raw.join(format!("ventas_{}.csv", cur3.format("%Y-%m-%d")));
-                        if !(f.exists() && std::fs::metadata(&f).map(|mm| mm.len()>1000).unwrap_or(false)) {
-                            faltantes.push(cur3.format("%Y-%m-%d").to_string());
-                        }
-                        cur3 = cur3 + Duration::days(1);
-                    }
-                    if !faltantes.is_empty() {
-                        let fail_path = raw.join(format!("failed_{}.json", m.label));
-                        let _ = std::fs::write(&fail_path, serde_json::to_string(&faltantes).unwrap_or_default());
-                        warn!("  {} fail total — dias faltantes: {:?}", m.label, faltantes);
-                    }
-                    let detail = if faltantes.is_empty() { "3 intentos + granular 2/4/6/10/dia fallo".to_string() } else { format!("faltan dias {} — sube XLS manual", faltantes.join(",")) };
-                    fail.push((m.label.clone(), detail));
-                }
-            } else {
-                ok.push(m.label.clone());
-            }
-            let done_count = ok.len() + fail.len();
-            if done_count > 0 {
-                let elapsed = start_instant.elapsed().as_secs();
-                let avg = elapsed as f64 / done_count as f64;
-                let remaining = (total.saturating_sub(done_count)) as f64;
-                let eta = (avg * remaining).ceil() as u64;
-                let mut s = shared.lock().unwrap();
-                s.eta_secs = Some(eta);
-                let eta_m = eta / 60;
-                let eta_s = eta % 60;
-                let base_msg = s.message.clone();
-                let prefix = base_msg.split(" — ").next().unwrap_or(&base_msg);
-                s.update_progress(pct, format!("[{}/{}] {} — quedan ~{}m{}s", done_count, total, prefix, eta_m, eta_s));
-            }
-            if idx + 1 < total {
-                let item_secs = t_item.elapsed().as_secs();
-                let extra = if item_secs > 60 { (item_secs / 8).min(30) } else { 0 };
-                let wait = SLEEP_BETWEEN_MONTHS + extra;
-                if extra > 0 {
-                    info!("  pacing: mes tardo {item_secs}s -> pausa extendida {wait}s (base {} + extra {extra})", SLEEP_BETWEEN_MONTHS);
-                }
-                sleep(StdDuration::from_secs(wait)).await;
-            }
         }
     } else {
         // Ruta concurrente: N workers con sesiones independientes
