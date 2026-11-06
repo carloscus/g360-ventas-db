@@ -1394,6 +1394,10 @@ pub struct SupabaseInfo {
     /// Documentos distintos (COUNT(DISTINCT folio_unico)). None si la funcion
     /// RPC `g360_ventas_stats()` no esta creada en Supabase.
     pub total_documents: Option<i64>,
+    /// % de uso vs plan free 500 MB (0 si la vista vw_ventas_storage no existe).
+    pub pct_of_500mb: f64,
+    /// Tamaño total de la tabla (bytes) — 0 si la vista no existe.
+    pub total_bytes: i64,
 }
 
 /// Cuenta las filas de Supabase con `count=planned` (estimador del planner).
@@ -1524,7 +1528,51 @@ pub async fn get_supabase_info() -> Result<SupabaseInfo> {
     let min_date = fetch_edge_date(&client, &base, &key, "asc").await.unwrap_or_default();
     let max_date = fetch_edge_date(&client, &base, &key, "desc").await.unwrap_or_default();
     let total_documents = fetch_supabase_documents(&client, &url, &key).await.ok();
-    Ok(SupabaseInfo { min_date, max_date, total_rows, total_documents })
+    let (pct_of_500mb, total_bytes) =
+        fetch_storage_pct(&client, &url, &key).await.unwrap_or((0.0, 0));
+    Ok(SupabaseInfo {
+        min_date,
+        max_date,
+        total_rows,
+        total_documents,
+        pct_of_500mb,
+        total_bytes,
+    })
+}
+
+/// Lee la vista `vw_ventas_storage` para obtener % de uso vs plan 500 MB.
+/// Best-effort: si la vista no existe devuelve (0.0, 0).
+async fn fetch_storage_pct(
+    client: &reqwest::Client,
+    url: &str,
+    key: &str,
+) -> Result<(f64, i64)> {
+    let resp = client
+        .get(format!("{}/rest/v1/vw_ventas_storage", url))
+        .header("apikey", key)
+        .header("Authorization", format!("Bearer {}", key))
+        .query(&[("select", "pct_of_500mb,total_bytes"), ("limit", "1")])
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(anyhow::anyhow!("storage view {}", resp.status()));
+    }
+    let rows: serde_json::Value = resp.json().await?;
+    let first = rows.as_array().and_then(|a| a.first());
+    match first {
+        Some(v) => {
+            let pct = v
+                .get("pct_of_500mb")
+                .and_then(|x| x.as_f64())
+                .unwrap_or(0.0);
+            let bytes = v
+                .get("total_bytes")
+                .and_then(|x| x.as_i64())
+                .unwrap_or(0);
+            Ok((pct, bytes))
+        }
+        None => Ok((0.0, 0)),
+    }
 }
 
 /// Determina si hay que subir a Supabase. Chequeo LOCAL-FIRST, sin I/O a Supabase:

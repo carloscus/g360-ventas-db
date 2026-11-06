@@ -10,7 +10,7 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradient(circle at top,#11233d 0%,#080e1a 55%,#050b12 100%);color:#dfeaf6;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:12px;font-size:14px}
-.app{width:min(100%,720px);min-width:320px;padding:12px;display:flex;flex-direction:column;gap:10px;background:rgba(15,22,34,0.92);border:1px solid rgba(148,163,184,0.18);border-radius:16px;box-shadow:0 16px 40px rgba(0,0,0,0.35)}
+.app{width:min(100%,720px);min-width:320px;padding:9px;display:flex;flex-direction:column;gap:6px;background:rgba(15,22,34,0.92);border:1px solid rgba(148,163,184,0.18);border-radius:16px;box-shadow:0 16px 40px rgba(0,0,0,0.35)}
 
 /* Header */
 .header{display:flex;align-items:center;gap:8px}
@@ -24,33 +24,33 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 
 /* 3 Status Cards */
 .cards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-.card{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:10px;text-align:center}
-.card-icon{font-size:20px;margin-bottom:4px}
-.card-title{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:#5a7a9a;margin-bottom:6px}
-.card-value{font-size:18px;font-weight:800;color:#7dd3fc;letter-spacing:-0.02em}
-.card-sub{font-size:10px;color:#4a6a8a;margin-top:2px}
-.card-status{font-size:10px;font-weight:700;margin-top:4px;padding:2px 6px;border-radius:4px;display:inline-block}
+.card{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:6px 4px;text-align:center}
+.card-icon{font-size:15px;margin-bottom:1px}
+.card-title{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:#5a7a9a;margin-bottom:3px}
+.card-value{font-size:15px;font-weight:800;color:#7dd3fc;letter-spacing:-0.02em}
+.card-sub{font-size:9px;color:#4a6a8a;margin-top:1px}
+.card-status{font-size:9px;font-weight:700;margin-top:3px;padding:1px 5px;border-radius:4px;display:inline-block}
 .card-status.ok{background:rgba(34,197,94,0.15);color:#86efac}
 .card-status.warn{background:rgba(245,158,11,0.15);color:#f9d58a}
 .card-status.err{background:rgba(248,113,113,0.15);color:#f9b0b0}
 
 /* Quick Start */
-.quick-start{background:linear-gradient(135deg,rgba(14,165,233,0.12),rgba(56,189,248,0.08));border:1px solid rgba(56,189,248,0.25);border-radius:12px;padding:12px;display:flex;align-items:center;gap:10px}
+.quick-start{background:linear-gradient(135deg,rgba(14,165,233,0.12),rgba(56,189,248,0.08));border:1px solid rgba(56,189,248,0.25);border-radius:10px;padding:8px 10px;display:flex;align-items:center;gap:8px}
 .quick-start .qs-info{flex:1}
-.quick-start .qs-title{font-size:13px;font-weight:700;color:#bae6fd}
-.quick-start .qs-desc{font-size:11px;color:#7e96ad;margin-top:2px}
-.quick-start .qs-btn{background:#0ea5e9;color:#061220;border:none;border-radius:8px;padding:10px 16px;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap;transition:all 0.2s}
+.quick-start .qs-title{font-size:12px;font-weight:700;color:#bae6fd}
+.quick-start .qs-desc{font-size:10px;color:#7e96ad;margin-top:1px}
+.quick-start .qs-btn{background:#0ea5e9;color:#061220;border:none;border-radius:7px;padding:8px 14px;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap;transition:all 0.2s}
 .quick-start .qs-btn:hover{background:#00b377}
 .quick-start .qs-btn:disabled{opacity:.4;cursor:not-allowed}
 
 /* Modules */
 .modules{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-.module{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;cursor:pointer;transition:all 0.2s;text-align:center}
+.module{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:8px;cursor:pointer;transition:all 0.2s;text-align:center}
 .module:hover{background:rgba(255,255,255,0.06);border-color:rgba(56,189,248,0.3)}
 .module.active{background:rgba(56,189,248,0.12);border-color:rgba(56,189,248,0.4)}
-.module-icon{font-size:24px;margin-bottom:6px}
-.module-title{font-size:12px;font-weight:700;color:#cfe4f7}
-.module-desc{font-size:10px;color:#5a7a9a;margin-top:2px}
+.module-icon{font-size:18px;margin-bottom:3px}
+.module-title{font-size:11px;font-weight:700;color:#cfe4f7}
+.module-desc{font-size:9px;color:#5a7a9a;margin-top:1px}
 
 /* Module Content */
 .module-content{display:none;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:12px}
@@ -73,6 +73,12 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .form-group label{font-size:11px;color:#5a7a9a;display:block;margin-bottom:3px}
 .form-group input{width:100%;padding:6px 8px;border-radius:4px;border:1px solid rgba(255,255,255,0.1);background:rgba(10,20,35,0.6);color:#fff;font-size:13px;font-family:inherit}
 .form-group input:focus{outline:none;border-color:#0ea5e9}
+
+/* Allowlist multiselección */
+.lines-grid{display:flex;flex-wrap:wrap;gap:4px}
+.line-chip{padding:3px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);color:#6a829e;font-size:11px;font-weight:700;font-family:monospace;cursor:pointer;transition:all .15s;user-select:none}
+.line-chip:hover{border-color:rgba(56,189,248,0.4);color:#bae6fd}
+.line-chip.on{background:rgba(14,165,233,0.25);border-color:rgba(56,189,248,0.55);color:#7dd3fc}
 
 /* Status */
 .status{background:rgba(56,189,248,0.08);border-radius:6px;padding:8px;font-size:12px;color:#7dd3fc;display:none;margin-top:8px;white-space:pre-line;border:1px solid rgba(56,189,248,0.15);max-height:120px;overflow-y:auto}
@@ -241,6 +247,11 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
       <label>Retención (días)</label>
       <input type="number" id="cfgRetention" placeholder="1277"/>
     </div>
+    <div class="form-group">
+      <label>Allowlist de líneas (clic para activar/desactivar — viaja en el cartucho)</label>
+      <div id="cfgLinesGrid" class="lines-grid"></div>
+      <input type="text" id="cfgLinesExtra" placeholder="líneas extra (coma-separadas)" style="margin-top:5px"/>
+    </div>
     <div class="btn-row">
       <button class="btn btn-p" id="cfgSaveBtn">💾 Guardar</button>
       <button class="btn btn-s" id="cfgTestBtn">🔍 Test conexión</button>
@@ -313,8 +324,9 @@ async function loadStatus() {
     document.getElementById('dbRows').textContent = fmtNum(h.total_records);
     document.getElementById('dbLast').textContent = h.max_date || '--';
     const dbS = document.getElementById('dbStatus');
-    dbS.textContent = h.status === 'ok' ? '✅ OK' : '⚠️ Revisar';
-    dbS.className = 'card-status ' + (h.status === 'ok' ? 'ok' : 'warn');
+    const dbOk = (h.status || '').toUpperCase() === 'OK';
+    dbS.textContent = dbOk ? '✅ OK' : '⚠️ Revisar';
+    dbS.className = 'card-status ' + (dbOk ? 'ok' : 'warn');
 
     // Supabase
     try {
@@ -360,11 +372,15 @@ async function loadStatus() {
 document.querySelectorAll('.module').forEach(m => {
   m.addEventListener('click', () => {
     const mod = m.dataset.module;
-    // Toggle active
+    const wasActive = m.classList.contains('active');
+    // Toggle: clickear de nuevo cierra (expandir a necesidad)
     document.querySelectorAll('.module').forEach(x => x.classList.remove('active'));
     document.querySelectorAll('.module-content').forEach(x => x.classList.remove('active'));
+    if (wasActive) return; // cerrado
     m.classList.add('active');
     document.getElementById('module-' + mod).classList.add('active');
+    // Cargar datos frescos al abrir un módulo
+    if (mod === 'config') loadConfigModule();
   });
 });
 
@@ -380,6 +396,59 @@ document.getElementById('settingsBtn').addEventListener('click', () => {
     document.getElementById('cfgRetention').value = cfg.supabase_retention_days || 1277;
   }).catch(() => {});
 });
+
+// ─── Allowlist multiselección ────────────────────────────────────────────────
+const ALL_LINES = ["01","02","09","11","14","72","73","75","76","77","78","79",
+                   "81","85","99","AD","CA","CB","CC","CD","CE","CF","CG","MA"];
+
+function renderLines(selected) {
+  const grid = document.getElementById('cfgLinesGrid');
+  grid.innerHTML = '';
+  const sel = new Set(selected.map(s => s.toUpperCase()));
+  // Chips de las líneas estándar
+  ALL_LINES.forEach(l => {
+    const chip = document.createElement('span');
+    chip.className = 'line-chip' + (sel.has(l) ? ' on' : '');
+    chip.textContent = l;
+    chip.dataset.line = l;
+    chip.addEventListener('click', () => chip.classList.toggle('on'));
+    grid.appendChild(chip);
+  });
+  // Chips custom (seleccionadas pero no estándar) — punteados
+  selected.map(s => s.toUpperCase())
+    .filter(l => !ALL_LINES.includes(l))
+    .forEach(l => {
+      const chip = document.createElement('span');
+      chip.className = 'line-chip on custom';
+      chip.textContent = l;
+      chip.dataset.line = l;
+      chip.addEventListener('click', () => chip.classList.remove('on'));
+      grid.appendChild(chip);
+    });
+  // Extras del input de texto
+  document.getElementById('cfgLinesExtra').value =
+    selected.map(s => s.toUpperCase()).filter(l => !ALL_LINES.includes(l)).join(',');
+}
+
+function getSelectedLines() {
+  const chips = [...document.querySelectorAll('#cfgLinesGrid .line-chip.on')]
+    .map(c => c.dataset.line);
+  const extras = document.getElementById('cfgLinesExtra').value
+    .split(/[,\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+  return [...new Set([...chips, ...extras])];
+}
+
+// Carga la config actual en el módulo Config Supabase (URL, retención, allowlist)
+async function loadConfigModule() {
+  try {
+    const cfg = await invoke('get_settings');
+    document.getElementById('cfgUrl').value = cfg.supabase_url || '';
+    document.getElementById('cfgRetention').value = cfg.supabase_retention_days || 1277;
+    // allowed_lines viene como String comma-joined ("01, 02, 09...")
+    const lines = String(cfg.allowed_lines || '').split(',').map(s => s.trim()).filter(Boolean);
+    renderLines(lines);
+  } catch(e) { console.error('loadConfigModule:', e); }
+}
 
 // ─── Quick Start ─────────────────────────────────────────────────────────────
 document.getElementById('quickStartBtn').addEventListener('click', async () => {
@@ -459,13 +528,17 @@ document.getElementById('qualityBtn').addEventListener('click', async () => {
 document.getElementById('cfgSaveBtn').addEventListener('click', async () => {
   try {
     const cfg = await invoke('get_settings');
+    // Allowlist desde los chips multiselección → String comma-joined
+    const selected = getSelectedLines();
+    const linesStr = selected.join(',');
+    const nLines = selected.length;
     await invoke('save_settings', {
       supabaseUrl: document.getElementById('cfgUrl').value || cfg.supabase_url,
       supabaseKey: cfg.supabase_key || '',
       intranetUser: cfg.intranet_user || '',
       intranetPass: cfg.intranet_pass || '',
       generadoPor: cfg.generado_por || '',
-      allowedLines: cfg.allowed_lines || [],
+      allowedLines: linesStr || cfg.allowed_lines || '',
       autoSync: cfg.auto_sync !== false,
       appRetentionYears: cfg.app_retention_years || 3,
       supabaseRetentionYears: 0,
@@ -474,7 +547,7 @@ document.getElementById('cfgSaveBtn').addEventListener('click', async () => {
       captureTimes: cfg.capture_times || ['12:00','20:00'],
       supabaseEnabled: true
     });
-    show('configStatus', '✅ Configuración guardada', 'ok');
+    show('configStatus', `✅ Guardada — allowlist: ${nLines} líneas (viaja en el cartucho)`, 'ok');
   } catch(e) {
     show('configStatus', '❌ Error: ' + e, 'err');
   }

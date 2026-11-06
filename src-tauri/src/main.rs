@@ -1896,7 +1896,10 @@ async fn get_monthly_monitor() -> Result<serde_json::Value, String> {
     let arr: Vec<serde_json::Value> = rows
         .iter()
         .map(|r| serde_json::json!({
-            "mes": r.mes_ref, "filas": r.filas, "unidades": r.clientes, "soles": r.total_soles
+            "mes_ref": r.mes_ref,
+            "filas": r.filas,
+            "total_soles": r.total_soles,
+            "clientes": r.clientes
         }))
         .collect();
     Ok(serde_json::Value::Array(arr))
