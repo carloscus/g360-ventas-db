@@ -14,8 +14,6 @@ use commands::*;
 
 /// Ejecuta el pipeline diario y sale. Usado por Task Scheduler.
 async fn run_auto_sync_and_exit() -> ! {
-    use chrono::{Local, TimeDelta};
-    
     let cfg = g360_db_ventas::config::load_config();
     
     // Verificar configuración mínima
@@ -39,27 +37,20 @@ async fn run_auto_sync_and_exit() -> ! {
     };
 
     // Paso 1: Capturar desde (MAX(fecha_orig) - 1) hasta hoy.
-    // Mismo buffer que el botón manual: si la PC estuvo apagada el fin de semana
-    // (o varios días), el ERP conserva los datos y este rango los recupera todo.
-    // Capturar SOLO "ayer" perdería los días intermedios del gap.
+    // Helper único con buffer (db::freshness): si la PC estuvo apagada el fin
+    // de semana (o varios días), el ERP conserva los datos y este rango los
+    // recupera todo. Capturar SOLO "ayer" perdería los días intermedios.
     println!("Paso 1: Capturando desde el último día registrado (buffer -1)...");
-    let start = {
-        let last: Option<String> = sqlx::query_scalar("SELECT MAX(fecha_orig) FROM ventas")
-            .fetch_one(&pool)
-            .await
-            .unwrap_or(None);
-        match last {
-            Some(d) => {
-                if let Ok(dt) = chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d") {
-                    (dt - chrono::Duration::days(1)).format("%Y-%m-%d").to_string()
-                } else {
-                    d
-                }
-            }
-            None => {
-                // BD vacía: capturar solo el día anterior (primer arranque)
-                (Local::now().naive_local().date() - TimeDelta::days(1)).to_string()
-            }
+    let start = match g360_db_ventas::db::freshness::last_captured_date(
+        &pool,
+        g360_db_ventas::db::freshness::CAPTURE_BUFFER_DAYS,
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("ERROR: No se pudo determinar la última fecha: {}", e);
+            std::process::exit(1);
         }
     };
     println!("  Rango: {} -> hoy", start);

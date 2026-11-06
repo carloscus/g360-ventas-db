@@ -119,30 +119,17 @@ pub async fn sync_from_last() -> Result<CaptureStatus, String> {
     }
     let shared: SharedProgress = CAPTURE_STATE.clone();
 
-    // Consultar la ultima fecha capturada para sincronizar desde ahi
+    // Consultar la ultima fecha capturada para sincronizar desde ahi.
+    // Buffer -1 día (CAPTURE_BUFFER_DAYS): mismo criterio que sync_smart y el
+    // pipeline del task-scheduler — cubre documentos posteados con retraso.
     let last_date = {
         let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
-        let last: Option<String> = sqlx::query_scalar("SELECT MAX(fecha_orig) FROM ventas")
-            .fetch_one(&pool)
-            .await
-            .unwrap_or(None);
-        last.unwrap_or_else(|| {
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-            // Formato yyyy-mm-dd en hora Peru (UTC-5)
-            let secs_pe = now.saturating_sub(5 * 3600);
-            let days = (secs_pe / 86400) as i64;
-            let z = days + 719468;
-            let era = if z >= 0 { z } else { z - 146096 } / 146097;
-            let doe = (z - era * 146097) as i64;
-            let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-            let mut y = yoe + era * 400;
-            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-            let mp = (5 * doy + 2) / 153;
-            let d = doy - (153 * mp + 2) / 5 + 1;
-            let m = if mp < 10 { mp + 3 } else { mp - 9 };
-            if m <= 2 { y += 1; }
-            format!("{:04}-{:02}-{:02}", y, m, d)
-        })
+        g360_db_ventas::db::freshness::last_captured_date(
+            &pool,
+            g360_db_ventas::db::freshness::CAPTURE_BUFFER_DAYS,
+        )
+        .await
+        .map_err(|e| e.to_string())?
     };
 
     let mut s = shared.lock().unwrap();
@@ -206,36 +193,14 @@ pub async fn sync_smart(sync_supabase: Option<bool>) -> Result<CaptureStatus, St
     let shared: SharedProgress = CAPTURE_STATE.clone();
     let last_date = {
         let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
-        let last: Option<String> = sqlx::query_scalar("SELECT MAX(fecha_orig) FROM ventas")
-            .fetch_one(&pool)
-            .await
-            .unwrap_or(None);
-        match last {
-            Some(d) => {
-                // Buffer -1 día: cubre documentos posteados con retraso en el ERP
-                if let Ok(dt) = chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d") {
-                    (dt - chrono::Duration::days(1)).format("%Y-%m-%d").to_string()
-                } else {
-                    d
-                }
-            }
-            None => {
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-                let secs_pe = now.saturating_sub(5 * 3600);
-                let days = (secs_pe / 86400) as i64;
-                let z = days + 719468;
-                let era = if z >= 0 { z } else { z - 146096 } / 146097;
-                let doe = (z - era * 146097) as i64;
-                let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-                let mut y = yoe + era * 400;
-                let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-                let mp = (5 * doy + 2) / 153;
-                let d = doy - (153 * mp + 2) / 5 + 1;
-                let m = if mp < 10 { mp + 3 } else { mp - 9 };
-                if m <= 2 { y += 1; }
-                format!("{:04}-{:02}-{:02}", y, m, d)
-            }
-        }
+        // Helper único con buffer -1 día (consistente con sync_from_last y
+        // el pipeline del task-scheduler; ver db::freshness).
+        g360_db_ventas::db::freshness::last_captured_date(
+            &pool,
+            g360_db_ventas::db::freshness::CAPTURE_BUFFER_DAYS,
+        )
+        .await
+        .map_err(|e| e.to_string())?
     };
 
     CAPTURE_ABORT.store(false, Ordering::Relaxed);
