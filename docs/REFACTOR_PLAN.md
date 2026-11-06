@@ -1,87 +1,138 @@
 # Plan de Refactor — división de módulos grandes
 
-> Auditoría de arquitectura (nov-2026). Pendiente de ejecutar; NO bloquea el
-> uso de la app. Los tests deben seguir en verde (26 suites) en cada paso.
+> Auditoría de arquitectura (nov-2026) → **EJECUTADO en su mayor parte**
+> (pasos 1-5, commits `d34a207`…`7f16491`). Tests: **26 suites verdes en
+> cada paso**. Este documento queda como registro de lo hecho y de lo
+> pendiente menor.
 
-## Diagnóstico actual
+## Estado final
 
-| Archivo | Líneas | Problema |
+| Paso | Qué | Commit | Estado |
+|---|---|---|---|
+| 1 | `main.rs` → `commands/`×8 + `state.rs` + `types.rs` | `d34a207` | ✅ Hecho |
+| 2 | `uploader.rs` → facade + `purge`/`reconcile`/`sync`/`info` | `5a063a7` | ✅ Hecho |
+| 3 | Dedup buffer −1 día → `db::freshness` + **fix `sync_from_last`** | `6faa298` | ✅ Hecho (parcial ver detalle) |
+| 4 | `capture.rs`: ruta secuencial delega en `process_month` | `51e184e` | ✅ Hecho (diferente al plan original) |
+| 5 | A4: comandos sin UI → eliminados por lotes | `7f16491` | ✅ Hecho (opción a) |
+| 6 | `[workspace]` raíz (un solo Cargo.lock) | — | ⏸️ No hecho (opcional) |
+
+### Resultado medido
+
+| Métrica | Antes | Después |
 |---|---|---|
-| `src-tauri/src/main.rs` | ~2475 | 62 comandos `#[tauri::command]` en un solo archivo |
-| `src/processor/uploader.rs` | ~1773 | Mezcla purga + reconcile + sync + info/consultas |
-| `src/capture.rs` | ~1433 | `process_month` (~410) + `run_batch_history` (~660) con loop día-a-día duplicado 4 veces |
-| `src/db/writer.rs` | ~1233 | Aceptable para el dominio, pero creciendo |
-
-### Funciones >80 líneas en `main.rs`
-- `sync_smart` (174) · `run_auto_sync_and_exit` (115) · `clear_db` (110) · `run_full_flow` (108) · `sync_from_last` (95)
+| `src-tauri/src/main.rs` | 2 475 líneas / 62 comandos | **~215 líneas / 26 comandos** |
+| `src/processor/uploader.rs` | 1 773 líneas | **87 líneas (fachada)** + 4 módulos |
+| `src/capture.rs` | 1 433 líneas | **1 075 líneas** |
+| Comandos registrados | 62 (39 sin UI) | **26** (25 usados + 1 conservado) |
 
 ---
 
-## Propuesta de split
+## Detalle por paso (qué se hizo vs. qué se planificó)
 
-### 1. `src-tauri/src/main.rs` → módulo `commands/`
+### 1. `main.rs` → `commands/` ✅
 
-```
-src-tauri/src/
-├── main.rs          # Builder, invoke_handler, RunEvent (~200 líneas)
-├── state.rs         # CAPTURE_STATE, caches, invalidate_dashboard_caches
-└── commands/
-    ├── mod.rs       # pub use de todos
-    ├── dashboard.rs # get_dashboard, get_health, get_local_metrics, get_db_health
-    ├── config.rs    # get/save_settings, test_supabase, is_first_run, save_first_config
-    ├── capture.rs   # capture_range, sync_smart, sync_from_last, run_full_flow, abort_capture, get_capture_status
-    ├── sync.rs      # upload_*, reconcile_supabase_cmd, reset_sync_marker, auto_daily_pipeline, get_next_capture_time
-    ├── months.rs    # list/delete_months, import_manual_*, preview_import, reparse_raw, get_completeness, get_failed_days
-    ├── audit.rs     # verify_integrity, calculate_checksums, recalculate_checksums, get_data_quality, checksum/sync history, export_nc_ndb, monitor
-    ├── cartucho.rs  # export_canonical_snapshot, export_full_db, backup_db, zip_cartucho_cmd, get_last_cartucho, verify contract
-    └── maintenance.rs # vacuum_db, clear_cache, clear_db, admin_reset, open_data_folder, normalize_query_id_cmd, scheduled task
-```
+- Split **mecanizado con script** que valida **cobertura 2475/2475 líneas**
+  (ni una perdida) ni solapes antes de escribir.
+- Nueva estructura: `state.rs` (statics/caches `pub(crate)`), `types.rs`
+  (structs de respuesta), `commands/` con 8 dominios
+  (dashboard, config, capture, sync, months, audit, cartucho, maintenance).
+- `commands/mod.rs` centraliza `verify_intranet_credentials` (compartido).
+- Lecciones (por si se repite): `#[tauri::command]` solo genera
+  `#[macro_export]` si la fn es `pub` → 53 fns hechas `pub`;
+  `#[macro_use] mod commands;` para que `generate_handler!` resuelva los
+  macros `__cmd__*`; `use state::CAPTURE_STATE;` en `main`.
 
-Re-export: `mod commands; use commands::*;` — los nombres públicos no cambian → `generate_handler!` intacto.
-**Esfuerzo M · Riesgo bajo** (mover sin cambiar lógica).
+### 2. `uploader.rs` → 4 módulos ✅
 
-### 2. `src/processor/uploader.rs` → 4 módulos
+- `purge.rs` (purga por lotes) · `reconcile.rs` (mes por mes + circuit
+  breaker) · `sync.rs` (upload/incremental/dry-run) · `info.rs` (consultas
+  ligeras de Supabase).
+- Fachada `uploader.rs` conserva `VENTA_SELECT_COLS` + `map_venta_row`
+  (compartidos; visibles a los hijos por regla de ancidencia).
+- Rutas públicas intactas vía `pub use` (`uploader::ProgressCb`,
+  `uploader::reconcile_supabase`, …).
 
-| Nuevo archivo | Funciones (líneas actuales) |
-|---|---|
-| `uploader/purge.rs` | `delete_month_batched` (499), `delete_days_in_month_batched` (621), `purge_supabase_window` (740), `cleanup_supabase_retention` (796) |
-| `uploader/reconcile.rs` | `reconcile_month` (909), `reconcile_supabase` (961), `local_month_checksum`, `resync_stale_months` |
-| `uploader/sync.rs` | `upload_to_supabase`, `upload_all`, `sync_month_days`, `sync_incremental`, `check_supabase_needs_sync`, `dry_run_upload`, `verify_upload_result` |
-| `uploader/info.rs` | `count_supabase_rows`, `fetch_*`, `get_supabase_info`, `test_supabase_connection` |
+### 3. Dedup buffer −1 día ✅ (parcial)
 
-`uploader.rs` queda como fachada: `mod purge; mod reconcile; mod sync; mod info; pub use ...` (imports externos intactos).
-**Esfuerzo M · Riesgo bajo** (extracción pura con `pub use`).
+- **Hecho**: `src/db/freshness.rs` con `last_captured_date(pool, buffer_days)`
+  + `CAPTURE_BUFFER_DAYS = 1`; consumido por `sync_smart`,
+  `sync_from_last` y `run_auto_sync`. **Fix real**: `sync_from_last` no
+  aplicaba buffer (perdía documentos tardíos) — ahora las 3 rutas usan el
+  mismo criterio. Algoritmo civil-date manual (era/doe) eliminado.
+- **No hecho (menor)**: `parse_date` (dd/mm/yyyy) sigue duplicado entre
+  `parser.rs` (privado) y `bin/normaliza_fechas.rs`; SHA-256 de manifest
+  tiene 2 copias (`writer.rs` vs `bin/build_initial_cartucho.rs`).
 
-### 3. `src/capture.rs` — eliminar duplicación primero, luego dividir
+### 4. `capture.rs` — ejecutado con un enfoque DISTINTO al plan ✅
 
-1. **Extraer `download_month_dayloop(...)`**: el loop día-a-día está copiado 4 veces (~103 líneas idénticas × 4). Una sola función parametrizada.
-2. Luego dividir: `capture/pipeline.rs` (run_batch_history) + `capture/month.rs` (process_month) + `capture/lock.rs` (acquire_lock, progress).
+El plan original decía "extraer `download_month_dayloop` ×4". El análisis
+previo (diff semántico) mostró el problema real:
 
-**Esfuerzo M-Med · Riesgo medio** (la duplicación es idéntica pero hay variaciones sutiles; hacer extraer + 4 reemplazos + tests).
+- `process_month` (~410 líneas) y `run_batch_history` compartían **92.2 %**
+  de su lógica: la ruta **secuencial** (`num_workers == 1`) tenía el cuerpo
+  del mes **inline** (≈390 líneas) mientras la ruta **concurrente** ya
+  delegaba en `process_month`.
+- Divergencias reales mapeadas antes de tocar: refresh de sesión c/6 meses
+  (ambas rutas), `sys_fail` circuit breaker + `fail.push` en systemic
+  (`process_month` retorna systemic **sin** push), ETA+pacing (ya dentro de
+  `process_month`), `session` vs `transport` (mismo tipo: `create_transport`).
 
-### 4. Deduplicación entre `main.rs` ↔ `src/` (pendiente de la auditoría de limpieza)
+**Solución aplicada** (`51e184e`): la ruta secuencial ahora llama a
+`process_month(...)` y conserva en el caller solo el manejo de `sys_fail`
+(incl. `fail.push`) + refresh c/6 + abort pre-check. `capture.rs`:
+**1433 → 1075 líneas (−358)** y las 2 rutas comparten el mismo pipeline
+de cero deriva futura.
 
-- `last_captured_date(pool, buffer_days)` único (hoy: 4 copias del buffer −1 día) → `src/db/freshness.rs`
-  - De paso corrige la **inconsistencia**: `sync_from_last` NO aplica buffer mientras `sync_smart`/`run_auto_sync` sí.
-- `parse_date` (dd/mm/yyyy) → `pub` en parser y reusar en `bin/normaliza_fechas`.
-- SHA-256 de manifest → helper único (2 copias).
+- **No hecho (opcional)**: dividir `capture.rs` en `pipeline/month/lock`
+  (con la duplicación eliminada, el valor baja y el riesgo no compensa).
 
-### 5. A4 — 39 comandos sin UI (decisión requerida)
+### 5. A4 — comandos sin UI ✅ (opción a: eliminar, por lotes)
 
-La UI minimalista invoca ~23 de 62 comandos. Opciones:
-- **(a) Eliminar** los 39 no usados (mayor limpieza; git los recupera)
-- **(b) Feature flag** `legacy-commands` en Cargo (compilar bajo demanda)
-- **(c) Mantener** (superficie API para debugging vía devtools)
+- Inventario exacto con fuente de verdad (`invoke('...')` vs
+  `generate_handler`): **62 registrados / 23 usados / 39 sin UI**.
+- **36 eliminados** en 3 lotes con `cargo check` + tests entre lote
+  (script con validación: fn encontrado + salido del handler; aborta sin
+  escribir si algo falla).
+  - Lote 1: `sync_from_last`, `run_full_flow`, `capture_range`, `upload_all`,
+    `reconcile_supabase_cmd`, `reset_sync_marker`, `upload_dry_run`,
+    `upload_all_with_verify`, `calculate_checksums`, `recalculate_checksums`,
+    `auto_daily_pipeline`, `get_next_capture_time`
+  - Lote 2: `list_months`, `delete_month(s)`, `get_completeness`,
+    `get_failed_days`, `import_manual_*`, `preview_import`, `preview_csv`,
+    `reparse_raw`, `get_credentials_status`, `test_intranet`
+  - Lote 3: `get_dashboard`, `get_local_metrics`, `get_db_health`,
+    `clear_cache`, `clear_db`, `admin_reset`, `vacuum_db`, `export_full_db`,
+    `verify_integrity`, `get/checksum_history`, `get_sync_history`,
+    `get_contract_metadata`
+- **3 conservados**: `abort_capture` (+botón ⏹ en UI), `save_service_role_key`
+  (+cableado: el campo de Config existía pero nunca se guardaba — bug),
+  `normalize_query_id_cmd` (entregado; UI de búsqueda pendiente).
+- **Estado final: 26 registrados / 25 usados por la UI / 1 pendiente.**
 
-Recomendación: **(a) por lotes** — empezar por duplicados obvios: `calculate_checksums` vs `recalculate_checksums`, `sync_from_last` vs `sync_smart` vs `run_full_flow`, `upload_all` vs `upload_all_with_verify`.
+### 6. `[workspace]` raíz ⏸️ No hecho
+
+Ahorra un Cargo.lock doble y builds más rápidos. Bajo riesgo pero requiere
+mover/verificar `Cargo.lock` y perfiles; dejar para sesión dedicada.
 
 ---
 
-## Orden de ejecución sugerido
+## Pendientes menores (bajo riesgo, sin urgencia)
 
-1. Split `main.rs` → `commands/` (riesgo bajo, alto impacto)
-2. Split `uploader.rs` → 4 módulos
-3. Dedup buffer −1 + `parse_date` + SHA-256 (corrige inconsistencia de `sync_from_last`)
-4. Extraer `download_month_dayloop` en `capture.rs` (quitar 3 copias)
-5. A4: eliminar comandos sin UI por lotes (con test + build entre lotes)
-6. Opcional: `[workspace]` raíz (un solo Cargo.lock, builds más rápidos)
+1. `parse_date` → `pub` en `parser.rs` y reusar en `bin/normaliza_fechas.rs`
+2. Helper único de SHA-256 de manifest (`writer.rs` ↔ `bin/build_initial_cartucho.rs`)
+3. UI de búsqueda usando `normalize_query_id_cmd` (comando conservado)
+4. Opcional: `[workspace]` raíz (paso 6)
+5. Opcional: dividir `capture.rs` en submódulos (solo si vuelve a crecer)
+
+## Protocolo seguido (para futuros refactors)
+
+1. **Script de split con validación previa**: cobertura de líneas
+   (sum(gaps)+sum(items) == total), sin solapes, sin items perdidos →
+   aborta sin escribir si falla.
+2. **Verde obligatorio por paso**: `cargo check --all-targets` + `cargo test`
+   (26 suites) antes de cada commit checkpoint.
+3. **`cargo fix --allow-dirty`** tras cada split (imports huérfanos).
+4. **Commits incrementales** (`d34a207` → `5a063a7` → `6faa298` →
+   `51e184e` → `7f16491`), todos pusheados: revertible por separado.
+5. **Análisis semántico previo** en los no-mecánicos (paso 4: diff mostró
+   divergencias reales → se mapearon y conservaron antes de tocar).

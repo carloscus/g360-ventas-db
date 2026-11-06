@@ -165,6 +165,12 @@ un solo artefacto `.0`. `clean_id()` NO hace zero-fill ni zero-strip.
 4. `preview_import()` — muestra el aviso antes de confirmar.
 5. Tests en `tests/sku_column_guard.rs` + fixtures `tests/fixtures/`.
 
+> **Actualización (refactor `7f16491`)**: los comandos 3 y 4 fueron
+> eliminados de la UI (sin botón). El guard sigue vivo en el nivel librería
+> (`inspect_sku_column`) y ahora se ejercita desde el bin CLI `importxls`
+> (`src/bin/importxls.rs`), que bloquea igual antes de insertar. El warn! de
+> `xls_to_csv()` (punto 2) no cambió.
+
 ### Propiedad de las alertas (decisión de alcance)
 
 Las alertas restantes de `detectar_entidades_duplicadas` son **propias de la
