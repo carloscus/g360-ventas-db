@@ -123,6 +123,37 @@ mover/verificar `Cargo.lock` y perfiles; dejar para sesión dedicada.
 3. UI de búsqueda usando `normalize_query_id_cmd` (comando conservado)
 4. Opcional: `[workspace]` raíz (paso 6)
 5. Opcional: dividir `capture.rs` en submódulos (solo si vuelve a crecer)
+6. **Logger en modo `--task-scheduler`**: `main()` solo inicializa `app.log`
+   en la rama GUI (`main.rs` L135-160); la rama task (L128-132) corre sin
+   subscriber y `run_auto_sync_and_exit` usa `println!` → Task Scheduler
+   descarta el stdout. **Las corridas diarias (00:00/14:00) no dejan rastro
+   auditable**. Fix: extraer `init_file_logging()` y llamarla en ambas ramas
+   + rebuild + reinstalar (el task apunta al exe instalado en
+   `AppData\Local\G360 DB Ventas\`). Detectado 06/11 durante la verificación
+   del cron. → **EN CURSO 06/11** (fix aplicado, pendiente verificación).
+7. **Dashboard hace `COUNT(*)` en vivo cada 2 min** (3-4.5 s sobre 2.8M filas,
+   WARNs en `app.log`) en vez de leer `stats_cache` (que ya existe y se
+   refresca post-captura). Ver observación de rendimiento 06/11.
+8. **Cron: rama "solo captura local" inalcanzable** — `run_auto_sync_and_exit`
+   sale con `exit(1)` si Supabase no está configurado (L20) *antes* de la
+   rama que maneja "solo local" (L75). Una PC sin credenciales Supabase
+   nunca podría correr el cron en modo local.
+9. **Rotación de cartuchos no borra el `.zip` hermano** (writer.rs
+   `rotate_*` solo elimina `.db`): cada zip huérfano = 338 MB en `export/`.
+10. **7 warnings dead code del A4** (comandos borrados dejaron fns/types sin
+    uso): `verify_intranet_credentials`, `reject_numeric_sku`,
+    `DASHBOARD_CACHE_TTL_SECS`, `set_state`, `CompletenessInfo`,
+    `FailedDayInfo`, `PreviewResult`.
+11. **`PRAGMA optimize` (ANALYZE) en init**: cuesta ~71 s cuando los stats
+    están obsoletos (p.ej. tras cambiar índices o después de capturas). En
+    régimen normal no corre (medido 06/11: init <1 s), pero puede aparecer
+    ~71 s en el primer arranque posterior a escrituras. Si molesta, gatearlo
+    por `g360_meta` como el bloque de reparación.
+12. **Deuda `cargo fmt`**: `src/db/writer.rs` tiene ~68 hunks preexistentes
+    (nunca se formateó el archivo completo; formatearlo metería ruido ajeno
+    en un commit funcional → hacerlo como commit `chore` aparte).
+    `src-tauri/src/main.rs` HEAD estaba limpio → se formateó solo su región
+    editada (06/11).
 
 ## Protocolo seguido (para futuros refactors)
 

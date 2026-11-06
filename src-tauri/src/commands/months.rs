@@ -1,6 +1,3 @@
-
-
-
 /// Gate de integridad para importacion manual: rechaza XLS cuya columna SKU
 /// (ID_ARTICULO) este guardada como numero. En ese caso Excel pudo borrar los
 /// ceros a la izquierda (011019 -> 11019) y la importacion crearia SKUs falsos
@@ -28,4 +25,3 @@ pub fn reject_numeric_sku(xls_path: &str) -> Result<(), String> {
         }
     }
 }
-

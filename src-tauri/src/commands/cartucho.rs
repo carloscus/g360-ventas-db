@@ -1,10 +1,9 @@
-
-
-
 /// Crea backup con fecha/hora de historial.db. Conserva ultimas 7 copias.
 #[tauri::command]
 pub async fn backup_db() -> Result<String, String> {
-    g360_db_ventas::db::writer::backup_db().await.map_err(|e| e.to_string())
+    g360_db_ventas::db::writer::backup_db()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Exporta una instantánea canónica (snapshot .db + manifiesto JSON) a la carpeta
@@ -27,7 +26,9 @@ pub async fn export_canonical_snapshot() -> Result<serde_json::Value, String> {
 #[tauri::command]
 pub async fn check_contract_version() -> Result<serde_json::Value, String> {
     use g360_db_ventas::db::writer::check_contract_version;
-    let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+    let pool = g360_db_ventas::db::writer::init_pool()
+        .await
+        .map_err(|e| e.to_string())?;
     match check_contract_version(&pool).await {
         Ok(_) => Ok(serde_json::json!({
             "ok": true,
@@ -36,7 +37,7 @@ pub async fn check_contract_version() -> Result<serde_json::Value, String> {
         Err(e) => Ok(serde_json::json!({
             "ok": false,
             "message": e.to_string()
-        }))
+        })),
     }
 }
 
@@ -54,18 +55,24 @@ pub fn get_last_cartucho() -> Result<serde_json::Value, String> {
         .flatten()
         .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
         .map(|e| e.path())
-        .filter(|p| p.file_name().map(|x| x.to_string_lossy().contains("manifest")).unwrap_or(false))
+        .filter(|p| {
+            p.file_name()
+                .map(|x| x.to_string_lossy().contains("manifest"))
+                .unwrap_or(false)
+        })
         .collect();
     manifests.sort();
 
     match manifests.last() {
         Some(path) => {
             let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-            let manifest: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+            let manifest: serde_json::Value =
+                serde_json::from_str(&content).map_err(|e| e.to_string())?;
 
             // Verificar contrato contra BD actual
             let db_version = g360_db_ventas::db::schema::CONTRACTO_VERSION.to_string();
-            let manifest_version = manifest.get("contracto_version")
+            let manifest_version = manifest
+                .get("contracto_version")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string();
@@ -110,4 +117,3 @@ pub fn get_backup_status() -> serde_json::Value {
 }
 
 // ─── TAREA PROGRAMADA (Windows Task Scheduler) ──────────────────────────────
-

@@ -1,7 +1,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use g360_db_ventas::capture_state::{CapturePhase, SharedProgress, now_secs};
+use g360_db_ventas::capture_state::{now_secs, CapturePhase, SharedProgress};
 
 use crate::state::*;
 use crate::types::*;
@@ -32,13 +32,18 @@ pub async fn sync_smart(sync_supabase: Option<bool>) -> Result<CaptureStatus, St
         // Lock huerfano: si otro proceso lo tiene abierto, remove falla -> no
         // lanzar una captura condenada a fallar con "lock ocupado".
         if std::fs::remove_file(&lock_path).is_err() && lock_path.exists() {
-            return Err("Otra instancia está capturando en este equipo. Espere a que termine o ciérrela.".into());
+            return Err(
+                "Otra instancia está capturando en este equipo. Espere a que termine o ciérrela."
+                    .into(),
+            );
         }
     }
 
     let shared: SharedProgress = CAPTURE_STATE.clone();
     let last_date = {
-        let pool = g360_db_ventas::db::writer::init_pool().await.map_err(|e| e.to_string())?;
+        let pool = g360_db_ventas::db::writer::init_pool()
+            .await
+            .map_err(|e| e.to_string())?;
         // Helper único con buffer -1 día (consistente con sync_from_last y
         // el pipeline del task-scheduler; ver db::freshness).
         g360_db_ventas::db::freshness::last_captured_date(
@@ -60,8 +65,15 @@ pub async fn sync_smart(sync_supabase: Option<bool>) -> Result<CaptureStatus, St
     tauri::async_runtime::spawn(async move {
         // 1) Capturar desde la última fecha local
         if let Err(e) = g360_db_ventas::capture::run_batch_history(
-            &start_bg, "", false, shared_bg.clone(), Some(CAPTURE_ABORT.clone()), 3,
-        ).await {
+            &start_bg,
+            "",
+            false,
+            shared_bg.clone(),
+            Some(CAPTURE_ABORT.clone()),
+            3,
+        )
+        .await
+        {
             let mut st = shared_bg.lock().unwrap();
             st.set_phase(CapturePhase::Error, &format!("Error captura: {e}"));
             st.update_progress(0.0, &format!("Error captura: {e}"));
@@ -134,7 +146,11 @@ pub async fn sync_smart(sync_supabase: Option<bool>) -> Result<CaptureStatus, St
                     res.months_synced,
                     res.months_failed,
                     res.rows_uploaded,
-                    if res.stopped_early { " (cortado; se reanuda luego)" } else { "" }
+                    if res.stopped_early {
+                        " (cortado; se reanuda luego)"
+                    } else {
+                        ""
+                    }
                 );
                 st.set_phase(CapturePhase::Done, &msg);
                 st.update_progress(1.0, &msg);
@@ -187,4 +203,3 @@ pub async fn abort_capture() -> Result<String, String> {
     st.update_progress(0.0, "Abortada");
     Ok("Captura detenida".into())
 }
-

@@ -1,6 +1,5 @@
 use std::time::Instant;
 
-
 use crate::state::*;
 use crate::types::*;
 
@@ -8,7 +7,9 @@ use crate::types::*;
 #[tauri::command]
 pub async fn get_settings() -> Result<AppSettings, String> {
     let cfg = g360_db_ventas::config::load_config();
-    let db_path = g360_db_ventas::config::db_path().to_string_lossy().to_string();
+    let db_path = g360_db_ventas::config::db_path()
+        .to_string_lossy()
+        .to_string();
     let sb_retention_days_eff = cfg.supabase_retention_days_effective();
     Ok(AppSettings {
         supabase_url: cfg.supabase.url.clone(),
@@ -19,7 +20,9 @@ pub async fn get_settings() -> Result<AppSettings, String> {
         supabase_enabled: cfg.supabase_enabled,
         intranet_user: if cfg.intranet.user.is_empty() {
             std::env::var("G360_INTRANET_USER").unwrap_or_default()
-        } else { cfg.intranet.user },
+        } else {
+            cfg.intranet.user
+        },
         intranet_pass: String::new(),
         generado_por: cfg.generado_por,
         allowed_lines: cfg.allowed_lines.join(", "),
@@ -67,22 +70,24 @@ pub async fn save_settings(
         .map(|s| s.trim().to_uppercase())
         .filter(|s| !s.is_empty())
         .collect();
-     cfg.auto_sync = auto_sync;
-     cfg.app_retention_years = app_retention_years;
-     cfg.supabase_retention_years = supabase_retention_years;
-     cfg.supabase_retention_days = supabase_retention_days;
-     cfg.auto_daily_capture = auto_daily_capture;
-     if let Some(en) = supabase_enabled {
-         cfg.supabase_enabled = en;
-     }
-     if !capture_times.is_empty() {
-         cfg.capture_times = capture_times;
-     }
-     if let Some(d) = backup_reminder_days {
-         cfg.backup_reminder_days = d;
-     }
-     g360_db_ventas::config::save_config(&cfg).map_err(|e| e.to_string())?;
-    let db_path = g360_db_ventas::config::db_path().to_string_lossy().to_string();
+    cfg.auto_sync = auto_sync;
+    cfg.app_retention_years = app_retention_years;
+    cfg.supabase_retention_years = supabase_retention_years;
+    cfg.supabase_retention_days = supabase_retention_days;
+    cfg.auto_daily_capture = auto_daily_capture;
+    if let Some(en) = supabase_enabled {
+        cfg.supabase_enabled = en;
+    }
+    if !capture_times.is_empty() {
+        cfg.capture_times = capture_times;
+    }
+    if let Some(d) = backup_reminder_days {
+        cfg.backup_reminder_days = d;
+    }
+    g360_db_ventas::config::save_config(&cfg).map_err(|e| e.to_string())?;
+    let db_path = g360_db_ventas::config::db_path()
+        .to_string_lossy()
+        .to_string();
     let sb_retention_days_eff = cfg.supabase_retention_days_effective();
     Ok(AppSettings {
         supabase_url: cfg.supabase.url.clone(),
@@ -109,13 +114,16 @@ pub async fn save_settings(
 
 #[tauri::command]
 pub async fn test_supabase(url: String, key: String) -> Result<String, String> {
-    let res = g360_db_ventas::processor::uploader::test_supabase_connection(&url, &key).await.map_err(|e| e.to_string())?;
+    let res = g360_db_ventas::processor::uploader::test_supabase_connection(&url, &key)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(res)
 }
 
 /// Cobertura de Supabase: fecha mas antigua, mas nueva, filas y documentos.
 #[tauri::command]
-pub async fn get_supabase_info() -> Result<g360_db_ventas::processor::uploader::SupabaseInfo, String> {
+pub async fn get_supabase_info() -> Result<g360_db_ventas::processor::uploader::SupabaseInfo, String>
+{
     {
         let c = SUPABASE_INFO_CACHE.lock().unwrap();
         if let Some((t, info)) = c.as_ref() {
@@ -143,7 +151,11 @@ pub async fn save_service_role_key(service_role_key: String) -> Result<String, S
     let configured = !cfg.supabase.service_role_key.is_empty();
     Ok(format!(
         "Service role key {} configurado",
-        if configured { "ha sido" } else { "ha sido eliminado" }
+        if configured {
+            "ha sido"
+        } else {
+            "ha sido eliminado"
+        }
     ))
 }
 
@@ -188,4 +200,3 @@ pub fn save_first_config(
         "first_run": false
     }))
 }
-

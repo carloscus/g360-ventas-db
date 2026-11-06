@@ -116,8 +116,10 @@ pub async fn init_pool() -> Result<SqlitePool> {
     .execute(&pool)
     .await?;
 
-    // Refresh stats cache on init
-    let _ = refresh_stats_cache(&pool).await;
+    // stats_cache NO se refresca aqui: la tabla es write-only (ningun SELECT
+    // en el repo; el dashboard consulta en vivo). Los refresh post-captura
+    // siguen en capture.rs y reparse.rs. Refrescarlo en cada init costaba
+    // ~114 s de agregados sobre 2.8M filas.
     let _ = ensure_dims_fresh(&pool).await;
 
     // Migraciones de reparacion de datos
@@ -135,43 +137,83 @@ pub async fn init_pool() -> Result<SqlitePool> {
         sqlx::query("ALTER TABLE ventas ADD CHECK (soles >= 0)").execute(&pool).await.ok();
     }
 
-    // 2. Migrar id_linea quitando prefijo "01"
-    let lineas_migradas = sqlx::query("UPDATE ventas SET id_linea = SUBSTR(id_linea, 3) WHERE id_linea GLOB '01??'")
-        .execute(&pool).await;
-    if let Ok(affected) = lineas_migradas {
-        if affected.rows_affected() > 0 {
-            info!("Migracion id_linea: {} filas normalizadas (quitando prefijo 01)", affected.rows_affected());
-            let _ = refresh_dim_tables(&pool).await;
-        }
-    }
+    // 3. Normalizaciones LEGACY (id_linea, id_vendedor, id_pedido, mes_ref):
+    //    el parser (desde v1) ya normaliza al insertar, asi que estos UPDATEs
+    //    solo reparan filas antiguas (hoy: 0 filas afectadas). Correrlos en
+    //    cada arranque escaneaba la tabla completa (~2 min sobre 2.8M filas).
+    //    Ahora se ejecutan solo si cambio NORMALIZACION_VERSION o es la
+    //    primera vez en esta DB. Fail-open: si algo falla, no se estampa y el
+    //    proximo init reintenta.
+    let repair_ver: Option<i64> = sqlx::query_scalar(
+        "SELECT value FROM g360_meta WHERE key = 'repair_norm_version'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|s: String| s.parse().ok());
+    if repair_ver != Some(NORMALIZACION_VERSION) {
+        let mut repairs_ok = true;
 
-    // 3. Migrar id_vendedor quitando prefijo "01"
-    let ventas_migradas = sqlx::query("UPDATE ventas SET id_vendedor = SUBSTR(id_vendedor, 4) WHERE id_vendedor GLOB '01???'")
-        .execute(&pool).await;
-    if let Ok(affected) = ventas_migradas {
-        if affected.rows_affected() > 0 {
-            info!("Migracion id_vendedor: {} filas normalizadas (quitando prefijo 01)", affected.rows_affected());
-            let _ = refresh_dim_tables(&pool).await;
+        // id_linea: quitar prefijo "01"
+        if let Ok(affected) = sqlx::query("UPDATE ventas SET id_linea = SUBSTR(id_linea, 3) WHERE id_linea GLOB '01??'")
+            .execute(&pool).await
+        {
+            if affected.rows_affected() > 0 {
+                info!("Migracion id_linea: {} filas normalizadas (quitando prefijo 01)", affected.rows_affected());
+                let _ = refresh_dim_tables(&pool).await;
+            }
+        } else {
+            repairs_ok = false;
         }
-    }
 
-    // 4. Migrar id_pedido: espacios -> guion_bajo
-    // (Ya se hace en el parser desde v1, pero migrar existentes es seguro)
-    let pedidos_migrados = sqlx::query("UPDATE ventas SET id_pedido = REPLACE(id_pedido, ' ', '_') WHERE id_pedido LIKE '% %'")
-        .execute(&pool).await;
-    if let Ok(affected) = pedidos_migrados {
-        if affected.rows_affected() > 0 {
-            info!("Migracion id_pedido: {} filas normalizadas (espacios -> underscore)", affected.rows_affected());
+        // id_vendedor: quitar prefijo "01"
+        if let Ok(affected) = sqlx::query("UPDATE ventas SET id_vendedor = SUBSTR(id_vendedor, 4) WHERE id_vendedor GLOB '01???'")
+            .execute(&pool).await
+        {
+            if affected.rows_affected() > 0 {
+                info!("Migracion id_vendedor: {} filas normalizadas (quitando prefijo 01)", affected.rows_affected());
+                let _ = refresh_dim_tables(&pool).await;
+            }
+        } else {
+            repairs_ok = false;
         }
-    }
 
-    // 5. Migrar mes_ref, anho, mes derivados de fecha_orig
-    let fecha_migrada = sqlx::query("UPDATE ventas SET mes_ref = strftime('%Y-%m', fecha_orig), anho = CAST(strftime('%Y', fecha_orig) AS INTEGER), mes = CAST(strftime('%m', fecha_orig) AS INTEGER) WHERE length(mes_ref) != 7 OR length(anho) != 4")
-        .execute(&pool).await;
-    if let Ok(affected) = fecha_migrada {
-        if affected.rows_affected() > 0 {
-            info!("Migracion mes_ref/anho/mes: {} filas actualizadas desde fecha_orig", affected.rows_affected());
+        // id_pedido: espacios -> guion_bajo (el parser ya lo hace desde v1)
+        if let Ok(affected) = sqlx::query("UPDATE ventas SET id_pedido = REPLACE(id_pedido, ' ', '_') WHERE id_pedido LIKE '% %'")
+            .execute(&pool).await
+        {
+            if affected.rows_affected() > 0 {
+                info!("Migracion id_pedido: {} filas normalizadas (espacios -> underscore)", affected.rows_affected());
+            }
+        } else {
+            repairs_ok = false;
         }
+
+        // mes_ref, anho, mes derivados de fecha_orig
+        if let Ok(affected) = sqlx::query("UPDATE ventas SET mes_ref = strftime('%Y-%m', fecha_orig), anho = CAST(strftime('%Y', fecha_orig) AS INTEGER), mes = CAST(strftime('%m', fecha_orig) AS INTEGER) WHERE length(mes_ref) != 7 OR length(anho) != 4")
+            .execute(&pool).await
+        {
+            if affected.rows_affected() > 0 {
+                info!("Migracion mes_ref/anho/mes: {} filas actualizadas desde fecha_orig", affected.rows_affected());
+            }
+        } else {
+            repairs_ok = false;
+        }
+
+        if repairs_ok {
+            let _ = sqlx::query(
+                "INSERT OR REPLACE INTO g360_meta (key, value, actualizado_en) VALUES ('repair_norm_version', cast(? as text), datetime('now'))",
+            )
+            .bind(NORMALIZACION_VERSION)
+            .execute(&pool)
+            .await;
+            info!("Normalizaciones legacy aplicadas (normalizacion v{})", NORMALIZACION_VERSION);
+        } else {
+            info!("Normalizaciones legacy incompletas: sin estampa, se reintenta en el proximo init");
+        }
+    } else {
+        info!("Normalizaciones legacy omitidas (normalizacion v{} ya aplicada)", NORMALIZACION_VERSION);
     }
 
     info!("DB ready: {} (v{} contract, v{} dim, v{} normalizacion)", db.display(), CONTRACTO_VERSION, DIM_SCHEMA_VERSION, NORMALIZACION_VERSION);

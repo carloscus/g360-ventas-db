@@ -23,10 +23,12 @@ pub use maintenance::*;
 /// Compartido: lo usan commands de meses (delete/import) y maintenance (clear_db).
 pub(crate) async fn verify_intranet_credentials() -> Result<String, String> {
     use g360_db_ventas::browser::http::CipsaHttp;
-    let http =
-        CipsaHttp::new().map_err(|e| format!("Error creando cliente HTTP: {}", e))?;
-    http.login()
-        .await
-        .map_err(|e| format!("Credenciales de intranet invalidas o red no accesible: {}", e))?;
+    let http = CipsaHttp::new().map_err(|e| format!("Error creando cliente HTTP: {}", e))?;
+    http.login().await.map_err(|e| {
+        format!(
+            "Credenciales de intranet invalidas o red no accesible: {}",
+            e
+        )
+    })?;
     Ok("OK".to_string())
 }

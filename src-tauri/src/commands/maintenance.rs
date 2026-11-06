@@ -1,15 +1,11 @@
-
-
-
 /// Abre la carpeta de datos local para copiarla a un extraíble o compartirla
 /// mediante las herramientas de Windows. No crea recursos SMB ni expone la BD
 /// automáticamente en la red.
 #[tauri::command]
 pub fn open_data_folder() -> Result<String, String> {
     let data_dir = g360_db_ventas::config::data_dir();
-    std::fs::create_dir_all(&data_dir).map_err(|e| {
-        format!("No se pudo preparar la carpeta de datos: {e}")
-    })?;
+    std::fs::create_dir_all(&data_dir)
+        .map_err(|e| format!("No se pudo preparar la carpeta de datos: {e}"))?;
 
     #[cfg(target_os = "windows")]
     {
@@ -54,10 +50,15 @@ pub fn get_scheduled_task() -> serde_json::Value {
     match out {
         Ok(o) if o.status.success() => {
             let text = String::from_utf8_lossy(&o.stdout);
+            // split_once en el PRIMER ':' conserva la fecha completa:
+            // "Next Run Time: 06/11/2026 14:00:00" -> "06/11/2026 14:00:00".
+            // (split(':').nth(1) cortaba en el ':' de la hora y devolvia
+            // "06/11/2026 14", sin minutos.)
             let time = text
                 .lines()
                 .find(|l| l.contains("Next Run Time") || l.contains("Hora"))
-                .map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string())
+                .and_then(|l| l.split_once(':'))
+                .map(|(_, rest)| rest.trim().to_string())
                 .unwrap_or_default();
             serde_json::json!({ "exists": true, "next_run": time })
         }
@@ -77,13 +78,25 @@ pub fn create_scheduled_task(time: String) -> Result<serde_json::Value, String> 
         && parts[0].chars().all(|c| c.is_ascii_digit())
         && parts[1].chars().all(|c| c.is_ascii_digit());
     if !ok {
-        return Err(format!("Formato de hora inválido (esperado HH:MM): {}", time));
+        return Err(format!(
+            "Formato de hora inválido (esperado HH:MM): {}",
+            time
+        ));
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let tr = format!("\"{}\" --task-scheduler", exe.display());
     let out = std::process::Command::new("schtasks")
         .args([
-            "/create", "/tn", SCHED_TASK_NAME, "/sc", "daily", "/st", t, "/tr", &tr, "/f",
+            "/create",
+            "/tn",
+            SCHED_TASK_NAME,
+            "/sc",
+            "daily",
+            "/st",
+            t,
+            "/tr",
+            &tr,
+            "/f",
         ])
         .output()
         .map_err(|e| format!("No se pudo ejecutar schtasks: {}", e))?;
@@ -93,7 +106,10 @@ pub fn create_scheduled_task(time: String) -> Result<serde_json::Value, String> 
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    eprintln!("Tarea programada creada: {} diario a las {}", SCHED_TASK_NAME, t);
+    eprintln!(
+        "Tarea programada creada: {} diario a las {}",
+        SCHED_TASK_NAME, t
+    );
     Ok(serde_json::json!({
         "ok": true,
         "message": format!("Actualización automática programada: diario a las {}", t),
@@ -118,4 +134,3 @@ pub fn delete_scheduled_task() -> Result<serde_json::Value, String> {
     eprintln!("Tarea programada eliminada: {}", SCHED_TASK_NAME);
     Ok(serde_json::json!({ "ok": true, "message": "Tarea de actualización automática eliminada" }))
 }
-
