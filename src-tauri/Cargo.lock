@@ -1434,9 +1434,7 @@ dependencies = [
  "chrono",
  "csv",
  "dirs 5.0.1",
- "futures-util",
  "headless_chrome",
- "rand 0.8.7",
  "reqwest 0.12.28",
  "rust_xlsxwriter",
  "serde",
@@ -1446,7 +1444,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "url 2.5.8",
  "windows 0.58.0",
  "zip",
 ]
