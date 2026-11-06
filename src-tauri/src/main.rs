@@ -718,7 +718,10 @@ async fn sync_from_last() -> Result<CaptureStatus, String> {
 /// Supabase si hubo cambios (fecha más reciente y conteo de filas) y solo entonces sube.
 /// No bloquea: corre en background y reporta por el estado de captura (get_capture_status).
 #[tauri::command]
-async fn sync_smart() -> Result<CaptureStatus, String> {
+async fn sync_smart(sync_supabase: Option<bool>) -> Result<CaptureStatus, String> {
+    // Si el checkbox "Incluir Supabase" viene marcado (o no se especifica),
+    // el flujo termina con sync incremental a Supabase.
+    let do_supabase = sync_supabase.unwrap_or(true);
     if let Err(pf) = g360_db_ventas::browser::captor::preflight_checks() {
         return Err(pf);
     }
@@ -799,6 +802,13 @@ async fn sync_smart() -> Result<CaptureStatus, String> {
 
         // 2) Reconciliar con Supabase (mes por mes, resumible) — opcional
         let cfg = g360_db_ventas::config::load_config();
+        if !do_supabase {
+            let mut st = shared_bg.lock().unwrap();
+            let msg = "Captura local lista (sync Supabase desmarcado)";
+            st.set_phase(CapturePhase::Done, msg);
+            st.update_progress(1.0, msg);
+            return;
+        }
         if !cfg.supabase_enabled || !cfg.supabase.is_configured() {
             let mut st = shared_bg.lock().unwrap();
             let msg = if cfg.supabase_enabled {
@@ -1711,7 +1721,7 @@ async fn run_auto_sync_and_exit() -> ! {
     }
     
     println!("Iniciando sync automático...");
-    
+
     let pool = match g360_db_ventas::db::writer::init_pool().await {
         Ok(p) => p,
         Err(e) => {
@@ -1719,17 +1729,38 @@ async fn run_auto_sync_and_exit() -> ! {
             std::process::exit(1);
         }
     };
-    
-    // Paso 1: Capturar día anterior
-    println!("Paso 1: Capturando datos del día anterior...");
-    let yesterday = Local::now().naive_local().date() - TimeDelta::days(1);
-    let yesterday_str = yesterday.to_string();
-    
-    let capture_result = g360_db_ventas::capture::run_batch_history(&yesterday_str, "", false, CAPTURE_STATE.clone(), None, 3).await;
+
+    // Paso 1: Capturar desde (MAX(fecha_orig) - 1) hasta hoy.
+    // Mismo buffer que el botón manual: si la PC estuvo apagada el fin de semana
+    // (o varios días), el ERP conserva los datos y este rango los recupera todo.
+    // Capturar SOLO "ayer" perdería los días intermedios del gap.
+    println!("Paso 1: Capturando desde el último día registrado (buffer -1)...");
+    let start = {
+        let last: Option<String> = sqlx::query_scalar("SELECT MAX(fecha_orig) FROM ventas")
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(None);
+        match last {
+            Some(d) => {
+                if let Ok(dt) = chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d") {
+                    (dt - chrono::Duration::days(1)).format("%Y-%m-%d").to_string()
+                } else {
+                    d
+                }
+            }
+            None => {
+                // BD vacía: capturar solo el día anterior (primer arranque)
+                (Local::now().naive_local().date() - TimeDelta::days(1)).to_string()
+            }
+        }
+    };
+    println!("  Rango: {} -> hoy", start);
+
+    let capture_result = g360_db_ventas::capture::run_batch_history(&start, "", false, CAPTURE_STATE.clone(), None, 3).await;
 
     match capture_result {
         Ok(_) => {
-            println!("✓ Captura completada: {}", yesterday_str);
+            println!("✓ Captura completada: {}", start);
             
             // Paso 2: Verificar integridad
             println!("Paso 2: Verificando integridad...");
@@ -1856,7 +1887,9 @@ fn main() {
                 // Wizard primer inicio
                 is_first_run, save_first_config,
                 // ZIP cartucho + recordatorio backup
-                zip_cartucho_cmd, get_backup_status
+                zip_cartucho_cmd, get_backup_status,
+                // Tarea programada (Task Scheduler)
+                get_scheduled_task, create_scheduled_task, delete_scheduled_task
             ])
             .run(tauri::generate_context!())
             .expect("error while running tauri application");
@@ -2319,6 +2352,84 @@ fn zip_cartucho_cmd() -> Result<serde_json::Value, String> {
 fn get_backup_status() -> serde_json::Value {
     let days = g360_db_ventas::config::load_config().backup_reminder_days;
     g360_db_ventas::db::writer::backup_status(days)
+}
+
+// ─── TAREA PROGRAMADA (Windows Task Scheduler) ──────────────────────────────
+
+const SCHED_TASK_NAME: &str = "G360-Actualizar-Ventas";
+
+/// Consulta si la tarea diaria de actualización existe en Windows Task Scheduler.
+#[tauri::command]
+fn get_scheduled_task() -> serde_json::Value {
+    let out = std::process::Command::new("schtasks")
+        .args(["/query", "/tn", SCHED_TASK_NAME, "/fo", "LIST"])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            let text = String::from_utf8_lossy(&o.stdout);
+            let time = text
+                .lines()
+                .find(|l| l.contains("Next Run Time") || l.contains("Hora"))
+                .map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string())
+                .unwrap_or_default();
+            serde_json::json!({ "exists": true, "next_run": time })
+        }
+        _ => serde_json::json!({ "exists": false, "next_run": null }),
+    }
+}
+
+/// Crea/actualiza la tarea diaria de actualización completa (--task-scheduler).
+/// `time` formato "HH:MM" (local).
+#[tauri::command]
+fn create_scheduled_task(time: String) -> Result<serde_json::Value, String> {
+    let t = time.trim();
+    let parts: Vec<&str> = t.split(':').collect();
+    let ok = parts.len() == 2
+        && parts[0].len() == 2
+        && parts[1].len() == 2
+        && parts[0].chars().all(|c| c.is_ascii_digit())
+        && parts[1].chars().all(|c| c.is_ascii_digit());
+    if !ok {
+        return Err(format!("Formato de hora inválido (esperado HH:MM): {}", time));
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let tr = format!("\"{}\" --task-scheduler", exe.display());
+    let out = std::process::Command::new("schtasks")
+        .args([
+            "/create", "/tn", SCHED_TASK_NAME, "/sc", "daily", "/st", t, "/tr", &tr, "/f",
+        ])
+        .output()
+        .map_err(|e| format!("No se pudo ejecutar schtasks: {}", e))?;
+    if !out.status.success() {
+        return Err(format!(
+            "schtasks falló: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    eprintln!("Tarea programada creada: {} diario a las {}", SCHED_TASK_NAME, t);
+    Ok(serde_json::json!({
+        "ok": true,
+        "message": format!("Actualización automática programada: diario a las {}", t),
+        "command": tr
+    }))
+}
+
+/// Elimina la tarea diaria de actualización.
+#[tauri::command]
+fn delete_scheduled_task() -> Result<serde_json::Value, String> {
+    let out = std::process::Command::new("schtasks")
+        .args(["/delete", "/tn", SCHED_TASK_NAME, "/f"])
+        .output()
+        .map_err(|e| format!("No se pudo ejecutar schtasks: {}", e))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        if err.to_lowercase().contains("cannot find") || err.contains("no existe") {
+            return Ok(serde_json::json!({ "ok": true, "message": "La tarea no existía" }));
+        }
+        return Err(format!("schtasks falló: {}", err.trim()));
+    }
+    eprintln!("Tarea programada eliminada: {}", SCHED_TASK_NAME);
+    Ok(serde_json::json!({ "ok": true, "message": "Tarea de actualización automática eliminada" }))
 }
 
 /// Calcula checksums para meses que aun no tienen hash (complementa los 105/121).

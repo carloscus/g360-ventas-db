@@ -42,6 +42,9 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
 .quick-start .qs-btn{background:#0ea5e9;color:#061220;border:none;border-radius:7px;padding:8px 14px;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap;transition:all 0.2s}
 .quick-start .qs-btn:hover{background:#00b377}
 .quick-start .qs-btn:disabled{opacity:.4;cursor:not-allowed}
+.qs-chk{display:flex;align-items:center;gap:5px;font-size:10px;color:#7e96ad;cursor:pointer;margin-top:4px;user-select:none}
+.qs-chk input{accent-color:#0ea5e9;cursor:pointer;width:13px;height:13px;margin:0}
+.qs-chk:hover{color:#bae6fd}
 
 /* Modules */
 .modules{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
@@ -183,6 +186,10 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
     <div class="qs-info">
       <div class="qs-title">🔄 Inicio rápido diario</div>
       <div class="qs-desc" id="qsDesc">Captura desde último día - 1 (cubre documentos tardíos)</div>
+      <label class="qs-chk" title="Marca para que el flujo también sincronice incrementalmente con Supabase (supa queda al día)">
+        <input type="checkbox" id="syncSupabaseChk" checked/>
+        <span>Incluir actualización Supabase</span>
+      </label>
     </div>
     <button class="qs-btn" id="quickStartBtn">Ejecutar</button>
   </div>
@@ -256,6 +263,21 @@ body{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:radial-gradi
     <div class="form-group">
       <label>Recordatorio de backup (días: 7 = semanal, 30 = mensual, 0 = off)</label>
       <input type="number" id="cfgBackupReminder" placeholder="7"/>
+    </div>
+
+    <!-- Actualización automática (Task Scheduler) -->
+    <div class="form-group" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:8px">
+      <label>🔄 Actualización automática diaria (Task Scheduler de Windows)</label>
+      <div id="schedStatus" style="font-size:11px;color:#7e96ad;margin-bottom:5px">Verificando tarea...</div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input type="time" id="schedTime" value="14:00" style="width:110px;padding:5px;border-radius:4px;border:1px solid rgba(255,255,255,0.1);background:rgba(10,20,35,0.6);color:#fff;font-size:13px"/>
+        <button class="btn btn-p" id="schedCreateBtn" style="margin-top:0;flex:1">🗓 Programar</button>
+        <button class="btn btn-d" id="schedDeleteBtn" style="margin-top:0;flex:1">🗑 Eliminar</button>
+      </div>
+      <div style="font-size:10px;color:#4a6a8a;margin-top:4px;line-height:1.4">
+        Corre en modo silencioso: captura (desde último día registrado) → BD local → sync Supabase.
+        Si la PC estuvo apagada, la próxima ejecución recupera los días faltantes.
+      </div>
     </div>
     <div class="form-group">
       <label>Allowlist de líneas (clic para activar/desactivar — viaja en el cartucho)</label>
@@ -499,21 +521,82 @@ async function loadConfigModule() {
     const lines = String(cfg.allowed_lines || '').split(',').map(s => s.trim()).filter(Boolean);
     renderLines(lines);
   } catch(e) { console.error('loadConfigModule:', e); }
+  // Estado de la tarea programada
+  try {
+    const t = await invoke('get_scheduled_task');
+    const el = document.getElementById('schedStatus');
+    if (t.exists) {
+      el.innerHTML = '✅ Tarea activa' + (t.next_run ? ` — próxima: ${t.next_run}` : '');
+      el.style.color = '#86efac';
+    } else {
+      el.textContent = '⚠️ Sin tarea programada — Supabase se actualizará solo cuando corras el flujo manualmente';
+      el.style.color = '#f9d58a';
+    }
+  } catch(e) {
+    document.getElementById('schedStatus').textContent = 'No se pudo verificar la tarea';
+  }
 }
 
+// Programar / eliminar tarea diaria
+document.getElementById('schedCreateBtn').addEventListener('click', async () => {
+  const time = document.getElementById('schedTime').value || '14:00';
+  try {
+    const r = await invoke('create_scheduled_task', { time });
+    show('configStatus', '✅ ' + r.message, 'ok');
+    loadConfigModule(); // refresca estado
+  } catch(e) {
+    show('configStatus', '❌ Error: ' + e, 'err');
+  }
+});
+document.getElementById('schedDeleteBtn').addEventListener('click', async () => {
+  if (!confirm('¿Eliminar la tarea de actualización automática diaria?')) return;
+  try {
+    const r = await invoke('delete_scheduled_task');
+    show('configStatus', '✅ ' + r.message, 'ok');
+    loadConfigModule();
+  } catch(e) {
+    show('configStatus', '❌ Error: ' + e, 'err');
+  }
+});
+
 // ─── Quick Start ─────────────────────────────────────────────────────────────
+// Preferencia persistente: ¿el flujo incluye sync incremental a Supabase?
+const syncChk = document.getElementById('syncSupabaseChk');
+try {
+  const saved = localStorage.getItem('syncSupabase');
+  if (saved !== null) syncChk.checked = saved === '1';
+} catch(e) {}
+function syncChkLabel() {
+  document.getElementById('qsDesc').textContent = syncChk.checked
+    ? 'Captura desde último día - 1 · termina con sync incremental a Supabase'
+    : 'Captura desde último día - 1 · solo BD local (sin Supabase)';
+}
+syncChk.addEventListener('change', () => {
+  try { localStorage.setItem('syncSupabase', syncChk.checked ? '1' : '0'); } catch(e) {}
+  syncChkLabel();
+});
+syncChkLabel();
+
 document.getElementById('quickStartBtn').addEventListener('click', async () => {
-  if (!confirm('Ejecutar captura diaria incremental?\n\nCaptura desde (último día - 1) hasta hoy.\nCubre documentos posteados con retraso.\n\n¿Continuar?')) return;
+  const withSupabase = syncChk.checked;
+  const msg = withSupabase
+    ? 'Ejecutar actualización diaria?\n\n1. Captura (último día - 1 hasta hoy)\n2. Parseo + insert en BD local\n3. Sync incremental a Supabase\n\n¿Continuar?'
+    : 'Ejecutar captura SOLO local?\n\n1. Captura (último día - 1 hasta hoy)\n2. Parseo + insert en BD local\n3. Supabase NO se toca (checkbox desmarcado)\n\n¿Continuar?';
+  if (!confirm(msg)) return;
 
   const btn = document.getElementById('quickStartBtn');
   btn.disabled = true;
-  btn.textContent = 'Capturando...';
+  btn.textContent = withSupabase ? 'Capturando+Sync...' : 'Capturando...';
   document.getElementById('statusDot').className = 'dot syncing';
-  show('statusMsg', '🔄 Iniciando captura incremental...', '');
+  show('statusMsg', withSupabase
+    ? '🔄 Iniciando flujo completo (local + Supabase)...'
+    : '🔄 Iniciando captura solo local...', '');
 
   try {
-    const r = await invoke('sync_smart');
-    show('statusMsg', '✅ Captura completada. Sincronizando con Supabase...', 'ok');
+    const r = await invoke('sync_smart', { syncSupabase: withSupabase });
+    show('statusMsg', withSupabase
+      ? '✅ Captura completada. Sincronizando con Supabase...'
+      : '✅ Captura local completada (Supabase no tocado)', 'ok');
     startPolling();
   } catch(e) {
     show('statusMsg', '❌ Error: ' + e, 'err');

@@ -556,15 +556,24 @@ query.exe                        # consulta la BD
 ## Desarrollo
 
 ```bash
-# Compilar binarios
+# 1. Frontend (OBLIGATORIO antes de tauri build: Tauri empaqueta frontend/dist)
+cd frontend && npm run build && cd ..   # copia index.html -> dist/
+
+# 2. Compilar binarios CLI
 cargo build --release
 
-# Compilar la app Tauri (frontend en frontend/dist)
+# 3. Compilar la app Tauri (usa frontend/dist — no frontend/index.html directo)
 cargo tauri build
 
-# Modo desarrollo
+# Modo desarrollo (sirve frontend/dist también)
 cargo tauri dev
+
+# Verificación completa (repo autosuficiente)
+cargo check --all-targets && cargo test && node frontend/build.js --check
 ```
+
+> ⚠️ Si editas `frontend/index.html` y no corres `npm run build`, el exe llevará
+> el HTML viejo embebido (la macro `generate_context!` lee `dist/` al compilar).
 
 ### Estructura
 
@@ -572,13 +581,22 @@ cargo tauri dev
 src/
 ├── browser/captor.rs      # login + descarga XLS (headless Chrome)
 ├── processor/             # xls→csv, parsing, derivación, upload
-├── db/                    # schema, writer, consultas
-├── capture.rs             # pipeline principal + lock RAII
-└── config.rs              # .env, config.json, líneas permitidas
-src-tauri/
-└── src/main.rs            # comandos Tauri (invoke_handler)
+├── db/                    # schema, writer, consultas, cartucho (zip/rotación)
+├── alerts.rs              # alertas estructuradas (Critical/Warning/Info)
+├── capture.rs             # pipeline principal + lock RAII + retry
+├── config.rs              # .env, config.enc (DPAPI), allowlist
+└── bin/                   # 13 bins CLI (upload, capture_daily, reparse...)
+src-tauri/src/main.rs      # ~60 comandos Tauri (invoke_handler)
 frontend/
-└── index.html             # interfaz estática
+├── index.html             # interfaz (fuente)
+├── build.js               # copia index.html -> dist/ (npm run build)
+└── dist/                  # lo que Tauri empaqueta (frontendDist)
+supabase/
+├── migrations/            # 17 migraciones (aplicar en orden)
+└── ACTIVATE_pg_cron_vacuum.sql  # VACUUM semanal (pegar 1 vez en Dashboard)
+docs/
+├── CONTRATO.md            # contrato para apps consumidoras (v4)
+└── LINEAMIENTOS.md        # decisiones de diseño internas
 ```
 
 ---
