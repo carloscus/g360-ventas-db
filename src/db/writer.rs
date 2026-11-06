@@ -471,6 +471,11 @@ pub async fn export_canonical_snapshot(target: &std::path::Path, stats: Option<&
         size as f64 / 1024.0 / 1024.0,
         manifest_path.display()
     );
+    // Rotación: conservar solo los N cartuchos más recientes (config.cartucho_keep)
+    let keep = crate::config::load_config().cartucho_keep;
+    if keep > 0 {
+        let _ = prune_cartuchos(keep as usize);
+    }
 
     Ok(serde_json::json!({
         "db_path": target.to_string_lossy().to_string(),
@@ -890,7 +895,100 @@ pub async fn backup_db() -> Result<String> {
     let backup_path = backup_dir.join(format!("historial_{}.db", timestamp));
     std::fs::copy(&db_path, &backup_path)?;
     info!("Backup creado: {}", backup_path.display());
+    // Rotación: conservar solo los N más recientes (config.backup_keep)
+    let keep = crate::config::load_config().backup_keep;
+    if keep > 0 {
+        prune_dir_by_age(&backup_dir, "db", keep as usize)?;
+    }
     Ok(backup_path.to_string_lossy().to_string())
+}
+
+/// Elimina de `dir` los archivos con extensión `ext` más viejos que los `keep`
+/// más recientes (orden por mtime). Devuelve cuántos borró.
+pub fn prune_dir_by_age(dir: &std::path::Path, ext: &str, keep: usize) -> Result<usize> {
+    if !dir.exists() || keep == 0 {
+        return Ok(0);
+    }
+    let mut files: Vec<(std::time::SystemTime, std::path::PathBuf)> =
+        std::fs::read_dir(dir)?
+            .flatten()
+            .filter_map(|e| {
+                let p = e.path();
+                if p.extension().map(|x| x == ext).unwrap_or(false) {
+                    let t = e.metadata().ok()?.modified().ok()?;
+                    Some((t, p))
+                } else {
+                    None
+                }
+            })
+            .collect();
+    if files.len() <= keep {
+        return Ok(0);
+    }
+    files.sort_by(|a, b| b.0.cmp(&a.0)); // más reciente primero
+    let mut deleted = 0;
+    for (_, p) in files.into_iter().skip(keep) {
+        let name = p.file_name().map(|n| n.to_string_lossy().to_string());
+        if std::fs::remove_file(&p).is_ok() {
+            deleted += 1;
+            if let Some(n) = name {
+                info!("Poda: {}", n);
+            }
+        }
+    }
+    if deleted > 0 {
+        info!("Rotación {}: {} eliminados (conservados {})", ext, deleted, keep);
+    }
+    Ok(deleted)
+}
+
+/// Rota los cartuchos exportados: conserva los N (.db) más recientes y sus
+/// .manifest.json / .zip hermanos; elimina los más viejos.
+pub fn prune_cartuchos(keep: usize) -> Result<usize> {
+    let dir = crate::config::export_dir();
+    if !dir.exists() || keep == 0 {
+        return Ok(0);
+    }
+    let mut dbs: Vec<(std::time::SystemTime, std::path::PathBuf)> =
+        std::fs::read_dir(&dir)?
+            .flatten()
+            .filter_map(|e| {
+                let p = e.path();
+                if p.extension().map(|x| x == "db").unwrap_or(false) {
+                    let t = e.metadata().ok()?.modified().ok()?;
+                    Some((t, p))
+                } else {
+                    None
+                }
+            })
+            .collect();
+    if dbs.len() <= keep {
+        return Ok(0);
+    }
+    dbs.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut deleted = 0;
+    for (_, db_path) in dbs.into_iter().skip(keep) {
+        // Hermanos: mismo stem + ".manifest.json" y mismo stem + ".zip"
+        if let Some(stem) = db_path.file_stem().map(|s| s.to_string_lossy().to_string()) {
+            let manifest = db_path.with_file_name(format!("{}.manifest.json", stem));
+            if manifest.exists() {
+                let _ = std::fs::remove_file(&manifest);
+            }
+            let zip = db_path.with_file_name(format!("{}.zip", stem));
+            if zip.exists() {
+                let _ = std::fs::remove_file(&zip);
+            }
+        }
+        let name = db_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if std::fs::remove_file(&db_path).is_ok() {
+            deleted += 1;
+            info!("Rotación cartuchos: {}", name);
+        }
+    }
+    Ok(deleted)
 }
 
 /// Comprime el último cartucho (.db + .manifest.json) en un ZIP para transporte.
@@ -946,6 +1044,11 @@ pub fn zip_cartucho() -> Result<(String, u64, u64)> {
         zip_size as f64 / 1048576.0,
         zip_size as f64 * 100.0 / db_size.max(1) as f64
     );
+    // Rotación de cartuchos tras cada ZIP
+    let keep = crate::config::load_config().cartucho_keep;
+    if keep > 0 {
+        let _ = prune_cartuchos(keep as usize);
+    }
     Ok((
         zip_path.to_string_lossy().to_string(),
         db_size,

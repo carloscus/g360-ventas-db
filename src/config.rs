@@ -156,10 +156,22 @@ pub struct AppConfig {
     /// Recordatorio de backup local (días). 0 = deshabilitado.
     #[serde(default = "default_backup_reminder")]
     pub backup_reminder_days: u32,
+    /// Backups de BD a conservar (rotación: se eliminan los más viejos al crear uno nuevo).
+    #[serde(default = "default_backup_keep")]
+    pub backup_keep: u32,
+    /// Cartuchos exportados a conservar (.db/.zip/.manifest; se eliminan los más viejos).
+    #[serde(default = "default_cartucho_keep")]
+    pub cartucho_keep: u32,
 }
 
 fn default_backup_reminder() -> u32 {
     7
+}
+fn default_backup_keep() -> u32 {
+    7
+}
+fn default_cartucho_keep() -> u32 {
+    3
 }
 
 fn default_app_retention() -> u32 {
@@ -203,6 +215,8 @@ impl AppConfig {
             auto_daily_capture: false,
             capture_times: default_capture_times(),
             backup_reminder_days: default_backup_reminder(),
+            backup_keep: default_backup_keep(),
+            cartucho_keep: default_cartucho_keep(),
         }
     }
 }
