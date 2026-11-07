@@ -167,12 +167,41 @@ pub async fn init_pool() -> Result<SqlitePool> {
             repairs_ok = false;
         }
 
-        // id_vendedor: quitar prefijo "01"
-        if let Ok(affected) = sqlx::query("UPDATE ventas SET id_vendedor = SUBSTR(id_vendedor, 4) WHERE id_vendedor GLOB '01???'")
+        // id_vendedor: quitar prefijo "01" (SUBSTR es 1-based: la posicion 3
+        // es la correcta, '01054' -> '054'). Nota: hacia poco decia
+        // SUBSTR(..., 4) - off-by-one que habria corrupto '01054' a '54' y
+        // '01177' a '77'; estaba dormido porque el parser ya strippea al
+        // insertar (ninguna fila '01???' llega viva a la BD).
+        if let Ok(affected) = sqlx::query("UPDATE ventas SET id_vendedor = SUBSTR(id_vendedor, 3) WHERE id_vendedor GLOB '01???'")
             .execute(&pool).await
         {
             if affected.rows_affected() > 0 {
                 info!("Migracion id_vendedor: {} filas normalizadas (quitando prefijo 01)", affected.rows_affected());
+                let _ = refresh_dim_tables(&pool).await;
+            }
+        } else {
+            repairs_ok = false;
+        }
+
+        // id_vendedor: anomalias de fuente de 1-2 digitos -> canonico de 3
+        // chars ('54' -> '054'; el crudo 2010-10/2011-03 trae '0154' y el
+        // parser viejo lo dejaba como '54'). Solo numericos; vacios y
+        // no-numericos no se tocan (nom_vendedor vacio = la fuente venia asi,
+        // no se rellena).
+        if let Ok(affected) = sqlx::query(
+            "UPDATE ventas SET id_vendedor = printf('%03d', CAST(id_vendedor AS INTEGER))
+             WHERE length(id_vendedor) BETWEEN 1 AND 2
+               AND id_vendedor GLOB '[0-9]*'
+               AND NOT id_vendedor GLOB '*[^0-9]*'",
+        )
+        .execute(&pool)
+        .await
+        {
+            if affected.rows_affected() > 0 {
+                info!(
+                    "Migracion id_vendedor: {} filas con pad a 3 chars ('54' -> '054')",
+                    affected.rows_affected()
+                );
                 let _ = refresh_dim_tables(&pool).await;
             }
         } else {

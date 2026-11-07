@@ -30,7 +30,7 @@ Tres constantes controlan compatibilidad. Vive en `src/db/schema.rs`:
 |-----------|-------|--------------|----------------------|
 | `CONTRACTO_VERSION` | `4` | Formato de tabla `ventas` + tablas auditables | **Sí** — si difiere, rechazar |
 | `DIM_SCHEMA_VERSION` | `3` | Semántica de `dim_*` | No — solo reconstruir dims |
-| `NORMALIZACION_VERSION` | `1` | Reglas de saneamiento | No — informativo |
+| `NORMALIZACION_VERSION` | `2` | Reglas de saneamiento | No - informativo |
 
 ### Dónde se lee
 
@@ -38,7 +38,7 @@ Tres constantes controlan compatibilidad. Vive en `src/db/schema.rs`:
 PRAGMA user_version  == DIM_SCHEMA_VERSION      (3)
 g360_meta.contracto_version == CONTRACTO_VERSION (4)
 g360_meta.dim_schema_version == DIM_SCHEMA_VERSION (3)
-g360_meta.normalizacion_version == NORMALIZACION_VERSION (1)
+g360_meta.normalizacion_version == NORMALIZACION_VERSION (2)
 ```
 
 ### Regla para consumidores
@@ -46,7 +46,7 @@ g360_meta.normalizacion_version == NORMALIZACION_VERSION (1)
 ```
 SI  manifest.contracto_version != 4  →  RECHAZAR cartucho (incompatible)
 SI  PRAGMA user_version != 3        →  RECONSTRUIR dim_* (no fatal)
-SI  normalizacion_version != 1      →  OK (informativo)
+SI  normalizacion_version != 2      →  OK (informativo)
 ```
 
 ---
@@ -67,7 +67,7 @@ SI  normalizacion_version != 1      →  OK (informativo)
   "version": 4,                       // CONTRACTO_VERSION (entero)
   "contracto_version": "4",           // string, comparar con consumidor
   "dim_schema_version": "3",
-  "normalizacion_version": "1",
+  "normalizacion_version": "2",
   "format": "g360-ventas-cartucho-v2",// identificador de formato
   "tipo": "semilla" | "ejemplo",
   "generado_en": "2026-11-05T02:21:16Z",
@@ -150,7 +150,7 @@ compare_checksums --db cartucho.db --output check.json
 | 28 | `fecha_orig` | DATE | ★ | ISO `yyyy-mm-dd` |
 | 29-30 | `fecha_ref`,`fecha_venc` | TEXT | | |
 | 31-35 | `cod_sucursal`,`nom_sucursal`,`departamento`,`provincia`,`distrito` | TEXT | | |
-| 36 | `id_vendedor` | TEXT | ★ | Normalizado: quita prefijo `01` |
+| 36 | `id_vendedor` | TEXT | ★ | Normalizado: quita prefijo `01` + `zfill(3)` si es numérico corto |
 | 37 | `nom_vendedor` | TEXT | | |
 | 38 | `id_pedido` | TEXT | | Espacios → `_` |
 | 39 | `ord_compra` | TEXT | | |
@@ -165,13 +165,13 @@ compare_checksums --db cartucho.db --output check.json
 
 ---
 
-## 5. Reglas de normalización (NORMALIZACION_VERSION = 1)
+## 5. Reglas de normalización (NORMALIZACION_VERSION = 2)
 
 | Campo | Regla | Ejemplo entrada → salida |
 |-------|-------|--------------------------|
 | `id_cliente` | `zfill(8)` | `56101` → `00056101` |
 | `id_linea` | quita prefijo `01` si len>2 | `0178` → `78` |
-| `id_vendedor` | quita prefijo `01` si len>3 | `01M05` → `M05` |
+| `id_vendedor` | quita prefijo `01` si len>3; si el resultado es numérico y corto, `zfill(3)` al canónico | `01M05` → `M05` · `01052` → `052` · `0154` → `054` |
 | `id_pedido` | espacios → `_` | `SADIE 25` → `SADIE_25` |
 | `fecha_orig` | a ISO `yyyy-mm-dd` | `01/11/2026` → `2026-11-01` |
 | `mes_ref` | derivado de `fecha_orig` | `2026-11-01` → `2026-11` |

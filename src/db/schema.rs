@@ -33,7 +33,10 @@ pub const CONTRACTO_VERSION: i64 = 4;
 /// Versión de las reglas de saneamiento/normalización aplicadas a los datos.
 /// Se almacena en `g360_meta.normalizacion_version`.
 /// Bump cuando cambia una regla de normalización; el consumidor NO bloquea.
-pub const NORMALIZACION_VERSION: i64 = 1;
+/// v2 (06/11): pad de `id_vendedor` a 3 chars (anomalía de fuente '0154' ->
+/// '054') + fix del off-by-one de SUBSTR en la reparación legacy. El bump
+/// hace que el gate de init_pool() ejecute las reparaciones una sola vez más.
+pub const NORMALIZACION_VERSION: i64 = 2;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tabla principal: ventas (normalizada, con CHECKs para historial extensivo)

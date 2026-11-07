@@ -96,7 +96,7 @@ async fn test_day_checksums_calcula_y_persiste() {
 #[test]
 fn test_contracto_version_constant() {
     assert_eq!(schema::CONTRACTO_VERSION, 4);
-    assert_eq!(schema::NORMALIZACION_VERSION, 1);
+    assert_eq!(schema::NORMALIZACION_VERSION, 2);
     assert_eq!(schema::DIM_SCHEMA_VERSION, 3);
 }
 

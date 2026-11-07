@@ -129,14 +129,20 @@ fn normalize_line_id(s: &str) -> String {
 }
 
 /// ID_VENDEDOR canonico: 3 chars sin prefijo (177, A02, PE1...).
+/// La fuente trae '01'+3 chars ('01052' -> '052', '01M05' -> 'M05'), pero
+/// hay anomalias de 4 chars ('0154') que sin re-padear quedarian en '54':
+/// si el resultado es numerico y corto, se rellena a 3 ('054').
 fn normalize_seller_id(s: &str) -> String {
     let t = clean_id(s).to_uppercase();
-    if t.starts_with("01") && t.len() >= 4 {
+    let stripped = if t.starts_with("01") && t.len() >= 4 {
         t[2..].to_string()
-    } else if t.len() == 3 {
-        t
     } else {
         t
+    };
+    if stripped.len() < 3 && !stripped.is_empty() && stripped.chars().all(|c| c.is_ascii_digit()) {
+        format!("{:0>3}", stripped)
+    } else {
+        stripped
     }
 }
 
@@ -529,6 +535,18 @@ mod tests {
         assert_eq!(normalize_query_id("052", IdType::Vendedor), "052");
         assert_eq!(normalize_query_id("177", IdType::Vendedor), "177");
         assert_eq!(normalize_query_id("M05", IdType::Vendedor), "M05");
+    }
+
+    #[test]
+    fn vendedor_anomalia_de_fuente_se_rellena_a_3_chars() {
+        // Fuente real '0154' (4 chars, ver raw 2010-10/2011-03): sin el pad
+        // quedaria en '54'. El canonico son 3 chars: '01052'->'052' y
+        // '01M05'->'M05' -> '0154' debe dar '054'.
+        assert_eq!(normalize_query_id("0154", IdType::Vendedor), "054");
+        assert_eq!(normalize_query_id("54", IdType::Vendedor), "054");
+        assert_eq!(normalize_query_id("01054", IdType::Vendedor), "054");
+        // No-numéricos: solo se quita el prefijo, sin inventar padding.
+        assert_eq!(normalize_query_id("01M5", IdType::Vendedor), "M5");
     }
 
     // ── normalize_query_id: Articulo (sin transformar) ──

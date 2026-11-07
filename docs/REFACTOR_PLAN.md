@@ -152,8 +152,17 @@ mover/verificar `Cargo.lock` y perfiles; dejar para sesión dedicada.
 12. **Deuda `cargo fmt`**: `src/db/writer.rs` tiene ~68 hunks preexistentes
     (nunca se formateó el archivo completo; formatearlo metería ruido ajeno
     en un commit funcional → hacerlo como commit `chore` aparte).
-    `src-tauri/src/main.rs` HEAD estaba limpio → se formateó solo su región
-    editada (06/11).
+    `src-tauri/src/main.rs` y `src/processor/parser.rs` HEAD estaban limpios
+    → se formateó solo su región editada (06/11).
+13. **`refresh_dim_*` sin transacción + rebuild desproporcionado** (incidente
+    06/11): cada `refresh_dim_x` hace `DELETE` + `INSERT..SELECT` **sin
+    BEGIN/COMMIT** — un kill entre ambos deja la dim **vacía** (le pasó a
+    `dim_documento`: 0 filas / 694K folios huérfanos tras cortar un proceso
+    a los 420 s). Además, cambiar 6 filas disparó el rebuild **completo** de
+    las 6 dims (~8 min). Fixes: (a) envolver cada refresh en transacción,
+    (b) refresh selectivo por dim afectada, (c) `ensure_dims_fresh` revisa
+    solo `dim_cliente` → ampliar la señal de "necesita rebuild" (dims
+    huérfanas no se autocuran hoy).
 
 ## Protocolo seguido (para futuros refactors)
 
