@@ -31,13 +31,9 @@ fn parse_f64(s: &str, is_quantity: bool) -> f64 {
         if let Some(pos) = s.find(',') {
             let decimals = s.len() - pos - 1;
             if decimals >= 3 {
-                s.replace(',', "")
-                    .parse::<f64>()
-                    .unwrap_or(0.0)
+                s.replace(',', "").parse::<f64>().unwrap_or(0.0)
             } else {
-                s.replace(',', ".")
-                    .parse::<f64>()
-                    .unwrap_or(0.0)
+                s.replace(',', ".").parse::<f64>().unwrap_or(0.0)
             }
         } else {
             0.0
@@ -46,11 +42,9 @@ fn parse_f64(s: &str, is_quantity: bool) -> f64 {
         // Heuristica: "1.000" (3 decimales todos cero) => miles
         // "25.056" (3 decimales NO todos cero) => decimal real
         if let Some(pos) = s.find('.') {
-            let after = &s[pos+1..];
+            let after = &s[pos + 1..];
             if after.len() == 3 && after == "000" {
-                s.replace('.', "")
-                    .parse::<f64>()
-                    .unwrap_or(0.0)
+                s.replace('.', "").parse::<f64>().unwrap_or(0.0)
             } else {
                 s.parse::<f64>().unwrap_or(0.0)
             }
@@ -209,12 +203,69 @@ fn parse_date(s: &str) -> Option<chrono::NaiveDate> {
     None
 }
 
+/// Normaliza una fecha del ERP a ISO, o la deja tal cual si no se puede
+/// interpretar.
+///
+/// Es la unica politica para las columnas de fecha que se guardan como texto:
+/// convertir cuando se puede, conservar cuando no. Se prefiere un dato raro a
+/// perder la fila, y a normalizing de mas: un valor que no se entiende se ve
+/// raro en un reporte, pero una fila que se cae se pierde sin aviso.
+///
+/// `fec_cargo` venia sin pasar por aca (era `g(c_fec)`), por eso quedaron
+/// 74.380 filas en dd/mm/yyyy mientras `fecha_orig` ya estaba en ISO. El SQL
+/// compara fechas como texto, asi que un rango sobre esa columna devuelve
+/// cero filas sin dar error.
+fn fecha_iso_o_verbatim(valor: &str) -> Option<String> {
+    let s = valor.trim();
+    if s.is_empty() {
+        return None;
+    }
+    Some(
+        parse_date(s)
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| s.to_string()),
+    )
+}
+
 /// Core de parseo: lee el CSV y retorna TODAS las filas (raw-first).
 /// NO filtra por línea aquí: la BD local guarda el export completo del ERP
 /// (incluye traslados/servicios/líneas fuera de allowlist) para que cambios de
 /// allowlist o re-procesos no requieran re-captura desde la intranet.
 /// El filtro obligatorio se aplica al subir a Supabase (config::with_line_filter).
 /// Solo se descartan filas malformadas (sin SKU o sin cliente), igual que antes.
+/// Mes (`YYYY-MM`) de un CSV **mensual** de `raw/`, o `None` si el archivo no es
+/// uno.
+///
+/// Acepta solo `ventas_YYYY-MM.csv` con mes real de calendario.
+///
+/// Por qué parsear en vez de contar caracteres: el filtro anterior de
+/// `bin/reparse` era `name.len() == "ventas_YYYY-MM.csv".len()`, o sea 18,
+/// cuando el nombre real tiene 16. Con eso NINGUNO de los 202 meses calificaba.
+/// En vez de reprocesar mes a mes, el prefijo de año ("2010-0") hacía matchear y
+/// `insert_ventas` ejecutaba `DELETE FROM ventas WHERE mes_ref = '2010-0'`:
+/// un mes inexistente, así que no borraba nada e insertaba encima,
+/// duplicando las ~2.8M de filas.
+///
+/// También se rechazan los parciales de página (`ventas_2026-01-p4_1.csv`):
+/// son trozos del mismo mes y reprocesarlos junto al mensual duplicaría filas.
+/// Sus datos ya están volcados en el CSV mensual del mes correspondiente.
+pub fn mes_de_nombre_csv(nombre: &str) -> Option<(i32, u32)> {
+    let resto = nombre.strip_prefix("ventas_")?.strip_suffix(".csv")?;
+    // `split_once` parte en el PRIMER guion: para "2026-01-p4_1" deja
+    // mes = "01-p4_1", y el `parse::<u32>` de abajo lo rechaza solo. No hace
+    // falta un chequeo extra de guiones.
+    let (anio, mes) = resto.split_once('-')?;
+    if anio.len() != 4 || mes.len() != 2 {
+        return None;
+    }
+    let anio: i32 = anio.parse().ok()?;
+    let mes: u32 = mes.parse().ok()?;
+    if !(1..=12).contains(&mes) {
+        return None;
+    }
+    Some((anio, mes))
+}
+
 pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
     let label = path
         .file_stem()
@@ -277,7 +328,12 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
     // Seguro de esquema: sin estas columnas el parseo descartaria filas en silencio.
     // Si el intranet cambia el header, abortamos con un mensaje accionable.
     let required = [
-        "ID_ARTICULO", "ID_CLIENTE", "FECHA_ORIG", "TPO_DOC", "SERIE_DOC", "NRO_DOC",
+        "ID_ARTICULO",
+        "ID_CLIENTE",
+        "FECHA_ORIG",
+        "TPO_DOC",
+        "SERIE_DOC",
+        "NRO_DOC",
     ];
     let missing: Vec<&str> = required
         .iter()
@@ -310,7 +366,11 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
         // Base del precio unitario: preferir cantidad real; si es 0 (ajuste de valor/descuento),
         // usar CANTIDAD FAE (base sobre la que se aplico el descuento).
         // Ej. vendi 1000 pero descuente 500 entregados => precio aplicado = soles / FAE.
-        let base_qty = if cantidad != 0.0 { cantidad } else { cantidad_fae };
+        let base_qty = if cantidad != 0.0 {
+            cantidad
+        } else {
+            cantidad_fae
+        };
         let precio_raw = if base_qty != 0.0 {
             soles / base_qty
         } else {
@@ -350,24 +410,13 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
             dolares,
             precio_unitario,
             anho: g(c_anho).parse().unwrap_or(0),
-            mes: label.get(5..7).and_then(|s| s.parse::<i32>().ok()).unwrap_or(0),
+            mes: label
+                .get(5..7)
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(0),
             fecha_orig,
-            fecha_ref: {
-                let s = g(c_fr);
-                if s.is_empty() {
-                    None
-                } else {
-                    Some(parse_date(&s).map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or(s))
-                }
-            },
-            fecha_venc: {
-                let s = g(c_fv);
-                if s.is_empty() {
-                    None
-                } else {
-                    Some(parse_date(&s).map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or(s))
-                }
-            },
+            fecha_ref: fecha_iso_o_verbatim(&g(c_fr)),
+            fecha_venc: fecha_iso_o_verbatim(&g(c_fv)),
             cod_sucursal: g(c_cs),
             nom_sucursal: g(c_ns),
             departamento: g(c_dep),
@@ -382,7 +431,7 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
             nom_condicion_pago: g(c_cpg),
             estado_linea: g(c_est),
             division: g(c_div),
-            fec_cargo: g(c_fec),
+            fec_cargo: fecha_iso_o_verbatim(&g(c_fec)).unwrap_or_default(),
             id_guia: g(c_ug),
             file_source: path
                 .file_name()
@@ -411,12 +460,19 @@ pub fn parse_export_csv(path: &Path) -> Result<Vec<Venta>> {
             path.display()
         ));
     }
-    info!("parse_export: {} rows (raw, sin filtrar) from {}", raw_rows.len(), path.display());
+    info!(
+        "parse_export: {} rows (raw, sin filtrar) from {}",
+        raw_rows.len(),
+        path.display()
+    );
     Ok(raw_rows)
 }
 
 /// Wrapper async que reutiliza parse_export_csv para compatibilidad con el pipeline de captura.
 /// No aplica filtro cross-mes (el gate de NC/ND vive en upload).
-pub async fn parse_export_csv_with_cross(path: &Path, _pool: &sqlx::SqlitePool) -> Result<Vec<Venta>> {
+pub async fn parse_export_csv_with_cross(
+    path: &Path,
+    _pool: &sqlx::SqlitePool,
+) -> Result<Vec<Venta>> {
     parse_export_csv(path)
 }

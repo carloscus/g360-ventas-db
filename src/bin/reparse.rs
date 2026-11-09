@@ -5,6 +5,8 @@ use anyhow::Result;
 use tracing::{error, info};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
+use g360_db_ventas::processor::parser::mes_de_nombre_csv;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::registry()
@@ -21,8 +23,7 @@ async fn main() -> Result<()> {
         for e in entries.flatten() {
             let p = e.path();
             let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
-            let monthly = name.len() == "ventas_YYYY-MM.csv".len();
-            if name.starts_with("ventas_") && name.ends_with(".csv") && !name.contains("-p") && monthly {
+            if mes_de_nombre_csv(name).is_some() {
                 files.push(p);
             }
         }

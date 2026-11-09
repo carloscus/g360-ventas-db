@@ -1,7 +1,6 @@
 /// Verificación de despliegue para producción
 /// Garantiza que la BD esté en estado correcto antes de operar
-
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use sqlx::SqlitePool;
 
 /// Verifica que una BD recién desplegada esté lista para producción
@@ -9,7 +8,13 @@ pub async fn verify_deploy(pool: &SqlitePool) -> Result<Vec<String>> {
     let mut issues = Vec::new();
 
     // 1. Tablas críticas existen
-    let tables = ["ventas", "dim_ruc", "mes_checksums", "sync_log", "audit_log"];
+    let tables = [
+        "ventas",
+        "dim_ruc",
+        "mes_checksums",
+        "sync_log",
+        "audit_log",
+    ];
     for table in tables {
         let count: i64 = sqlx::query_scalar(&format!(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
@@ -54,17 +59,19 @@ pub async fn verify_deploy(pool: &SqlitePool) -> Result<Vec<String>> {
     }
 
     // 3. Estructura de ventas (columnas críticas)
-    let col_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pragma_table_info('ventas')",
-    )
-    .fetch_one(pool)
-    .await?;
+    let col_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info('ventas')")
+        .fetch_one(pool)
+        .await?;
     if col_count < 50 {
-        issues.push(format!("⚠️ Tabla ventas incompleta: {} columnas (esperado 53+)", col_count));
+        issues.push(format!(
+            "⚠️ Tabla ventas incompleta: {} columnas (esperado 53+)",
+            col_count
+        ));
     }
 
     // 4. RUCs problemáticos (deben ser 0 tras limpieza)
-    let bad_rucs: i64 = sqlx::query_scalar(r#"
+    let bad_rucs: i64 = sqlx::query_scalar(
+        r#"
         SELECT COUNT(*) FROM (
             SELECT doc_cliente FROM ventas 
             WHERE doc_cliente NOT GLOB '[0-9]*' 
@@ -72,7 +79,8 @@ pub async fn verify_deploy(pool: &SqlitePool) -> Result<Vec<String>> {
               AND doc_cliente NOT IN ('S/N', 'N/A', 'PENDIENTE')
             GROUP BY doc_cliente HAVING COUNT(*) > 5
         )
-    "#)
+    "#,
+    )
     .fetch_one(pool)
     .await?;
     if bad_rucs > 0 {
@@ -80,15 +88,20 @@ pub async fn verify_deploy(pool: &SqlitePool) -> Result<Vec<String>> {
     }
 
     // 5. Datos mínimos (BD vacía = problema)
-    let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas").fetch_one(pool).await?;
+    let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas")
+        .fetch_one(pool)
+        .await?;
     if row_count == 0 {
         issues.push("ℹ️ BD vacía: necesita captura inicial".to_string());
     }
 
     // 6. dim_ruc poblado
-    let dim_ruc_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dim_ruc").fetch_one(pool).await?;
+    let dim_ruc_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dim_ruc")
+        .fetch_one(pool)
+        .await?;
     if dim_ruc_count == 0 && row_count > 0 {
-        issues.push("⚠️ dim_ruc vacío pero ventas tiene datos: ejecutar refresh_dim_ruc".to_string());
+        issues
+            .push("⚠️ dim_ruc vacío pero ventas tiene datos: ejecutar refresh_dim_ruc".to_string());
     }
 
     if issues.is_empty() {
@@ -123,7 +136,7 @@ pub async fn refresh_dim_ruc(pool: &SqlitePool) -> Result<usize> {
     "#)
     .execute(pool)
     .await?;
-    
+
     Ok(1)
 }
 
@@ -132,10 +145,17 @@ pub async fn verify_post_capture(pool: &SqlitePool) -> Result<Vec<String>> {
     let mut issues = Vec::new();
 
     // Checksums mensuales
-    let checksum_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mes_checksums").fetch_one(pool).await?;
-    let month_count: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT mes_ref) FROM ventas").fetch_one(pool).await?;
+    let checksum_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mes_checksums")
+        .fetch_one(pool)
+        .await?;
+    let month_count: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT mes_ref) FROM ventas")
+        .fetch_one(pool)
+        .await?;
     if checksum_count < (month_count as f64 * 0.9) as i64 {
-        issues.push(format!("⚠️ Checksums incompletos: {} de {} meses", checksum_count, month_count));
+        issues.push(format!(
+            "⚠️ Checksums incompletos: {} de {} meses",
+            checksum_count, month_count
+        ));
     }
 
     // Sin duplicados literales
@@ -147,18 +167,28 @@ pub async fn verify_post_capture(pool: &SqlitePool) -> Result<Vec<String>> {
         ) WHERE rn > 1
     "#).fetch_one(pool).await?;
     if literal_dups > 0 {
-        issues.push(format!("⚠️ Duplicados literales encontrados: {}", literal_dups));
+        issues.push(format!(
+            "⚠️ Duplicados literales encontrados: {}",
+            literal_dups
+        ));
     }
 
     // Consistencia fecha/mes
-    let date_mismatch: i64 = sqlx::query_scalar(r#"
+    let date_mismatch: i64 = sqlx::query_scalar(
+        r#"
         SELECT COUNT(*) FROM ventas 
         WHERE substr(fecha_orig, 1, 7) != mes_ref
           AND fecha_orig != ''
           AND mes_ref != ''
-    "#).fetch_one(pool).await?;
+    "#,
+    )
+    .fetch_one(pool)
+    .await?;
     if date_mismatch > 0 {
-        issues.push(format!("⚠️ Fechas inconsistentes con mes: {}", date_mismatch));
+        issues.push(format!(
+            "⚠️ Fechas inconsistentes con mes: {}",
+            date_mismatch
+        ));
     }
 
     if issues.is_empty() {
@@ -180,7 +210,7 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        
+
         // Crear tablas básicas
         sqlx::query(crate::db::schema::CREATE_TABLE_SQL)
             .execute(&pool)
@@ -193,7 +223,7 @@ mod tests {
         for idx in crate::db::schema::CREATE_INDEXES_SQL {
             sqlx::query(idx).execute(&pool).await.unwrap();
         }
-        
+
         let issues = verify_deploy(&pool).await.unwrap();
         assert!(issues.iter().any(|s| s.contains("BD vacía")));
     }

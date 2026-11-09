@@ -6,6 +6,6 @@ pub mod db;
 pub mod models;
 pub mod processor;
 
+pub use capture_state::{now_secs, ProgressState, SharedProgress};
 pub use config::*;
 pub use models::*;
-pub use capture_state::{ProgressState, SharedProgress, now_secs};

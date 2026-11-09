@@ -24,6 +24,7 @@ url = "2"
 anyhow = "1"
 futures-util = "0.3"
 rand = "0.8"
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"
@@ -52,3 +53,7 @@ path = "src/bin/importxls.rs"
 [[bin]]
 name = "export"
 path = "src/bin/export.rs"
+
+[[bin]]
+name = "publish"
+path = "src/bin/publish.rs"

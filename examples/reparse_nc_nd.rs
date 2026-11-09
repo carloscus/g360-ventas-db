@@ -1,6 +1,6 @@
-use g360_db_ventas::db::writer::{init_pool, insert_ventas, dedup_ventas};
-use g360_db_ventas::processor::parser::parse_export_csv_with_cross;
 use g360_db_ventas::config::load_dotenv;
+use g360_db_ventas::db::writer::{dedup_ventas, init_pool, insert_ventas};
+use g360_db_ventas::processor::parser::parse_export_csv_with_cross;
 use std::path::{Path, PathBuf};
 use tracing_subscriber::EnvFilter;
 
@@ -19,7 +19,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Contar registros antes
     let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas")
-        .fetch_one(&pool).await?;
+        .fetch_one(&pool)
+        .await?;
     println!("registros antes: {before}");
 
     // Listar CSVs mensuales (no diarios)
@@ -41,7 +42,10 @@ async fn main() -> anyhow::Result<()> {
     let mut total_despues = 0usize;
 
     for csv in &csv_files {
-        let label = csv.file_stem().unwrap_or_default().to_string_lossy()
+        let label = csv
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
             .replace("ventas_", "");
         match parse_export_csv_with_cross(csv, &pool).await {
             Ok(ventas) => {
@@ -60,8 +64,12 @@ async fn main() -> anyhow::Result<()> {
     println!("duplicados removidos: {dupes}");
 
     let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas")
-        .fetch_one(&pool).await?;
-    println!("registros despues: {after} (antes: {before}, delta: {:+})", after - before);
+        .fetch_one(&pool)
+        .await?;
+    println!(
+        "registros despues: {after} (antes: {before}, delta: {:+})",
+        after - before
+    );
     println!("re-parse completado: {} meses procesados", csv_files.len());
     Ok(())
 }

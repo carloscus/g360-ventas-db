@@ -25,11 +25,23 @@ async fn main() -> anyhow::Result<()> {
             end: chrono::NaiveDate::from_ymd_opt(d.0, d.1, d.2).unwrap(),
             label: format!("{}-{:02}-{:02}", d.0, d.1, d.2),
         };
-        println!("[{:>5}s] descargando {} {}...", t0.elapsed().as_secs(), label, day.label);
-        match tokio::time::timeout(std::time::Duration::from_secs(300), s.download(&day, &raw)).await {
+        println!(
+            "[{:>5}s] descargando {} {}...",
+            t0.elapsed().as_secs(),
+            label,
+            day.label
+        );
+        match tokio::time::timeout(std::time::Duration::from_secs(300), s.download(&day, &raw))
+            .await
+        {
             Ok(Ok(p)) => {
                 let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
-                println!("[{:>5}s] {} OK {} bytes", t0.elapsed().as_secs(), label, size);
+                println!(
+                    "[{:>5}s] {} OK {} bytes",
+                    t0.elapsed().as_secs(),
+                    label,
+                    size
+                );
             }
             Ok(Err(e)) => println!("[{:>5}s] {} FAIL: {e:#}", t0.elapsed().as_secs(), label),
             Err(_) => println!("[{:>5}s] {} TIMEOUT", t0.elapsed().as_secs(), label),

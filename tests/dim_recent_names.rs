@@ -77,23 +77,37 @@ async fn dims_muestran_el_nombre_mas_reciente() {
 
     // Fila ANTIGUA (2025-01): nombres viejos que ganarian el MAX() por empezar con ZZZ.
     insert(
-        &pool, "2025-01-10", "2025-01",
-        "C1", "ZZZ CLIENTE VIEJO",
-        "S1", "ZZZ PRODUCTO VIEJO",
-        "L1", "ZZZ LINEA VIEJA",
-        "V1", "ZZZ VENDEDOR VIEJO",
-        100.0, 10.0,
+        &pool,
+        "2025-01-10",
+        "2025-01",
+        "C1",
+        "ZZZ CLIENTE VIEJO",
+        "S1",
+        "ZZZ PRODUCTO VIEJO",
+        "L1",
+        "ZZZ LINEA VIEJA",
+        "V1",
+        "ZZZ VENDEDOR VIEJO",
+        100.0,
+        10.0,
     )
     .await;
 
     // Fila NUEVA (2026-01): mismos ids, nombres renombrados.
     insert(
-        &pool, "2026-01-10", "2026-01",
-        "C1", "CLIENTE NUEVO",
-        "S1", "PRODUCTO NUEVO",
-        "L1", "LINEA NUEVA",
-        "V1", "VENDEDOR NUEVO",
-        200.0, 20.0,
+        &pool,
+        "2026-01-10",
+        "2026-01",
+        "C1",
+        "CLIENTE NUEVO",
+        "S1",
+        "PRODUCTO NUEVO",
+        "L1",
+        "LINEA NUEVA",
+        "V1",
+        "VENDEDOR NUEVO",
+        200.0,
+        20.0,
     )
     .await;
 
@@ -102,15 +116,20 @@ async fn dims_muestran_el_nombre_mas_reciente() {
     // ── Cliente ──
     let r = sqlx::query("SELECT nom_cliente, doc_cliente, n_ventas, total_soles FROM dim_cliente WHERE id_cliente='C1'")
         .fetch_one(&pool).await.unwrap();
-    assert_eq!(r.get::<String, _>("nom_cliente"), "CLIENTE NUEVO",
-        "dim_cliente debe mostrar el nombre mas reciente");
+    assert_eq!(
+        r.get::<String, _>("nom_cliente"),
+        "CLIENTE NUEVO",
+        "dim_cliente debe mostrar el nombre mas reciente"
+    );
     assert_eq!(r.get::<String, _>("doc_cliente"), "RUC-C1");
     assert_eq!(r.get::<i64, _>("n_ventas"), 2);
     assert!((r.get::<f64, _>("total_soles") - 300.0).abs() < 0.01);
 
     // ── Vendedor ──
     let r = sqlx::query("SELECT nom_vendedor, n_ventas FROM dim_vendedor WHERE id_vendedor='V1'")
-        .fetch_one(&pool).await.unwrap();
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(r.get::<String, _>("nom_vendedor"), "VENDEDOR NUEVO");
     assert_eq!(r.get::<i64, _>("n_ventas"), 2);
 
@@ -119,8 +138,11 @@ async fn dims_muestran_el_nombre_mas_reciente() {
         "SELECT nom_articulo, id_linea, nom_linea, n_ventas, total_cantidad, total_soles, precio_promedio
          FROM dim_articulo WHERE id_articulo='S1'")
         .fetch_one(&pool).await.unwrap();
-    assert_eq!(r.get::<String, _>("nom_articulo"), "PRODUCTO NUEVO",
-        "dim_articulo debe mostrar el nombre mas reciente");
+    assert_eq!(
+        r.get::<String, _>("nom_articulo"),
+        "PRODUCTO NUEVO",
+        "dim_articulo debe mostrar el nombre mas reciente"
+    );
     assert_eq!(r.get::<String, _>("id_linea"), "L1");
     assert_eq!(r.get::<String, _>("nom_linea"), "LINEA NUEVA");
     assert_eq!(r.get::<i64, _>("n_ventas"), 2);
@@ -129,10 +151,16 @@ async fn dims_muestran_el_nombre_mas_reciente() {
     assert!((r.get::<f64, _>("precio_promedio") - 10.0).abs() < 0.01);
 
     // ── Linea ──
-    let r = sqlx::query("SELECT nom_linea, n_ventas, total_soles FROM dim_linea WHERE id_linea='L1'")
-        .fetch_one(&pool).await.unwrap();
-    assert_eq!(r.get::<String, _>("nom_linea"), "LINEA NUEVA",
-        "dim_linea debe mostrar el nombre mas reciente");
+    let r =
+        sqlx::query("SELECT nom_linea, n_ventas, total_soles FROM dim_linea WHERE id_linea='L1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        r.get::<String, _>("nom_linea"),
+        "LINEA NUEVA",
+        "dim_linea debe mostrar el nombre mas reciente"
+    );
     assert_eq!(r.get::<i64, _>("n_ventas"), 2);
     assert!((r.get::<f64, _>("total_soles") - 300.0).abs() < 0.01);
 }
@@ -141,28 +169,52 @@ async fn dims_muestran_el_nombre_mas_reciente() {
 async fn ensure_dims_fresh_versiona_y_no_reconstruye_al_dia() {
     let pool = setup().await;
     insert(
-        &pool, "2026-01-10", "2026-01",
-        "C9", "CLIENTE X", "S9", "PRODUCTO X",
-        "L9", "LINEA X", "V9", "VENDEDOR X",
-        50.0, 5.0,
+        &pool,
+        "2026-01-10",
+        "2026-01",
+        "C9",
+        "CLIENTE X",
+        "S9",
+        "PRODUCTO X",
+        "L9",
+        "LINEA X",
+        "V9",
+        "VENDEDOR X",
+        50.0,
+        5.0,
     )
     .await;
 
     // Primera vez: dims vacias -> reconstruye y marca la version.
     let n1 = ensure_dims_fresh(&pool).await.expect("ensure 1");
     assert!(n1 > 0, "debe reconstruir cuando estan vacias");
-    let ver: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&pool).await.unwrap();
-    assert_eq!(ver, DIM_SCHEMA_VERSION, "debe marcar la version del esquema");
+    let ver: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        ver, DIM_SCHEMA_VERSION,
+        "debe marcar la version del esquema"
+    );
 
     // Segunda vez: ya al dia -> no reconstruye (barato).
     let n2 = ensure_dims_fresh(&pool).await.expect("ensure 2");
     assert_eq!(n2, 0, "no debe reconstruir si ya esta al dia");
 
     // Si bajamos la version (simula BD antigua), debe reconstruir una vez.
-    sqlx::query("PRAGMA user_version = 1").execute(&pool).await.unwrap();
+    sqlx::query("PRAGMA user_version = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
     let n3 = ensure_dims_fresh(&pool).await.expect("ensure 3");
-    assert!(n3 > 0, "debe reconstruir si user_version < DIM_SCHEMA_VERSION");
-    let ver: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&pool).await.unwrap();
+    assert!(
+        n3 > 0,
+        "debe reconstruir si user_version < DIM_SCHEMA_VERSION"
+    );
+    let ver: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(ver, DIM_SCHEMA_VERSION);
 }
 
@@ -186,11 +238,17 @@ async fn vistas_se_reemplazan_aunque_existan() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert!(vieja.contains("MAX("), "precondicion: la vista vieja usa MAX()");
+    assert!(
+        vieja.contains("MAX("),
+        "precondicion: la vista vieja usa MAX()"
+    );
 
     // Re-aplicar el esquema de vistas debe reemplazarla (DROP + CREATE).
     for view in CREATE_VIEWS_SQL {
-        sqlx::query(view).execute(&pool).await.expect("crear vistas");
+        sqlx::query(view)
+            .execute(&pool)
+            .await
+            .expect("crear vistas");
     }
 
     let nueva: String = sqlx::query_scalar(

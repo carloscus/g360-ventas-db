@@ -27,9 +27,17 @@ fn test_xls_to_csv_humo() {
     assert_eq!(ventas.len(), 3, "deben parsearse las 3 filas");
 
     let v1 = &ventas[0];
-    assert!((v1.soles - 1000.50).abs() < 0.01, "miles latino: soles={}", v1.soles);
+    assert!(
+        (v1.soles - 1000.50).abs() < 0.01,
+        "miles latino: soles={}",
+        v1.soles
+    );
     let v2 = &ventas[1];
-    assert!((v2.cantidad - 25.056).abs() < 0.0001, "cantidad decimal: {}", v2.cantidad);
+    assert!(
+        (v2.cantidad - 25.056).abs() < 0.0001,
+        "cantidad decimal: {}",
+        v2.cantidad
+    );
     let nc = &ventas[2];
     assert_eq!(nc.tipo_operacion, "devolucion");
     assert_eq!(nc.factura_ref_serie, "201");
@@ -42,11 +50,16 @@ fn test_xls_to_csv_humo() {
 fn test_merge_csvs_puro() {
     let tmp = std::env::temp_dir().join("test_merge_g360");
     std::fs::create_dir_all(&tmp).unwrap();
-    let a = tmp.join("a.csv"); let b = tmp.join("b.csv"); let m = tmp.join("m.csv");
+    let a = tmp.join("a.csv");
+    let b = tmp.join("b.csv");
+    let m = tmp.join("m.csv");
     std::fs::write(&a, "H1,H2\n1,2\n3,4\n").unwrap();
     std::fs::write(&b, "H1,H2\n5,6\n").unwrap();
     let n = g360_db_ventas::capture::merge_csvs(&[a, b], &m).unwrap();
-    assert_eq!(n, 3, "esperado 3 filas data (header solo una vez, sin contar header)");
+    assert_eq!(
+        n, 3,
+        "esperado 3 filas data (header solo una vez, sin contar header)"
+    );
     let content = std::fs::read_to_string(&m).unwrap();
     assert_eq!(content.lines().count(), 4); // 1 header + 3 data
     assert_eq!(content.lines().next().unwrap(), "H1,H2");

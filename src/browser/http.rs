@@ -98,11 +98,7 @@ impl CipsaHttp {
         Ok(())
     }
 
-    async fn get_and_post_export(
-        &self,
-        url: &str,
-        out_path: &Path,
-    ) -> Result<std::path::PathBuf> {
+    async fn get_and_post_export(&self, url: &str, out_path: &Path) -> Result<std::path::PathBuf> {
         // Abort cooperativo: si el usuario pidio detener, cortar antes de iniciar red
         if crate::capture::CAPTURE_ABORT_GLOBAL.load(std::sync::atomic::Ordering::Relaxed) {
             return Err(anyhow!("abortado por usuario"));
@@ -110,7 +106,11 @@ impl CipsaHttp {
         // 1) GET fija el rango en la sesion del server y renderiza __VIEWSTATE fresco
         // (dias pesados ~12k filas tardan >200s en renderizar el grid)
         // Cache-busting: no-cache headers + _t param para que no traiga la misma info
-        let url_nocache = if url.contains('?') { format!("{url}&_t={}", crate::capture_state::now_secs()) } else { format!("{url}?_t={}", crate::capture_state::now_secs()) };
+        let url_nocache = if url.contains('?') {
+            format!("{url}&_t={}", crate::capture_state::now_secs())
+        } else {
+            format!("{url}?_t={}", crate::capture_state::now_secs())
+        };
         let html = self
             .client
             .get(&url_nocache)
@@ -155,7 +155,12 @@ impl CipsaHttp {
         let bytes = resp.bytes().await?;
         validate_xls(&bytes, &ct)?;
         std::fs::write(out_path, &bytes)?;
-        info!("  Downloaded {} bytes (ct={}) -> {}", bytes.len(), ct, out_path.display());
+        info!(
+            "  Downloaded {} bytes (ct={}) -> {}",
+            bytes.len(),
+            ct,
+            out_path.display()
+        );
         Ok(out_path.to_path_buf())
     }
 }
@@ -189,7 +194,10 @@ fn validate_xls(bytes: &[u8], ct: &str) -> Result<()> {
             ));
         }
         if !is_ole && !is_zip && ct.contains("text/html") && bytes.len() < 2048 {
-            return Err(anyhow!("respuesta sospechosa text/html {} bytes", bytes.len()));
+            return Err(anyhow!(
+                "respuesta sospechosa text/html {} bytes",
+                bytes.len()
+            ));
         }
     }
     Ok(())
@@ -231,39 +239,74 @@ impl CipsaHttp {
     }
 
     /// Wrapper compat sin split Art
-    pub async fn download(&self, month: &MonthRange, output_dir: &Path) -> Result<std::path::PathBuf> {
+    pub async fn download(
+        &self,
+        month: &MonthRange,
+        output_dir: &Path,
+    ) -> Result<std::path::PathBuf> {
         self.download_with_art(month, output_dir, "", "", "").await
     }
 
     /// Split adaptativo por Articulo (2->4->8) sobre transporte HTTP.
     /// Misma estrategia que captor.rs pero sin navegacion Chrome.
-    pub async fn download_day_split(&self, day: &MonthRange, output_dir: &Path) -> Result<std::path::PathBuf> {
+    pub async fn download_day_split(
+        &self,
+        day: &MonthRange,
+        output_dir: &Path,
+    ) -> Result<std::path::PathBuf> {
         if let Ok(p) = self.download(day, output_dir).await {
-            if std::fs::metadata(&p).map(|m| m.len() > 5000).unwrap_or(false) {
+            if std::fs::metadata(&p)
+                .map(|m| m.len() > 5000)
+                .unwrap_or(false)
+            {
                 return Ok(p);
             }
         }
-        warn!("  Dia {} muy extenso — split Art adaptativo via HTTP", day.label);
+        warn!(
+            "  Dia {} muy extenso — split Art adaptativo via HTTP",
+            day.label
+        );
         let schemes: Vec<Vec<(&str, &str)>> = vec![
             vec![("", "5ZZZZZ"), ("6", "ZZZZZ")],
-            vec![("", "3ZZZZZ"), ("4", "6ZZZZZ"), ("7", "9ZZZZZ"), (":", "ZZZZZ")],
             vec![
-                ("", "1ZZZZZ"), ("2", "3ZZZZZ"), ("4", "5ZZZZZ"), ("6", "7ZZZZZ"),
-                ("8", "9ZZZZZ"), (":", "GZZZZZ"), ("H", "NZZZZZ"), ("O", "ZZZZZ"),
+                ("", "3ZZZZZ"),
+                ("4", "6ZZZZZ"),
+                ("7", "9ZZZZZ"),
+                (":", "ZZZZZ"),
+            ],
+            vec![
+                ("", "1ZZZZZ"),
+                ("2", "3ZZZZZ"),
+                ("4", "5ZZZZZ"),
+                ("6", "7ZZZZZ"),
+                ("8", "9ZZZZZ"),
+                (":", "GZZZZZ"),
+                ("H", "NZZZZZ"),
+                ("O", "ZZZZZ"),
             ],
         ];
         for (si, buckets) in schemes.iter().enumerate() {
-            warn!("  esquema {}/{}: {} partes", si + 1, schemes.len(), buckets.len());
+            warn!(
+                "  esquema {}/{}: {} partes",
+                si + 1,
+                schemes.len(),
+                buckets.len()
+            );
             let mut part_csvs: Vec<std::path::PathBuf> = Vec::new();
             let mut ok_all = true;
             for (bi, (a_i, a_f)) in buckets.iter().enumerate() {
                 let suffix = format!("-s{}_{}", si + 1, bi + 1);
-                match self.download_with_art(day, output_dir, a_i, a_f, &suffix).await {
+                match self
+                    .download_with_art(day, output_dir, a_i, a_f, &suffix)
+                    .await
+                {
                     Ok(xls_p) => {
                         let csv_p = xls_p.with_extension("csv");
                         if crate::processor::xls::xls_to_csv(&xls_p, &csv_p).is_err()
                             || !csv_p.exists()
-                            || std::fs::metadata(&csv_p).map(|m| m.len() < 500).unwrap_or(true)
+                            || std::fs::metadata(&csv_p)
+                                .map(|m| m.len() < 500)
+                                .unwrap_or(true)
                         {
                             warn!("  bucket {} xls_to_csv fallo", bi + 1);
                             ok_all = false;
@@ -285,7 +328,9 @@ impl CipsaHttp {
                     warn!("  split merge rust failed: {e:#}");
                 }
                 if merged_csv.exists()
-                    && std::fs::metadata(&merged_csv).map(|m| m.len() > 1000).unwrap_or(false)
+                    && std::fs::metadata(&merged_csv)
+                        .map(|m| m.len() > 1000)
+                        .unwrap_or(false)
                 {
                     let xls_final = output_dir.join(format!("ventas_{}.xls", day.label));
                     if !xls_final.exists() {
@@ -296,12 +341,19 @@ impl CipsaHttp {
                 }
             }
         }
-        Err(anyhow!("todos los esquemas de split fallaron para {}", day.label))
+        Err(anyhow!(
+            "todos los esquemas de split fallaron para {}",
+            day.label
+        ))
     }
 
     /// Fallback HTML: GET accion=L0 trae el grid ya renderizado; se convierte tabla -> CSV.
     /// Parser Rust puro (sin python): extrae la tabla con mas <tr>.
-    pub async fn scrape_html(&self, month: &MonthRange, output_dir: &Path) -> Result<std::path::PathBuf> {
+    pub async fn scrape_html(
+        &self,
+        month: &MonthRange,
+        output_dir: &Path,
+    ) -> Result<std::path::PathBuf> {
         let (df, dt) = month.to_url_params();
         let url = exp_url(&df, &dt, "", "", "L0");
         let html = self
@@ -368,14 +420,21 @@ fn extract_largest_table_html(html: &str) -> String {
             let row_html = &table_html[r_abs..r_end];
             let mut cells: Vec<String> = Vec::new();
             let mut cpos = 0usize;
-            while let Some(c_start) = row_html[cpos..].find("<td").or_else(|| row_html[cpos..].find("<th")) {
+            while let Some(c_start) = row_html[cpos..]
+                .find("<td")
+                .or_else(|| row_html[cpos..].find("<th"))
+            {
                 let c_abs = cpos + c_start;
                 // contenido entre > y </td|th>
                 let open_end = match row_html[c_abs..].find('>') {
                     Some(e) => c_abs + e + 1,
                     None => break,
                 };
-                let close_tag = if &row_html[c_abs..c_abs+3] == "<td" { "</td>" } else { "</th>" };
+                let close_tag = if &row_html[c_abs..c_abs + 3] == "<td" {
+                    "</td>"
+                } else {
+                    "</th>"
+                };
                 let close_pos = match row_html[open_end..].find(close_tag) {
                     Some(e) => open_end + e,
                     None => break,
@@ -397,7 +456,9 @@ fn extract_largest_table_html(html: &str) -> String {
             best_rows = rows;
         }
         pos = t_end;
-        if best_rows.len() > 50_000 { break; } // suficiente
+        if best_rows.len() > 50_000 {
+            break;
+        } // suficiente
     }
     // Serializar a CSV
     let mut out = String::with_capacity(best_rows.len() * 120);

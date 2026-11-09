@@ -33,7 +33,10 @@ async fn main() -> Result<()> {
     // Gate de integridad: SKU guardado como numero (perdida de cero inicial).
     if let Ok(insp) = g360_db_ventas::processor::xls::inspect_sku_column(&xls) {
         if insp.has_numeric_sku() {
-            error!("Columna SKU numerica ({} filas): re-exporta el XLS sin re-guardarlo en Excel.", insp.numeric_cells);
+            error!(
+                "Columna SKU numerica ({} filas): re-exporta el XLS sin re-guardarlo en Excel.",
+                insp.numeric_cells
+            );
             std::process::exit(1);
         }
     }

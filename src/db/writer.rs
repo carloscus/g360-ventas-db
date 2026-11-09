@@ -1,10 +1,15 @@
 // Comentarios en espanol - fechas internas yyyy-mm-dd, display dd/mm/yyyy
 use crate::config::db_path;
+use crate::db::schema::CONTRACTO_VERSION;
+use crate::db::schema::{
+    CREATE_AUDIT_TABLES_SQL, CREATE_DIM_TABLES_SQL, CREATE_INDEXES_SQL, CREATE_STATS_CACHE_SQL,
+    CREATE_TABLE_SQL, CREATE_VIEWS_SQL,
+};
 use crate::models::Venta;
-use crate::db::schema::{CREATE_INDEXES_SQL, CREATE_TABLE_SQL, CREATE_VIEWS_SQL, CREATE_STATS_CACHE_SQL, CREATE_AUDIT_TABLES_SQL, CREATE_DIM_TABLES_SQL};
 use anyhow::{Context, Result};
 use sqlx::{query, SqlitePool};
 use std::sync::Mutex;
+use std::time::Duration;
 use tracing::info;
 
 /// Columnas del INSERT de `ventas` (mismo orden que los binds de `insert_ventas`).
@@ -131,9 +136,11 @@ pub async fn init_pool() -> Result<SqlitePool> {
         .await
         .unwrap_or(0);
         if has == 0 {
-            let _ = sqlx::query("ALTER TABLE stats_por_mes ADD COLUMN cantidad REAL NOT NULL DEFAULT 0")
-                .execute(&pool)
-                .await;
+            let _ = sqlx::query(
+                "ALTER TABLE stats_por_mes ADD COLUMN cantidad REAL NOT NULL DEFAULT 0",
+            )
+            .execute(&pool)
+            .await;
         }
     }
     // Auditoria/integridad + sync_months (reconciliacion resumible)
@@ -150,23 +157,32 @@ pub async fn init_pool() -> Result<SqlitePool> {
     let _ = sqlx::query("UPDATE ventas SET precio_unitario = ROUND(soles / cantidad_fae, 4) WHERE cantidad = 0 AND cantidad_fae != 0 AND precio_unitario = 0").execute(&pool).await;
     // Migración 2026-09-13: normalizar id_linea quitando prefijo "01"
     // Antes: 0101, 01MA, 01AD (4 chars con prefijo) -> Después: 01, MA, AD (2 chars)
-    let lineas_migradas = sqlx::query("UPDATE ventas SET id_linea = SUBSTR(id_linea, 3) WHERE id_linea GLOB '01??'")
-        .execute(&pool)
-        .await;
+    let lineas_migradas =
+        sqlx::query("UPDATE ventas SET id_linea = SUBSTR(id_linea, 3) WHERE id_linea GLOB '01??'")
+            .execute(&pool)
+            .await;
     if let Ok(affected) = lineas_migradas {
         if affected.rows_affected() > 0 {
-            info!("Migracion id_linea: {} filas normalizadas (quitando prefijo 01)", affected.rows_affected());
+            info!(
+                "Migracion id_linea: {} filas normalizadas (quitando prefijo 01)",
+                affected.rows_affected()
+            );
             let _ = refresh_dim_tables(&pool).await;
         }
     }
     // Migración 2026-09-13: normalizar id_vendedor quitando prefijo "01"
     // Antes: 01O01, 01193, 01M09 (5 chars con prefijo) -> Después: O01, 193, M09 (3 chars)
-    let ventas_migradas = sqlx::query("UPDATE ventas SET id_vendedor = SUBSTR(id_vendedor, 4) WHERE id_vendedor GLOB '01???'")
-        .execute(&pool)
-        .await;
+    let ventas_migradas = sqlx::query(
+        "UPDATE ventas SET id_vendedor = SUBSTR(id_vendedor, 4) WHERE id_vendedor GLOB '01???'",
+    )
+    .execute(&pool)
+    .await;
     if let Ok(affected) = ventas_migradas {
         if affected.rows_affected() > 0 {
-            info!("Migracion id_vendedor: {} filas normalizadas (quitando prefijo 01)", affected.rows_affected());
+            info!(
+                "Migracion id_vendedor: {} filas normalizadas (quitando prefijo 01)",
+                affected.rows_affected()
+            );
             let _ = refresh_dim_tables(&pool).await;
         }
     }
@@ -174,7 +190,11 @@ pub async fn init_pool() -> Result<SqlitePool> {
     Ok(pool)
 }
 
-pub async fn insert_ventas(pool: &SqlitePool, ventas: &[Venta], refresh_stats: bool) -> Result<usize> {
+pub async fn insert_ventas(
+    pool: &SqlitePool,
+    ventas: &[Venta],
+    refresh_stats: bool,
+) -> Result<usize> {
     // Sin filas: no borrar nada (una descarga/parseo vacio no debe vaciar el mes/dia).
     if ventas.is_empty() {
         return Ok(0);
@@ -224,22 +244,57 @@ pub async fn insert_ventas(pool: &SqlitePool, ventas: &[Venta], refresh_stats: b
     for chunk in ventas.chunks(400) {
         let mut qb = sqlx::QueryBuilder::new(format!("INSERT INTO ventas ({}) ", INSERT_COLS));
         qb.push_values(chunk, |mut b, v| {
-            b.push_bind(&v.id_articulo).push_bind(&v.original_sku).push_bind(&v.nom_articulo)
-                .push_bind(&v.id_linea).push_bind(&v.nom_linea).push_bind(&v.id_grupo).push_bind(&v.nom_grupo)
-                .push_bind(&v.id_tipo).push_bind(&v.nom_tipo).push_bind(&v.id_familia).push_bind(&v.nom_familia)
-                .push_bind(&v.id_cliente).push_bind(&v.doc_cliente).push_bind(&v.nom_cliente)
-                .push_bind(&v.tpo_doc).push_bind(&v.serie_doc).push_bind(&v.nro_doc).push_bind(&v.referencia)
-                .push_bind(&v.moneda).push_bind(v.cantidad).push_bind(v.cantidad_fae).push_bind(v.soles)
-                .push_bind(v.dolares).push_bind(v.precio_unitario)
-                .push_bind(v.anho).push_bind(v.mes).push_bind(v.fecha_orig.to_string())
-                .push_bind(&v.fecha_ref).push_bind(&v.fecha_venc)
-                .push_bind(&v.cod_sucursal).push_bind(&v.nom_sucursal).push_bind(&v.departamento)
-                .push_bind(&v.provincia).push_bind(&v.distrito)
-                .push_bind(&v.id_vendedor).push_bind(&v.nom_vendedor).push_bind(&v.id_pedido).push_bind(&v.ord_compra)
-                .push_bind(&v.file_source).push_bind(&v.mes_ref)
-                .push_bind(&v.tipo_operacion).push_bind(&v.factura_ref_serie).push_bind(&v.factura_ref_nro).push_bind(&v.folio_unico)
-                .push_bind(&v.id_ubigeo).push_bind(&v.canal_distribucion).push_bind(&v.nom_condicion_pago)
-                .push_bind(&v.estado_linea).push_bind(&v.division).push_bind(&v.fec_cargo).push_bind(&v.id_guia);
+            b.push_bind(&v.id_articulo)
+                .push_bind(&v.original_sku)
+                .push_bind(&v.nom_articulo)
+                .push_bind(&v.id_linea)
+                .push_bind(&v.nom_linea)
+                .push_bind(&v.id_grupo)
+                .push_bind(&v.nom_grupo)
+                .push_bind(&v.id_tipo)
+                .push_bind(&v.nom_tipo)
+                .push_bind(&v.id_familia)
+                .push_bind(&v.nom_familia)
+                .push_bind(&v.id_cliente)
+                .push_bind(&v.doc_cliente)
+                .push_bind(&v.nom_cliente)
+                .push_bind(&v.tpo_doc)
+                .push_bind(&v.serie_doc)
+                .push_bind(&v.nro_doc)
+                .push_bind(&v.referencia)
+                .push_bind(&v.moneda)
+                .push_bind(v.cantidad)
+                .push_bind(v.cantidad_fae)
+                .push_bind(v.soles)
+                .push_bind(v.dolares)
+                .push_bind(v.precio_unitario)
+                .push_bind(v.anho)
+                .push_bind(v.mes)
+                .push_bind(v.fecha_orig.to_string())
+                .push_bind(&v.fecha_ref)
+                .push_bind(&v.fecha_venc)
+                .push_bind(&v.cod_sucursal)
+                .push_bind(&v.nom_sucursal)
+                .push_bind(&v.departamento)
+                .push_bind(&v.provincia)
+                .push_bind(&v.distrito)
+                .push_bind(&v.id_vendedor)
+                .push_bind(&v.nom_vendedor)
+                .push_bind(&v.id_pedido)
+                .push_bind(&v.ord_compra)
+                .push_bind(&v.file_source)
+                .push_bind(&v.mes_ref)
+                .push_bind(&v.tipo_operacion)
+                .push_bind(&v.factura_ref_serie)
+                .push_bind(&v.factura_ref_nro)
+                .push_bind(&v.folio_unico)
+                .push_bind(&v.id_ubigeo)
+                .push_bind(&v.canal_distribucion)
+                .push_bind(&v.nom_condicion_pago)
+                .push_bind(&v.estado_linea)
+                .push_bind(&v.division)
+                .push_bind(&v.fec_cargo)
+                .push_bind(&v.id_guia);
         });
         qb.build().execute(&mut *tx).await?;
         n += chunk.len();
@@ -302,15 +357,32 @@ pub async fn count_by_month(pool: &SqlitePool) -> Result<Vec<(String, i64)>> {
 pub async fn refresh_stats_cache(pool: &SqlitePool) -> Result<()> {
     let lf = crate::config::with_line_filter("");
     let (total_records,): (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM ventas {}", lf))
-        .fetch_one(pool).await?;
-    let (total_sales,): (f64,) = sqlx::query_as(&format!("SELECT COALESCE(SUM(soles), 0.0) FROM ventas {}", lf))
-        .fetch_one(pool).await?;
-    let (total_clients,): (i64,) = sqlx::query_as(&format!("SELECT COUNT(DISTINCT id_cliente) FROM ventas {}", lf))
-        .fetch_one(pool).await?;
-    let (total_skus,): (i64,) = sqlx::query_as(&format!("SELECT COUNT(DISTINCT original_sku) FROM ventas {}", lf))
-        .fetch_one(pool).await?;
-    let (total_documents,): (i64,) = sqlx::query_as(&format!("SELECT COUNT(DISTINCT folio_unico) FROM ventas {}", lf))
-        .fetch_one(pool).await?;
+        .fetch_one(pool)
+        .await?;
+    let (total_sales,): (f64,) = sqlx::query_as(&format!(
+        "SELECT COALESCE(SUM(soles), 0.0) FROM ventas {}",
+        lf
+    ))
+    .fetch_one(pool)
+    .await?;
+    let (total_clients,): (i64,) = sqlx::query_as(&format!(
+        "SELECT COUNT(DISTINCT id_cliente) FROM ventas {}",
+        lf
+    ))
+    .fetch_one(pool)
+    .await?;
+    let (total_skus,): (i64,) = sqlx::query_as(&format!(
+        "SELECT COUNT(DISTINCT original_sku) FROM ventas {}",
+        lf
+    ))
+    .fetch_one(pool)
+    .await?;
+    let (total_documents,): (i64,) = sqlx::query_as(&format!(
+        "SELECT COUNT(DISTINCT folio_unico) FROM ventas {}",
+        lf
+    ))
+    .fetch_one(pool)
+    .await?;
 
     let now = chrono::Utc::now().to_rfc3339();
     let pairs = [
@@ -352,7 +424,9 @@ pub async fn refresh_stats_por_mes(pool: &SqlitePool) -> Result<()> {
     .fetch_all(pool)
     .await?;
     let mut tx = pool.begin().await?;
-    sqlx::query("DELETE FROM stats_por_mes").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM stats_por_mes")
+        .execute(&mut *tx)
+        .await?;
     for (mes, filas, soles, clientes, cantidad) in &rows {
         sqlx::query(
             "INSERT INTO stats_por_mes (mes_ref, filas, ventas_soles, clientes, cantidad, actualizado_en) \
@@ -398,7 +472,8 @@ async fn refresh_fact_venta_mes(pool: &SqlitePool) -> Result<usize> {
         .execute(pool)
         .await
         .context("refresh_fact_venta_mes: DELETE falló")?;
-    let n = sqlx::query(r#"
+    let n = sqlx::query(
+        r#"
         INSERT INTO fact_venta_mes
             (id_linea, id_articulo, mes_ref, cantidad, soles, devuelto, soles_netos)
         SELECT
@@ -410,7 +485,8 @@ async fn refresh_fact_venta_mes(pool: &SqlitePool) -> Result<usize> {
         FROM ventas
         WHERE id_articulo != '' AND id_linea != ''
         GROUP BY id_linea, id_articulo, mes_ref
-    "#)
+    "#,
+    )
     .execute(pool)
     .await
     .context("refresh_fact_venta_mes: INSERT-SELECT falló")?;
@@ -447,7 +523,9 @@ pub async fn ensure_dims_fresh(pool: &SqlitePool) -> Result<usize> {
     if user_version < crate::db::schema::DIM_SCHEMA_VERSION && dims_vacias > 0 {
         info!(
             "dim_tables migradas a version {} (antes {}): {} filas",
-            crate::db::schema::DIM_SCHEMA_VERSION, user_version, n
+            crate::db::schema::DIM_SCHEMA_VERSION,
+            user_version,
+            n
         );
     }
     Ok(n)
@@ -465,7 +543,8 @@ async fn refresh_dim_cliente(pool: &SqlitePool) -> Result<usize> {
         .execute(pool)
         .await
         .context("refresh_dim_cliente: DELETE falló")?;
-    let n = sqlx::query(r#"
+    let n = sqlx::query(
+        r#"
         WITH reciente AS (
             SELECT id_cliente, nom_cliente, doc_cliente, departamento, provincia, distrito,
                    ROW_NUMBER() OVER (
@@ -492,7 +571,8 @@ async fn refresh_dim_cliente(pool: &SqlitePool) -> Result<usize> {
         FROM reciente r
         JOIN agg a ON a.id_cliente = r.id_cliente
         WHERE r.rn = 1
-    "#)
+    "#,
+    )
     .execute(pool)
     .await
     .context("refresh_dim_cliente: INSERT-SELECT falló")?;
@@ -552,7 +632,8 @@ async fn refresh_dim_articulo(pool: &SqlitePool) -> Result<usize> {
         .execute(pool)
         .await
         .context("refresh_dim_articulo: DELETE falló")?;
-    let n = sqlx::query(r#"
+    let n = sqlx::query(
+        r#"
         WITH reciente AS (
             SELECT id_articulo, original_sku, nom_articulo,
                    id_linea, nom_linea, id_grupo, nom_grupo,
@@ -586,7 +667,8 @@ async fn refresh_dim_articulo(pool: &SqlitePool) -> Result<usize> {
         FROM reciente r
         JOIN agg a ON a.id_articulo = r.id_articulo
         WHERE r.rn = 1
-    "#)
+    "#,
+    )
     .execute(pool)
     .await
     .context("refresh_dim_articulo: INSERT-SELECT falló")?;
@@ -600,7 +682,8 @@ async fn refresh_dim_documento(pool: &SqlitePool) -> Result<usize> {
         .execute(pool)
         .await
         .context("refresh_dim_documento: DELETE falló")?;
-    let n = sqlx::query(r#"
+    let n = sqlx::query(
+        r#"
         INSERT INTO dim_documento
             (folio_unico, tpo_doc, serie_doc, nro_doc, fecha_orig,
              id_cliente, id_vendedor, n_lineas, total_cantidad,
@@ -622,7 +705,8 @@ async fn refresh_dim_documento(pool: &SqlitePool) -> Result<usize> {
         FROM ventas
         WHERE folio_unico != ''
         GROUP BY folio_unico
-    "#)
+    "#,
+    )
     .execute(pool)
     .await
     .context("refresh_dim_documento: INSERT-SELECT falló")?;
@@ -640,7 +724,8 @@ async fn refresh_dim_linea(pool: &SqlitePool) -> Result<usize> {
         .execute(pool)
         .await
         .context("refresh_dim_linea: DELETE falló")?;
-    let n = sqlx::query(r#"
+    let n = sqlx::query(
+        r#"
         WITH reciente AS (
             SELECT id_linea, nom_linea, id_grupo, nom_grupo, id_familia, nom_familia,
                    ROW_NUMBER() OVER (
@@ -666,7 +751,8 @@ async fn refresh_dim_linea(pool: &SqlitePool) -> Result<usize> {
         FROM reciente r
         JOIN agg a ON a.id_linea = r.id_linea
         WHERE r.rn = 1
-    "#)
+    "#,
+    )
     .execute(pool)
     .await
     .context("refresh_dim_linea: INSERT-SELECT falló")?;
@@ -677,9 +763,7 @@ async fn refresh_dim_linea(pool: &SqlitePool) -> Result<usize> {
 
 /// Crea las tablas de auditoría si no existen
 pub async fn ensure_audit_tables(pool: &SqlitePool) -> Result<()> {
-    query(CREATE_AUDIT_TABLES_SQL)
-        .execute(pool)
-        .await?;
+    query(CREATE_AUDIT_TABLES_SQL).execute(pool).await?;
     Ok(())
 }
 
@@ -713,7 +797,9 @@ pub async fn log_sync(
 /// Genera checksums mensuales para detectar cambios en los datos.
 /// El checksum integra: COUNT(*), SUM(soles), SUM(dolares) y SUM(cantidad) —
 /// cualquier alteración de filas o montos cambia el hash.
-pub async fn calculate_monthly_checksums(pool: &SqlitePool) -> Result<Vec<(String, String, i64, f64)>> {
+pub async fn calculate_monthly_checksums(
+    pool: &SqlitePool,
+) -> Result<Vec<(String, String, i64, f64)>> {
     let results = sqlx::query_as(
         r#"INSERT INTO mes_checksums (mes_ref, checksum, total_filas, total_soles, total_cantidad, calculado_en)
            SELECT
@@ -755,7 +841,7 @@ pub async fn detectar_entidades_duplicadas(pool: &SqlitePool) -> Result<Vec<Stri
         "SELECT COUNT(*) FROM (
             SELECT LTRIM(id_cliente,'0') k, COUNT(DISTINCT id_cliente) n
             FROM ventas WHERE id_cliente != '' GROUP BY k HAVING n > 1
-        )"
+        )",
     )
     .fetch_one(pool)
     .await?;
@@ -770,12 +856,15 @@ pub async fn detectar_entidades_duplicadas(pool: &SqlitePool) -> Result<Vec<Stri
             SELECT CASE WHEN id_linea LIKE '01%' THEN SUBSTR(id_linea,3) ELSE id_linea END k,
                    COUNT(DISTINCT id_linea) n
             FROM ventas WHERE id_linea != '' GROUP BY k HAVING n > 1
-        )"
+        )",
     )
     .fetch_one(pool)
     .await?;
     if n > 0 {
-        issues.push(format!("🔴 LÍNEAS PARTIDAS: {} grupos con forma corta y larga del mismo codigo", n));
+        issues.push(format!(
+            "🔴 LÍNEAS PARTIDAS: {} grupos con forma corta y larga del mismo codigo",
+            n
+        ));
     }
 
     // SKU: colisiones al quitar ceros — INFORMATIVO / FALSO POSITIVO conocido.
@@ -789,7 +878,7 @@ pub async fn detectar_entidades_duplicadas(pool: &SqlitePool) -> Result<Vec<Stri
         "SELECT COUNT(*) FROM (
             SELECT LTRIM(id_articulo,'0') k, COUNT(DISTINCT id_articulo) n
             FROM ventas WHERE id_articulo != '' GROUP BY k HAVING n > 1
-        )"
+        )",
     )
     .fetch_one(pool)
     .await?;
@@ -807,7 +896,7 @@ pub async fn detectar_entidades_duplicadas(pool: &SqlitePool) -> Result<Vec<Stri
             FROM ventas
             WHERE doc_cliente NOT IN ('', '00') AND LENGTH(doc_cliente) >= 10
             GROUP BY doc_cliente HAVING n > 1
-        )"
+        )",
     )
     .fetch_one(pool)
     .await?;
@@ -822,7 +911,7 @@ pub async fn detectar_entidades_duplicadas(pool: &SqlitePool) -> Result<Vec<Stri
         "SELECT COUNT(*) FROM (
             SELECT UPPER(TRIM(nom_cliente)) k, COUNT(DISTINCT id_cliente) n
             FROM ventas WHERE nom_cliente != '' GROUP BY k HAVING n > 1
-        )"
+        )",
     )
     .fetch_one(pool)
     .await?;
@@ -838,7 +927,7 @@ pub async fn detectar_entidades_duplicadas(pool: &SqlitePool) -> Result<Vec<Stri
             SELECT id_cliente FROM ventas
             WHERE id_cliente != '' AND nom_cliente != ''
             GROUP BY id_cliente HAVING COUNT(DISTINCT nom_cliente) > 1
-        )"
+        )",
     )
     .fetch_one(pool)
     .await?;
@@ -850,7 +939,7 @@ pub async fn detectar_entidades_duplicadas(pool: &SqlitePool) -> Result<Vec<Stri
             SELECT id_vendedor FROM ventas
             WHERE id_vendedor != '' AND nom_vendedor != ''
             GROUP BY id_vendedor HAVING COUNT(DISTINCT nom_vendedor) > 1
-        )"
+        )",
     )
     .fetch_one(pool)
     .await?;
@@ -862,7 +951,7 @@ pub async fn detectar_entidades_duplicadas(pool: &SqlitePool) -> Result<Vec<Stri
             SELECT id_articulo FROM ventas
             WHERE id_articulo != '' AND nom_articulo != ''
             GROUP BY id_articulo HAVING COUNT(DISTINCT nom_articulo) > 1
-        )"
+        )",
     )
     .fetch_one(pool)
     .await?;
@@ -889,7 +978,10 @@ pub async fn verify_integrity(pool: &SqlitePool) -> Result<Vec<String>> {
     .await?;
 
     if empty_invoices > 0 {
-        issues.push(format!("⚠️  {} registros sin folio_unico válido", empty_invoices));
+        issues.push(format!(
+            "⚠️  {} registros sin folio_unico válido",
+            empty_invoices
+        ));
     }
 
     // 3. Verificar meses sin datos
@@ -901,7 +993,10 @@ pub async fn verify_integrity(pool: &SqlitePool) -> Result<Vec<String>> {
         .await?;
 
     if actual_months < expected_months {
-        issues.push(format!("ℹ️  {} meses con datos (esperado ~{} desde 2018)", actual_months, expected_months));
+        issues.push(format!(
+            "ℹ️  {} meses con datos (esperado ~{} desde 2018)",
+            actual_months, expected_months
+        ));
     }
 
     // 4. Comparar checksums vs estado actual
@@ -927,12 +1022,15 @@ pub async fn verify_integrity(pool: &SqlitePool) -> Result<Vec<String>> {
 }
 
 /// Retorna el historial de sincronizaciones
-pub async fn get_sync_history(pool: &SqlitePool, limit: i64) -> Result<Vec<(i64, String, String, i64, i64, i64, String)>> {
+pub async fn get_sync_history(
+    pool: &SqlitePool,
+    limit: i64,
+) -> Result<Vec<(i64, String, String, i64, i64, i64, String)>> {
     let rows = sqlx::query_as(
         r#"SELECT id, tipo, estado, filas_solicitadas, filas_subidas, filas_limpiadas, started_at
            FROM sync_log
            ORDER BY started_at DESC
-           LIMIT ?"#
+           LIMIT ?"#,
     )
     .bind(limit)
     .fetch_all(pool)
@@ -941,11 +1039,13 @@ pub async fn get_sync_history(pool: &SqlitePool, limit: i64) -> Result<Vec<(i64,
 }
 
 /// Retorna el historial de checksums mensuales
-pub async fn get_checksum_history(pool: &SqlitePool) -> Result<Vec<(String, String, i64, f64, String)>> {
+pub async fn get_checksum_history(
+    pool: &SqlitePool,
+) -> Result<Vec<(String, String, i64, f64, String)>> {
     let rows = sqlx::query_as(
         r#"SELECT mes_ref, checksum, total_filas, total_soles, calculado_en
            FROM mes_checksums
-           ORDER BY mes_ref DESC"#
+           ORDER BY mes_ref DESC"#,
     )
     .fetch_all(pool)
     .await?;
@@ -959,7 +1059,10 @@ pub async fn vacuum_db(pool: &SqlitePool) -> Result<String> {
     info!("VACUUM iniciado — la BD se recomprara (esto puede tardar 30-120s)");
     sqlx::query("VACUUM").execute(pool).await?;
     let new_size = std::fs::metadata(db_path()).map(|m| m.len()).unwrap_or(0);
-    info!("VACUUM completado: nueva dimension {} MB", new_size / 1024 / 1024);
+    info!(
+        "VACUUM completado: nueva dimension {} MB",
+        new_size / 1024 / 1024
+    );
     Ok(format!("VACUUM completado — {} MB", new_size / 1024 / 1024))
 }
 
@@ -992,7 +1095,8 @@ pub async fn backup_db() -> Result<String> {
     while backups.len() > 7 {
         let oldest = backups.remove(0);
         // Convertir SystemTime a timestamp string para construir el nombre a borrar
-        let ts_str = oldest.duration_since(std::time::UNIX_EPOCH)
+        let ts_str = oldest
+            .duration_since(std::time::UNIX_EPOCH)
             .map(|d| {
                 let dt = chrono::DateTime::<chrono::Utc>::from(oldest);
                 dt.format("%Y%m%d_%H%M%S").to_string()
@@ -1002,14 +1106,23 @@ pub async fn backup_db() -> Result<String> {
         let _ = std::fs::remove_file(&name);
     }
     let size = std::fs::metadata(&dst)?.len();
-    info!("Backup creado: {} ({:.1} MB)", dst.file_name().unwrap().to_string_lossy(), size / 1024 / 1024);
-    Ok(format!("Backup: {} ({:.1} MB)", dst.file_name().unwrap().to_string_lossy(), size / 1024 / 1024))
+    info!(
+        "Backup creado: {} ({:.1} MB)",
+        dst.file_name().unwrap().to_string_lossy(),
+        size / 1024 / 1024
+    );
+    Ok(format!(
+        "Backup: {} ({:.1} MB)",
+        dst.file_name().unwrap().to_string_lossy(),
+        size / 1024 / 1024
+    ))
 }
 
 /// Calcula checksums para todos los meses que aun no tienen hash registrado.
 /// Se usa GROUP BY mes_ref para eficiencia en BD grande.
 pub async fn recalculate_missing_checksums(pool: &SqlitePool) -> Result<usize> {
-    let n = sqlx::query(r#"
+    let n = sqlx::query(
+        r#"
         INSERT INTO mes_checksums (mes_ref, checksum, total_filas, total_soles, calculado_en)
         SELECT
             mes_ref,
@@ -1031,7 +1144,8 @@ pub async fn recalculate_missing_checksums(pool: &SqlitePool) -> Result<usize> {
             total_soles = excluded.total_soles,
             calculado_en = excluded.calculado_en
         RETURNING mes_ref
-    "#)
+    "#,
+    )
     .fetch_all(pool)
     .await?;
     let count = n.len();
@@ -1054,8 +1168,19 @@ pub async fn export_full_db(target_path: &std::path::Path) -> Result<String> {
         .execute(&pool)
         .await?;
     let size = std::fs::metadata(target_path).map(|m| m.len()).unwrap_or(0) as f64;
-    info!("Export BD completa: {} -> {:.1} MB", target_path.display(), size / 1024.0 / 1024.0);
-    Ok(format!("Exportado: {} ({:.1} MB)", target_path.file_name().unwrap_or_default().to_string_lossy(), size / 1024.0 / 1024.0))
+    info!(
+        "Export BD completa: {} -> {:.1} MB",
+        target_path.display(),
+        size / 1024.0 / 1024.0
+    );
+    Ok(format!(
+        "Exportado: {} ({:.1} MB)",
+        target_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy(),
+        size / 1024.0 / 1024.0
+    ))
 }
 
 /// Exporta una INSTANTANEA canonica para que otra app trabaje sobre una copia
@@ -1143,16 +1268,28 @@ pub async fn local_metrics(pool: &SqlitePool) -> Result<serde_json::Value> {
             .unwrap_or(0.0)
     };
     let min_date: Option<String> = sqlx::query_scalar("SELECT MIN(fecha_orig) FROM ventas")
-        .fetch_one(pool).await.unwrap_or(None);
+        .fetch_one(pool)
+        .await
+        .unwrap_or(None);
     let max_date: Option<String> = sqlx::query_scalar("SELECT MAX(fecha_orig) FROM ventas")
-        .fetch_one(pool).await.unwrap_or(None);
+        .fetch_one(pool)
+        .await
+        .unwrap_or(None);
     let total_months: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT mes_ref) FROM ventas")
-        .fetch_one(pool).await.unwrap_or(0);
-    let last_checksum: Option<String> = sqlx::query_scalar("SELECT MAX(calculado_en) FROM mes_checksums")
-        .fetch_one(pool).await.unwrap_or(None);
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+    let last_checksum: Option<String> =
+        sqlx::query_scalar("SELECT MAX(calculado_en) FROM mes_checksums")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(None);
     // Relación de folios NC/NDB: total, asociadas a su factura y huérfanas.
-    let ncndb_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE tpo_doc IN ('NCR','NDB')")
-        .fetch_one(pool).await.unwrap_or(0);
+    let ncndb_total: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE tpo_doc IN ('NCR','NDB')")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
     let ncndb_orphans: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM ventas v WHERE v.tpo_doc IN ('NCR','NDB') \
          AND NOT EXISTS (SELECT 1 FROM ventas f WHERE f.serie_doc = v.factura_ref_serie AND f.nro_doc = v.factura_ref_nro)",
@@ -1214,7 +1351,11 @@ pub async fn data_quality_report(pool: &SqlitePool) -> Result<serde_json::Value>
     if n > 0 {
         critical.push(format!("{} filas con fecha_orig inválida", n));
     }
-    let n = count("SELECT COUNT(*) FROM ventas WHERE length(mes_ref)=7 AND mes_ref != substr(fecha_orig,1,7)".into()).await;
+    let n = count(
+        "SELECT COUNT(*) FROM ventas WHERE length(mes_ref)=7 AND mes_ref != substr(fecha_orig,1,7)"
+            .into(),
+    )
+    .await;
     if n > 0 {
         critical.push(format!("{} filas con mes_ref distinto de fecha_orig", n));
     }
@@ -1226,14 +1367,22 @@ pub async fn data_quality_report(pool: &SqlitePool) -> Result<serde_json::Value>
     }
     let n = count("SELECT COUNT(*) FROM ventas WHERE precio_unitario=0 AND soles!=0".into()).await;
     if n > 0 {
-        warn.push(format!("{} filas con precio_unitario=0 pero monto distinto de 0", n));
+        warn.push(format!(
+            "{} filas con precio_unitario=0 pero monto distinto de 0",
+            n
+        ));
     }
-    let n = count("SELECT COUNT(*) FROM ventas WHERE soles<0 AND tipo_operacion='venta'".into()).await;
+    let n =
+        count("SELECT COUNT(*) FROM ventas WHERE soles<0 AND tipo_operacion='venta'".into()).await;
     if n > 0 {
         warn.push(format!("{} ventas con monto negativo", n));
     }
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    let n = count(format!("SELECT COUNT(*) FROM ventas WHERE fecha_orig > '{}'", today)).await;
+    let n = count(format!(
+        "SELECT COUNT(*) FROM ventas WHERE fecha_orig > '{}'",
+        today
+    ))
+    .await;
     if n > 0 {
         warn.push(format!("{} filas con fecha futura (>{})", n, today));
     }
@@ -1264,11 +1413,17 @@ pub async fn data_quality_report(pool: &SqlitePool) -> Result<serde_json::Value>
     // ── Info: notas no bloqueantes ──
     let n = count("SELECT COUNT(*) FROM ventas v WHERE v.tpo_doc IN ('NCR','NDB') AND NOT EXISTS (SELECT 1 FROM ventas f WHERE f.serie_doc=v.factura_ref_serie AND f.nro_doc=v.factura_ref_nro)".into()).await;
     if n > 0 {
-        info.push(format!("{} NC/NDB que referencian documentos fuera de la BD (pre-2018/excluidos)", n));
+        info.push(format!(
+            "{} NC/NDB que referencian documentos fuera de la BD (pre-2018/excluidos)",
+            n
+        ));
     }
     let n = count("SELECT COUNT(*) FROM (SELECT folio_unico, id_articulo FROM ventas GROUP BY folio_unico, id_articulo HAVING COUNT(*)>1)".into()).await;
     if n > 0 {
-        info.push(format!("{} documentos con el mismo SKU en varias líneas (legítimo)", n));
+        info.push(format!(
+            "{} documentos con el mismo SKU en varias líneas (legítimo)",
+            n
+        ));
     }
     let n = count("SELECT COUNT(*) FROM ventas WHERE cantidad=0".into()).await;
     if n > 0 {
@@ -1318,16 +1473,32 @@ pub async fn export_nc_ndb(pool: &SqlitePool, desde: &str, hasta: &str) -> Resul
         WHERE v.tpo_doc = ? AND v.mes_ref >= ? AND v.mes_ref <= ?
         ORDER BY v.fecha_orig, v.serie_doc, v.nro_doc, v.id_articulo"#;
 
-    for (tpo, name, label) in [("NCR", "nc", "Notas de Crédito"), ("NDB", "ndb", "Notas de Débito")] {
+    for (tpo, name, label) in [
+        ("NCR", "nc", "Notas de Crédito"),
+        ("NDB", "ndb", "Notas de Débito"),
+    ] {
         let path = dir.join(format!("{}_{}_{}.csv", name, desde, hasta));
         let mut w = csv::Writer::from_path(&path)?;
         w.write_record([
-            "folio_unico", "fecha_orig", "mes_ref",
-            "id_cliente", "nom_cliente", "doc_cliente",
-            "id_articulo", "nom_articulo", "id_linea", "nom_linea",
-            "cantidad", "soles", "moneda", "tipo_operacion",
-            "factura_ref_serie", "factura_ref_nro",
-            "ref_fecha_orig", "ref_tpo_doc", "ref_soles",
+            "folio_unico",
+            "fecha_orig",
+            "mes_ref",
+            "id_cliente",
+            "nom_cliente",
+            "doc_cliente",
+            "id_articulo",
+            "nom_articulo",
+            "id_linea",
+            "nom_linea",
+            "cantidad",
+            "soles",
+            "moneda",
+            "tipo_operacion",
+            "factura_ref_serie",
+            "factura_ref_nro",
+            "ref_fecha_orig",
+            "ref_tpo_doc",
+            "ref_soles",
         ])?;
 
         let rows = sqlx::query(sql)
@@ -1340,18 +1511,44 @@ pub async fn export_nc_ndb(pool: &SqlitePool, desde: &str, hasta: &str) -> Resul
         for r in &rows {
             use sqlx::Row;
             let gs = |i: usize| -> String {
-                r.try_get::<Option<String>, _>(i).ok().flatten().unwrap_or_default()
+                r.try_get::<Option<String>, _>(i)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default()
             };
-            let gf = |i: usize| -> f64 { r.try_get::<Option<f64>, _>(i).ok().flatten().unwrap_or(0.0) };
+            let gf =
+                |i: usize| -> f64 { r.try_get::<Option<f64>, _>(i).ok().flatten().unwrap_or(0.0) };
             w.write_record([
-                &gs(0), &gs(1), &gs(2), &gs(3), &gs(4), &gs(5), &gs(6), &gs(7), &gs(8), &gs(9),
-                &gf(10).to_string(), &gf(11).to_string(), &gs(12), &gs(13), &gs(14), &gs(15),
-                &gs(16), &gs(17), &gf(18).to_string(),
+                &gs(0),
+                &gs(1),
+                &gs(2),
+                &gs(3),
+                &gs(4),
+                &gs(5),
+                &gs(6),
+                &gs(7),
+                &gs(8),
+                &gs(9),
+                &gf(10).to_string(),
+                &gf(11).to_string(),
+                &gs(12),
+                &gs(13),
+                &gs(14),
+                &gs(15),
+                &gs(16),
+                &gs(17),
+                &gf(18).to_string(),
             ])?;
             n += 1;
         }
         w.flush()?;
-        info!("Export {} ({}): {} filas -> {}", label, tpo, n, path.display());
+        info!(
+            "Export {} ({}): {} filas -> {}",
+            label,
+            tpo,
+            n,
+            path.display()
+        );
         out.push(path.to_string_lossy().to_string());
     }
     Ok(out)
@@ -1380,7 +1577,9 @@ fn xlsx_col(i: usize) -> String {
 }
 
 fn xlsx_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Escribe un XLSX mínimo (OOXML) con la tabla del monitor. Usa el crate `zip`
@@ -1398,7 +1597,9 @@ fn write_monitor_xlsx(path: &std::path::Path, rows: &[(String, i64, f64, f64)]) 
     for (ci, h) in headers.iter().enumerate() {
         sheet.push_str(&format!(
             "<c r=\"{}{}\" t=\"inlineStr\"><is><t>{}</t></is></c>",
-            xlsx_col(ci), 1, h
+            xlsx_col(ci),
+            1,
+            h
         ));
     }
     sheet.push_str("</row>");
@@ -1463,6 +1664,374 @@ pub async fn export_monitor_xlsx(pool: &SqlitePool) -> Result<String> {
     let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
     let path = dir.join(format!("monitor_{}.xlsx", ts));
     write_monitor_xlsx(&path, &rows)?;
-    info!("Monitor XLSX exportado: {} ({} meses)", path.display(), rows.len());
+    info!(
+        "Monitor XLSX exportado: {} ({} meses)",
+        path.display(),
+        rows.len()
+    );
     Ok(path.to_string_lossy().to_string())
+}
+
+/// Verifica que la BD tenga el contrato v4 vigente.
+/// Lee `g360_meta.contracto_version`; si falta o no coincide, retorna error.
+pub async fn check_contract_version(pool: &SqlitePool) -> Result<i64> {
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT value FROM g360_meta WHERE key = 'contracto_version'")
+            .fetch_optional(pool)
+            .await?;
+    match stored {
+        Some(v) => {
+            let num: i64 = v
+                .parse()
+                .context("g360_meta.contracto_version no es numérico")?;
+            if num != CONTRACTO_VERSION {
+                return Err(anyhow::anyhow!(
+                    "Version de contrato incompatible: BD tiene v{num}, esperado v{CONTRACTO_VERSION}"
+                ));
+            }
+            Ok(num)
+        }
+        None => Err(anyhow::anyhow!(
+            "g360_meta.contracto_version ausente; ejecuta build_initial_cartucho para migrar"
+        )),
+    }
+}
+
+/// Calcula checksums diarios para todos los días con datos en `ventas`.
+/// El checksum por día es: `COUNT(*) || ':' || ROUND(COALESCE(SUM(soles), 0), 2)`.
+/// Se almacena en `day_checksums`. El timestamp `calculado_en` se pasa como
+/// parametro (no usar `datetime('now')` para mantener determinismo en tests).
+///
+/// Usado por `publish_incremental`: compara este checksum con el último publicado
+/// en `etl_state` para detectar días con cambios.
+pub async fn calculate_day_checksums(pool: &SqlitePool, calculado_en: &str) -> Result<usize> {
+    let n = sqlx::query(
+        r#"
+        INSERT INTO day_checksums (dia, filas, soles, checksum, calculado_en)
+        SELECT
+            fecha_orig AS dia,
+            COUNT(*) AS filas,
+            ROUND(COALESCE(SUM(soles), 0.0), 2) AS soles,
+            CAST(COUNT(*) AS TEXT) || ':' ||
+                CAST(ROUND(COALESCE(SUM(soles), 0.0), 2) AS TEXT) AS checksum,
+            ? AS calculado_en
+        FROM ventas
+        WHERE fecha_orig GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+        GROUP BY fecha_orig
+        ON CONFLICT(dia) DO UPDATE SET
+            filas = excluded.filas,
+            soles = excluded.soles,
+            checksum = excluded.checksum,
+            calculado_en = excluded.calculado_en
+        RETURNING dia
+    "#,
+    )
+    .bind(calculado_en)
+    .fetch_all(pool)
+    .await?;
+    let count = n.len();
+    info!("Checksums diarios calculados: {} días", count);
+    Ok(count)
+}
+
+/// Publicacion incremental de días con cambios hacia Supabase.
+///
+/// Flujo:
+/// 1. Lee el último día publicado de `etl_state` (key='ultimo_dia_publicado').
+/// 2. Calcula checksums diarios (`calculate_day_checksums`) con timestamp actual.
+/// 3. Para cada día desde `ultimo + 1` hasta `HOY`:
+///    - Si el checksum diario NO cambió → se salta el día.
+///    - Si cambió → purga los días en Supabase y re-sube las filas locales.
+/// 4. Actualiza `etl_state` con el último día publicado.
+///
+/// Devuelve un JSON con: dias_escaneados, dias_con_cambios, dias_saltados,
+/// filas_subidas, filas_purgadas, ultimo_dia_publicado.
+pub async fn publish_incremental(pool: &SqlitePool) -> Result<serde_json::Value> {
+    // Verificar que Supabase esté configurado
+    let url = crate::config::get_supabase_url();
+    let key = crate::config::get_supabase_service_key();
+    if url.contains("TU_SUPABASE") || key.contains("TU_ANON") {
+        return Err(anyhow::anyhow!(
+            "Supabase no configurado; define SUPABASE_URL y SUPABASE_KEY en .env o config.json"
+        ));
+    }
+
+    // Verificar contrato
+    check_contract_version(pool).await?;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .connect_timeout(Duration::from_secs(15))
+        .build()?;
+    let base_url = format!("{}/rest/v1/{}", url, crate::config::SUPABASE_TABLE);
+
+    // Último día publicado (default: vacío = publicar todo desde el inicio)
+    let ultimo_dia: Option<String> =
+        sqlx::query_scalar("SELECT value FROM etl_state WHERE key = 'ultimo_dia_publicado'")
+            .fetch_optional(pool)
+            .await?;
+
+    let desde_str = ultimo_dia.unwrap_or_default();
+    let hoy = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+    // Calcular checksums con timestamp actual
+    let ts_now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    calculate_day_checksums(pool, &ts_now).await?;
+
+    // Determinar rango de días a evaluar
+    let dias: Vec<String> = if desde_str.is_empty() {
+        // Sin historial: partir desde el día más antiguo con datos
+        let min_d: Option<String> = sqlx::query_scalar(
+            "SELECT MIN(fecha_orig) FROM ventas \
+             WHERE fecha_orig GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'",
+        )
+        .fetch_optional(pool)
+        .await?;
+        match min_d {
+            Some(d) => {
+                let start = d.parse::<chrono::NaiveDate>()?;
+                let end = chrono::NaiveDate::parse_from_str(&hoy, "%Y-%m-%d")?;
+                let mut dias_vec = Vec::new();
+                let mut cur = start;
+                while cur <= end {
+                    dias_vec.push(cur.format("%Y-%m-%d").to_string());
+                    cur = cur.checked_add_days(chrono::Days::new(1)).unwrap();
+                }
+                dias_vec
+            }
+            None => Vec::new(),
+        }
+    } else {
+        // Desde el día siguiente al último publicado
+        let start = DesdeStrParse(desde_str.clone())
+            .ok()
+            .ok_or_else(|| anyhow::anyhow!("fecha inválida en etl_state: {}", desde_str))?;
+        let end = chrono::NaiveDate::parse_from_str(&hoy, "%Y-%m-%d")?;
+        let mut dias_vec = Vec::new();
+        let mut cur = start + chrono::Days::new(1);
+        while cur <= end {
+            dias_vec.push(cur.format("%Y-%m-%d").to_string());
+            cur = cur.checked_add_days(chrono::Days::new(1)).unwrap();
+        }
+        dias_vec
+    };
+
+    let mut dias_escaneados = 0usize;
+    let mut dias_con_cambios = 0usize;
+    let mut dias_saltados = 0usize;
+    let mut filas_subidas = 0usize;
+    let mut filas_purgadas = 0usize;
+    let mut ultimo_publicado = desde_str.clone();
+
+    for dia in &dias {
+        dias_escaneados += 1;
+
+        // Leer checksum local del día
+        let checksum_local: Option<String> =
+            sqlx::query_scalar("SELECT checksum FROM day_checksums WHERE dia = ?")
+                .bind(dia)
+                .fetch_optional(pool)
+                .await?;
+
+        // Leer checksum publicado del día (de etl_state)
+        let checksum_prev: Option<String> =
+            sqlx::query_scalar("SELECT value FROM etl_state WHERE key = ?")
+                .bind(format!("checksum_{}", dia))
+                .fetch_optional(pool)
+                .await?;
+
+        match (&checksum_local, &checksum_prev) {
+            (Some(local), Some(prev)) if local == prev => {
+                // Sin cambios
+                dias_saltados += 1;
+                continue;
+            }
+            _ => {
+                // Día con cambios o nuevo
+                dias_con_cambios += 1;
+
+                // Purgar y re-subir el día
+                match sync_day_to_supabase(pool, &client, &base_url, &key, dia).await {
+                    Ok((p, u)) => {
+                        filas_purgadas += p;
+                        filas_subidas += u;
+                        // Guardar checksum publicado
+                        if let Some(ref cs) = checksum_local {
+                            sqlx::query(
+                                "INSERT INTO etl_state (key, value, updated_at) \
+                                 VALUES (?, ?, datetime('now')) \
+                                 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+                            )
+                            .bind(format!("checksum_{}", dia))
+                            .bind(cs)
+                            .execute(pool)
+                            .await?;
+                        }
+                        info!("Dia {} publicado: {} purgadas, {} subidas", dia, p, u);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Error publicando dia {}: {}", dia, e);
+                        // No bloquear: continuar con el siguiente día
+                    }
+                }
+                ultimo_publicado = dia.clone();
+            }
+        }
+    }
+
+    // Actualizar ultimo_dia_publicado
+    sqlx::query(
+        "INSERT INTO etl_state (key, value, updated_at) \
+         VALUES ('ultimo_dia_publicado', ?, datetime('now')) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+    )
+    .bind(&ultimo_publicado)
+    .execute(pool)
+    .await?;
+
+    Ok(serde_json::json!({
+        "dias_escaneados": dias_escaneados,
+        "dias_con_cambios": dias_con_cambios,
+        "dias_saltados": dias_saltados,
+        "filas_subidas": filas_subidas,
+        "filas_purgadas": filas_purgadas,
+        "ultimo_dia_publicado": ultimo_publicado,
+        "desde": desde_str,
+        "hasta": hoy,
+        "publicado_en": ts_now
+    }))
+}
+
+/// Estructura auxiliar para parsear fechas YYYY-MM-DD desde string.
+struct DesdeStrParse(String);
+
+impl DesdeStrParse {
+    fn ok(self) -> Option<chrono::NaiveDate> {
+        chrono::NaiveDate::parse_from_str(&self.0, "%Y-%m-%d").ok()
+    }
+}
+
+/// Sincroniza UN día específico hacia Supabase: purga + re-sube las filas de ese día.
+async fn sync_day_to_supabase(
+    pool: &SqlitePool,
+    client: &reqwest::Client,
+    base_url: &str,
+    key: &str,
+    dia: &str,
+) -> Result<(usize, usize)> {
+    // Purgar filas del día en Supabase
+    let purged = delete_day_in_supabase(client, base_url, key, dia).await?;
+
+    // Seleccionar filas locales del día
+    let where_clause = crate::config::with_line_filter(&format!(
+        "WHERE fecha_orig = '{}'",
+        dia.replace('\'', "''")
+    ));
+    let select_sql = format!(
+        "SELECT {} FROM ventas {} AND id > ? ORDER BY id LIMIT ?",
+        crate::processor::uploader::VENTA_SELECT_COLS,
+        where_clause
+    );
+
+    let mut last_id = 0i64;
+    let mut uploaded = 0usize;
+    let mut guard = 0usize;
+    loop {
+        guard += 1;
+        if guard > 10_000 {
+            return Err(anyhow::anyhow!("sync_day_to_supabase: demasiados batches"));
+        }
+        let rows: Vec<(i64, crate::models::Venta)> = sqlx::query(&select_sql)
+            .bind(last_id)
+            .bind(500i64)
+            .map(crate::processor::uploader::map_venta_row)
+            .fetch_all(pool)
+            .await?;
+        if rows.is_empty() {
+            break;
+        }
+        last_id = rows.last().map(|(id, _)| *id).unwrap_or(last_id);
+        let n_rows = rows.len();
+        let ventas: Vec<crate::models::Venta> = rows.into_iter().map(|(_, v)| v).collect();
+        let n = crate::processor::uploader::upload_to_supabase(&ventas, &None).await?;
+        uploaded += n;
+        if n_rows < 500 {
+            break;
+        }
+    }
+    Ok((purged, uploaded))
+}
+
+/// Borra en lotes de 500 las filas de un día dado en Supabase.
+async fn delete_day_in_supabase(
+    client: &reqwest::Client,
+    base_url: &str,
+    key: &str,
+    dia: &str,
+) -> Result<usize> {
+    let mut total = 0usize;
+    loop {
+        // Contar filas del día en Supabase
+        let count_url = format!(
+            "{base_url}?fecha_orig=eq.{dia}&select=id&limit=1&X-Postgrest-Count: exact-planned"
+        );
+        let count_resp = client
+            .get(&count_url)
+            .header("apikey", key)
+            .header("Authorization", format!("Bearer {key}"))
+            .header("Prefer", "count=exact")
+            .send()
+            .await
+            .context("delete_day: request count failed")?;
+
+        let count: usize = count_resp
+            .headers()
+            .get("x-total-count")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+
+        if count == 0 {
+            break;
+        }
+
+        // Obtener IDs para borrar
+        let ids_url = format!("{base_url}?fecha_orig=eq.{dia}&select=id&limit=500");
+        let ids_resp = client
+            .get(&ids_url)
+            .header("apikey", key)
+            .header("Authorization", format!("Bearer {key}"))
+            .send()
+            .await
+            .context("delete_day: request ids failed")?;
+
+        let ids: Vec<i64> = ids_resp
+            .json::<Vec<serde_json::Value>>()
+            .await
+            .context("delete_day: parse ids failed")?
+            .iter()
+            .filter_map(|v| v.get("id").and_then(|i| i.as_i64()))
+            .collect();
+
+        if ids.is_empty() {
+            break;
+        }
+
+        // Borrar en lote
+        let ids_str: Vec<String> = ids.iter().map(|i| i.to_string()).collect();
+        let delete_url = format!("{base_url}?id=in.({})", ids_str.join(","));
+        client
+            .delete(&delete_url)
+            .header("apikey", key)
+            .header("Authorization", format!("Bearer {key}"))
+            .send()
+            .await
+            .context("delete_day: delete request failed")?;
+
+        total += ids.len();
+        if ids.len() < 500 {
+            break;
+        }
+    }
+    Ok(total)
 }

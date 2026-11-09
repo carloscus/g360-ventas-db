@@ -75,8 +75,14 @@ async fn comparativo_yoy_y_mom() {
     assert!((r.get::<f64, _>("soles") - 180.0).abs() < 0.001);
     assert!((r.get::<f64, _>("cantidad_anio_ant") - 10.0).abs() < 0.001);
     assert!((r.get::<f64, _>("soles_anio_ant") - 100.0).abs() < 0.001);
-    assert!((r.get::<f64, _>("var_cantidad_pct") - 50.0).abs() < 0.01, "10 -> 15 = +50%");
-    assert!((r.get::<f64, _>("var_soles_pct") - 80.0).abs() < 0.01, "100 -> 180 = +80%");
+    assert!(
+        (r.get::<f64, _>("var_cantidad_pct") - 50.0).abs() < 0.01,
+        "10 -> 15 = +50%"
+    );
+    assert!(
+        (r.get::<f64, _>("var_soles_pct") - 80.0).abs() < 0.01,
+        "100 -> 180 = +80%"
+    );
     // No hay 2024-12 -> MoM nulo
     assert!(r.get::<Option<f64>, _>("cantidad_mes_ant").is_none());
 
@@ -118,7 +124,9 @@ async fn linea_no_se_infla_con_sku_nuevo() {
     // comparable = solo A (B no tiene año anterior) -> 15
     assert!((r.get::<f64, _>("cantidad_comparable") - 15.0).abs() < 0.001);
     // % peras-con-peras: 10 -> 15 = +50% (NO 10 -> 115)
-    assert!((r.get::<f64, _>("var_cantidad_pct") - 50.0).abs() < 0.01,
-        "el SKU nuevo no debe inflar la variacion de la linea");
+    assert!(
+        (r.get::<f64, _>("var_cantidad_pct") - 50.0).abs() < 0.01,
+        "el SKU nuevo no debe inflar la variacion de la linea"
+    );
     assert!((r.get::<f64, _>("soles_comparable") - 180.0).abs() < 0.001);
 }

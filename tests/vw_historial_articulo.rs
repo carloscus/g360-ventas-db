@@ -54,11 +54,38 @@ async fn historial_muestra_renombre_cambio_linea_y_precio() {
     let pool = setup().await;
 
     // 2023-05: MORRAL CLASICO (L78) a S/ 10.00
-    venta(&pool, "2023-05-10", "55555", "MORRAL CLASICO", "78", 10.0, 100.0).await;
+    venta(
+        &pool,
+        "2023-05-10",
+        "55555",
+        "MORRAL CLASICO",
+        "78",
+        10.0,
+        100.0,
+    )
+    .await;
     // 2024-03: lo renombran a MORRAL PREMIUM, lo mueven a L76 y suben a S/ 12.00
-    venta(&pool, "2024-03-15", "55555", "MORRAL PREMIUM", "76", 8.0, 96.0).await;
+    venta(
+        &pool,
+        "2024-03-15",
+        "55555",
+        "MORRAL PREMIUM",
+        "76",
+        8.0,
+        96.0,
+    )
+    .await;
     // 2024-04: mismo nombre/linea, precio S/ 15.00
-    venta(&pool, "2024-04-20", "55555", "MORRAL PREMIUM", "76", 5.0, 75.0).await;
+    venta(
+        &pool,
+        "2024-04-20",
+        "55555",
+        "MORRAL PREMIUM",
+        "76",
+        5.0,
+        75.0,
+    )
+    .await;
 
     let rows = sqlx::query(
         "SELECT mes_ref, nom_articulo, id_linea, p_u_venta, p_u_venta_anterior,
@@ -84,20 +111,32 @@ async fn historial_muestra_renombre_cambio_linea_y_precio() {
     let r1 = &rows[1];
     assert_eq!(r1.get::<String, _>("mes_ref"), "2024-03");
     assert_eq!(r1.get::<String, _>("nom_articulo"), "MORRAL PREMIUM");
-    assert_eq!(r1.get::<i64, _>("cambio_nombre"), 1, "debe marcar el renombre");
-    assert_eq!(r1.get::<i64, _>("cambio_linea"), 1, "debe marcar el cambio de linea");
+    assert_eq!(
+        r1.get::<i64, _>("cambio_nombre"),
+        1,
+        "debe marcar el renombre"
+    );
+    assert_eq!(
+        r1.get::<i64, _>("cambio_linea"),
+        1,
+        "debe marcar el cambio de linea"
+    );
     assert!((r1.get::<f64, _>("p_u_venta") - 12.0).abs() < 0.001);
     assert!((r1.get::<f64, _>("p_u_venta_anterior") - 10.0).abs() < 0.001);
-    assert!((r1.get::<f64, _>("variacion_precio_pct") - 20.0).abs() < 0.01,
-        "10 -> 12 = +20%");
+    assert!(
+        (r1.get::<f64, _>("variacion_precio_pct") - 20.0).abs() < 0.01,
+        "10 -> 12 = +20%"
+    );
 
     // 2024-04 (solo cambio de precio)
     let r2 = &rows[2];
     assert_eq!(r2.get::<i64, _>("cambio_nombre"), 0);
     assert_eq!(r2.get::<i64, _>("cambio_linea"), 0);
     assert!((r2.get::<f64, _>("p_u_venta") - 15.0).abs() < 0.001);
-    assert!((r2.get::<f64, _>("variacion_precio_pct") - 25.0).abs() < 0.01,
-        "12 -> 15 = +25%");
+    assert!(
+        (r2.get::<f64, _>("variacion_precio_pct") - 25.0).abs() < 0.01,
+        "12 -> 15 = +25%"
+    );
 }
 
 #[tokio::test]
@@ -128,8 +167,10 @@ async fn historial_no_contamina_precio_con_devoluciones() {
     .unwrap();
 
     // p_u_venta solo sobre ventas: 100/10 = 10
-    assert!((r.get::<f64, _>("p_u_venta") - 10.0).abs() < 0.001,
-        "el precio de venta no debe diluirse por la devolucion");
+    assert!(
+        (r.get::<f64, _>("p_u_venta") - 10.0).abs() < 0.001,
+        "el precio de venta no debe diluirse por la devolucion"
+    );
     // soles_netos = 100 + (-20) = 80 ; cantidad_neta = 10 - 2 = 8 -> p_u_neto = 10
     assert!((r.get::<f64, _>("p_u_neto") - 10.0).abs() < 0.001);
     assert!((r.get::<f64, _>("vendido") - 10.0).abs() < 0.001);

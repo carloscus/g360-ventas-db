@@ -7,7 +7,9 @@ async fn main() -> anyhow::Result<()> {
     g360_db_ventas::config::load_dotenv();
     let pool = g360_db_ventas::db::writer::init_pool().await?;
 
-    let raw: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas").fetch_one(&pool).await?;
+    let raw: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas")
+        .fetch_one(&pool)
+        .await?;
     let lf = with_line_filter("");
     let elegibles: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ventas {}", lf))
         .fetch_one(&pool)
@@ -16,7 +18,11 @@ async fn main() -> anyhow::Result<()> {
     println!("== RAW-FIRST sobre BD local real ==");
     println!("filas raw locales : {raw}");
     println!("elegibles Supabase: {elegibles}");
-    println!("excluidas         : {} ({:.2}%)", raw - elegibles, 100.0 * (raw - elegibles) as f64 / raw.max(1) as f64);
+    println!(
+        "excluidas         : {} ({:.2}%)",
+        raw - elegibles,
+        100.0 * (raw - elegibles) as f64 / raw.max(1) as f64
+    );
 
     // Desglose de excluidas por causa
     let no_linea: i64 = sqlx::query_scalar(
@@ -31,9 +37,15 @@ async fn main() -> anyhow::Result<()> {
 
     // Coherencia: dry-run oficial debe dar lo mismo que el WHERE del filtro
     let dry = g360_db_ventas::processor::uploader::dry_run_upload(&pool, 0, None).await?;
-    println!("dry_run_upload(0, None): {} filas (debe ser {elegibles})", dry.rows_to_upload);
+    println!(
+        "dry_run_upload(0, None): {} filas (debe ser {elegibles})",
+        dry.rows_to_upload
+    );
     if dry.rows_to_upload as i64 != elegibles {
-        anyhow::bail!("DESCUADRE: dry-run {} != filtro {elegibles}", dry.rows_to_upload);
+        anyhow::bail!(
+            "DESCUADRE: dry-run {} != filtro {elegibles}",
+            dry.rows_to_upload
+        );
     }
     println!("OK: dry-run y filtro coinciden");
     Ok(())

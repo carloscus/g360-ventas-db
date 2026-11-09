@@ -3,7 +3,7 @@
 // Reemplaza los CSVs existentes en raw/ para esos meses y los re-parsea a SQLite.
 use anyhow::Result;
 use chrono::NaiveDate;
-use tracing::{info, error};
+use tracing::{error, info};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use g360_db_ventas::capture_state::{CapturePhase, ProgressState, SharedProgress};
@@ -39,7 +39,10 @@ async fn main() -> Result<()> {
     if lock_path.exists() {
         anyhow::bail!("capture.lock activo: {}", lock_path.display());
     }
-    std::fs::write(&lock_path, format!("pid={}\nstarted={}\n", std::process::id(), started))?;
+    std::fs::write(
+        &lock_path,
+        format!("pid={}\nstarted={}\n", std::process::id(), started),
+    )?;
 
     let shared: SharedProgress = std::sync::Arc::new(std::sync::Mutex::new(ProgressState::new()));
     {
@@ -58,7 +61,10 @@ async fn main() -> Result<()> {
                 info!("{}", line);
                 last = line;
             }
-            if st.phase == CapturePhase::Idle || st.phase == CapturePhase::Done || st.phase == CapturePhase::Error {
+            if st.phase == CapturePhase::Idle
+                || st.phase == CapturePhase::Done
+                || st.phase == CapturePhase::Error
+            {
                 break;
             }
         }
@@ -71,7 +77,8 @@ async fn main() -> Result<()> {
         shared,
         None,
         3,
-    ).await;
+    )
+    .await;
 
     watcher.abort();
     let _ = std::fs::remove_file(&lock_path);

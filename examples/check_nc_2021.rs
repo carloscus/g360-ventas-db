@@ -9,7 +9,9 @@ async fn main() -> anyhow::Result<()> {
     g360_db_ventas::config::load_dotenv();
     let pool = init_pool().await?;
 
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas").fetch_one(&pool).await?;
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas")
+        .fetch_one(&pool)
+        .await?;
     println!("total registros: {total}");
 
     let nc: i64 = sqlx::query_scalar(
@@ -27,10 +29,14 @@ async fn main() -> anyhow::Result<()> {
     ).fetch_one(&pool).await?;
     println!("con referencia: {con_ref}");
 
-    let c2020: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE mes_ref LIKE '2020%'").fetch_one(&pool).await?;
+    let c2020: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE mes_ref LIKE '2020%'")
+        .fetch_one(&pool)
+        .await?;
     println!("registros 2020: {c2020}");
 
-    let c2021: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE mes_ref LIKE '2021%'").fetch_one(&pool).await?;
+    let c2021: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE mes_ref LIKE '2021%'")
+        .fetch_one(&pool)
+        .await?;
     println!("registros 2021: {c2021}");
 
     // por mes

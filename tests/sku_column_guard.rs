@@ -26,7 +26,10 @@ fn sku_texto_no_dispara_alerta() {
         "SKU como texto NO debe disparar la alerta (numeric_cells={})",
         insp.numeric_cells
     );
-    assert!(insp.string_cells >= 3, "debe contar las celdas de SKU como texto");
+    assert!(
+        insp.string_cells >= 3,
+        "debe contar las celdas de SKU como texto"
+    );
 }
 
 #[test]
@@ -54,7 +57,13 @@ fn xls_to_csv_deja_skus_texto_intactos() {
     let n = g360_db_ventas::processor::xls::xls_to_csv(&xlsx, &out).expect("convertir");
     assert!(n >= 3);
     let content = std::fs::read_to_string(&out).unwrap();
-    assert!(content.contains("011019"), "debe preservar 011019 literal:\n{content}");
-    assert!(content.contains("011028"), "debe preservar 011028 literal:\n{content}");
+    assert!(
+        content.contains("011019"),
+        "debe preservar 011019 literal:\n{content}"
+    );
+    assert!(
+        content.contains("011028"),
+        "debe preservar 011028 literal:\n{content}"
+    );
     let _ = std::fs::remove_file(&out);
 }

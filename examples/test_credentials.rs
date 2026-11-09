@@ -1,5 +1,5 @@
 use g360_db_ventas::browser::http::CipsaHttp;
-use g360_db_ventas::config::{effective_intranet_user, effective_intranet_pass, load_dotenv};
+use g360_db_ventas::config::{effective_intranet_pass, effective_intranet_user, load_dotenv};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -33,21 +33,34 @@ async fn main() -> anyhow::Result<()> {
         let rest = &html[m.0..(m.0 + html[m.0..].len().min(200_000))];
         let end = rest.find('>').unwrap_or(rest.len());
         let tag = &rest[..end];
-        let name = tag.find("name=\"").and_then(|i| {
-            let s = &tag[i + 6..];
-            s.find('"').map(|j| &s[..j])
-        }).unwrap_or("");
-        if !name.starts_with("__") { continue; }
-        let val = tag.find("value=\"").and_then(|i| {
-            let s = &tag[i + 7..];
-            s.find('"').map(|j| &s[..j])
-        }).unwrap_or("");
+        let name = tag
+            .find("name=\"")
+            .and_then(|i| {
+                let s = &tag[i + 6..];
+                s.find('"').map(|j| &s[..j])
+            })
+            .unwrap_or("");
+        if !name.starts_with("__") {
+            continue;
+        }
+        let val = tag
+            .find("value=\"")
+            .and_then(|i| {
+                let s = &tag[i + 7..];
+                s.find('"').map(|j| &s[..j])
+            })
+            .unwrap_or("");
         form.push((name.to_string(), val.to_string()));
     }
     form.push(("txtnombre".into(), user.clone()));
     form.push(("txtpass".into(), "PASSWORD_INCORRECTO_XYZ".into()));
     form.push(("Button1".into(), "Aceptar".into()));
-    let resp = client.post(login_url).form(&form).timeout(std::time::Duration::from_secs(30)).send().await?;
+    let resp = client
+        .post(login_url)
+        .form(&form)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await?;
     let status = resp.status();
     let body = resp.text().await?;
     let still_on_login = body.contains("txtnombre") && body.contains("txtpass");
@@ -70,7 +83,12 @@ async fn main() -> anyhow::Result<()> {
     };
     let raw = g360_db_ventas::config::raw_dir();
     std::fs::create_dir_all(&raw)?;
-    match tokio::time::timeout(std::time::Duration::from_secs(60), http.download(&range, &raw)).await {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        http.download(&range, &raw),
+    )
+    .await
+    {
         Ok(Ok(p)) => {
             let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
             println!("OK: {} bytes descargados -> {}", size, p.display());

@@ -49,8 +49,7 @@ impl SkuColumnInspection {
 /// Busca la fila de cabecera y detecta si la columna `ID_ARTICULO` tiene
 /// celdas numericas (riesgo de ceros perdidos).
 pub fn inspect_sku_column(xls: &Path) -> Result<SkuColumnInspection> {
-    let mut wb = open_workbook_auto(xls)
-        .with_context(|| format!("abrir xls {}", xls.display()))?;
+    let mut wb = open_workbook_auto(xls).with_context(|| format!("abrir xls {}", xls.display()))?;
     let sheet_name = wb
         .sheet_names()
         .first()
@@ -121,8 +120,7 @@ pub fn inspect_sku_column(xls: &Path) -> Result<SkuColumnInspection> {
 
 /// Convierte `xls` a `csv` (primera hoja). Puro Rust, sin depender de Python.
 pub fn xls_to_csv(xls: &Path, csv: &Path) -> Result<usize> {
-    let mut wb = open_workbook_auto(xls)
-        .with_context(|| format!("abrir xls {}", xls.display()))?;
+    let mut wb = open_workbook_auto(xls).with_context(|| format!("abrir xls {}", xls.display()))?;
     let sheet_name = wb
         .sheet_names()
         .first()
@@ -132,8 +130,8 @@ pub fn xls_to_csv(xls: &Path, csv: &Path) -> Result<usize> {
         .worksheet_range(&sheet_name)
         .map_err(|e| anyhow!("leer hoja {sheet_name}: {e:?}"))?;
 
-    let mut w = csv::Writer::from_path(csv)
-        .with_context(|| format!("crear csv {}", csv.display()))?;
+    let mut w =
+        csv::Writer::from_path(csv).with_context(|| format!("crear csv {}", csv.display()))?;
     let mut rows = 0usize;
     // Deteccion de SKU numerico: el ERP exporta ID_ARTICULO como texto. Si llega
     // como numero, Excel pudo borrar ceros a la izquierda (011019 -> 11019).
@@ -180,7 +178,11 @@ pub fn xls_to_csv(xls: &Path, csv: &Path) -> Result<usize> {
                 Data::String(s) => s.trim().to_string(),
                 Data::Float(f) => {
                     // Evitar 2021.0 -> "2021"
-                    if f.fract() == 0.0 { format!("{:.0}", f) } else { f.to_string() }
+                    if f.fract() == 0.0 {
+                        format!("{:.0}", f)
+                    } else {
+                        f.to_string()
+                    }
                 }
                 Data::Int(i) => i.to_string(),
                 Data::Bool(b) => b.to_string(),
