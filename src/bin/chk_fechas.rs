@@ -29,8 +29,8 @@
 //     cargo run --release --bin chk_fechas --revertir # vuelve atras
 //     cargo run --release --bin chk_fechas --descartar-vieja  # borra el respaldo
 //     cargo run --release --bin chk_fechas --db RUTA  # otra base (pruebas)
-use anyhow::{bail, Context, Result};
-use sqlx::{sqlite::SqliteConnectOptions, Acquire, SqlitePool};
+use anyhow::{Context, Result, bail};
+use sqlx::{Acquire, sqlite::SqliteConnectOptions, SqlitePool};
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
@@ -126,10 +126,7 @@ async fn reparar_vistas(con: &mut sqlx::SqliteConnection) -> Result<usize> {
     }
     for (_, sql) in sueltas.iter().rev() {
         sqlx::query(sql).execute(&mut *con).await.with_context(|| {
-            format!(
-                "recreando vista: {}",
-                &sql.chars().take(60).collect::<String>()
-            )
+            format!("recreando vista: {}", &sql.chars().take(60).collect::<String>())
         })?;
     }
     Ok(reb_anadas)
@@ -234,9 +231,7 @@ async fn main() -> Result<()> {
             error!("{reb} vista(s) apuntan a {VIEJA}: NO se descarta. Repara las vistas primero.");
             return Ok(());
         }
-        sqlx::query(&format!("DROP TABLE {VIEJA}"))
-            .execute(&pool)
-            .await?;
+        sqlx::query(&format!("DROP TABLE {VIEJA}")).execute(&pool).await?;
         sqlx::query(&format!("DROP TABLE IF EXISTS {TABLA_INDICES}"))
             .execute(&pool)
             .await?;
@@ -273,11 +268,10 @@ async fn main() -> Result<()> {
         let mut tx = con.begin().await?;
         // Si una corrida anterior murio entre el DROP y el RENAME, `ventas` ya
         // no esta: se sigue adelante en vez de abortar con "no such table".
-        let existe_ventas: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ventas'",
-        )
-        .fetch_one(&mut *tx)
-        .await?;
+        let existe_ventas: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ventas'")
+                .fetch_one(&mut *tx)
+                .await?;
         if existe_ventas > 0 {
             sqlx::query("DROP TABLE ventas").execute(&mut *tx).await?;
         }
@@ -310,10 +304,7 @@ async fn main() -> Result<()> {
             checks_de(&pool, "ventas").await
         );
         if ind == 0 || ind as usize != guardados.len() {
-            bail!(
-                "revertido con {ind} indices, se esperaban {}: el respaldo quedo sin indices",
-                guardados.len()
-            );
+            bail!("revertido con {ind} indices, se esperaban {}: el respaldo quedo sin indices", guardados.len());
         }
         return Ok(());
     }
@@ -376,11 +367,9 @@ async fn main() -> Result<()> {
     sqlx::query(&format!("DROP TABLE IF EXISTS {TABLA_INDICES}"))
         .execute(&mut *tx)
         .await?;
-    sqlx::query(&format!(
-        "CREATE TABLE {TABLA_INDICES} (id INTEGER PRIMARY KEY, sql TEXT)"
-    ))
-    .execute(&mut *tx)
-    .await?;
+    sqlx::query(&format!("CREATE TABLE {TABLA_INDICES} (id INTEGER PRIMARY KEY, sql TEXT)"))
+        .execute(&mut *tx)
+        .await?;
     for sql in &indices {
         sqlx::query(&format!("INSERT INTO {TABLA_INDICES} (sql) VALUES (?)"))
             .bind(sql)

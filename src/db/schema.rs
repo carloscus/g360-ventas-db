@@ -33,7 +33,10 @@ pub const CONTRACTO_VERSION: i64 = 4;
 /// Versión de las reglas de saneamiento/normalización aplicadas a los datos.
 /// Se almacena en `g360_meta.normalizacion_version`.
 /// Bump cuando cambia una regla de normalización; el consumidor NO bloquea.
-pub const NORMALIZACION_VERSION: i64 = 1;
+/// v2 (06/11): pad de `id_vendedor` a 3 chars (anomalía de fuente '0154' ->
+/// '054') + fix del off-by-one de SUBSTR en la reparación legacy. El bump
+/// hace que el gate de init_pool() ejecute las reparaciones una sola vez más.
+pub const NORMALIZACION_VERSION: i64 = 2;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tabla principal: ventas (normalizada, con CHECKs para historial extensivo)
@@ -202,6 +205,17 @@ pub const CREATE_INDEXES_SQL: &[&str] = &[
     // NOTA: sin WHERE date('now') porque no es determinista en SQLite in-memory.
     // En producción se puede agregar via ALTER TABLE ADD INDEX si es necesario.
     "CREATE INDEX IF NOT EXISTS idx_venta_fecha_historico ON ventas(fecha_orig);",
+    // Indices parciales para la sanacion de precio_unitario de init_pool.
+    // IMPORTANTE (empirico, 06/11): NO unirlos con OR en el WHERE parcial -
+    // SQLite no prueba la implicancia Wq => (X OR Y) cuando la rama Y es una
+    // conjuncion y el UPDATE del caso fae caia en SCAN (31 s). Dos indices
+    // separados, cada uno con la predicate EXACTA de su UPDATE -> SEARCH.
+    // Cubren solo las filas a reparar (casi vacios -> inserts casi gratis).
+    "DROP INDEX IF EXISTS idx_venta_precio_heal;",
+    "CREATE INDEX IF NOT EXISTS idx_venta_precio_null ON ventas(precio_unitario) \
+        WHERE precio_unitario IS NULL;",
+    "CREATE INDEX IF NOT EXISTS idx_venta_precio_fae ON ventas(precio_unitario, cantidad, cantidad_fae) \
+        WHERE precio_unitario = 0 AND cantidad = 0 AND cantidad_fae != 0;",
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

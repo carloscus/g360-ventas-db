@@ -12,7 +12,7 @@
 //     cargo run --release --bin agregar_indice_capturado_en            # informa
 //     cargo run --release --bin agregar_indice_capturado_en --aplicar  # crea
 //     cargo run --release --bin agregar_indice_capturado_en --db RUTA  # otra base
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use std::str::FromStr;
 use std::time::{Duration, Instant};
@@ -57,21 +57,21 @@ async fn main() -> Result<()> {
         warn!("--db: base indicada a mano, NO la de la app");
     }
 
-    let existe: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?")
-            .bind(INDICE)
-            .fetch_one(&pool)
-            .await?;
+    let existe: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?",
+    )
+    .bind(INDICE)
+    .fetch_one(&pool)
+    .await?;
     if existe > 0 {
         info!("{INDICE} ya existe: nada que hacer.");
         return Ok(());
     }
 
-    let tiene_col: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info('ventas') WHERE name=?")
-            .bind(COLUMNA)
-            .fetch_one(&pool)
-            .await?;
+    let tiene_col: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info('ventas') WHERE name=?")
+        .bind(COLUMNA)
+        .fetch_one(&pool)
+        .await?;
     if tiene_col == 0 {
         info!("la tabla `ventas` no tiene {COLUMNA}: nada que hacer.");
         return Ok(());
@@ -80,9 +80,10 @@ async fn main() -> Result<()> {
     // Se mide ANTES: es el numero que justifica la herramienta. Con el indice
     // este query baja a milisegundos y el "antes" del proximo run ya no aplica.
     let t0 = Instant::now();
-    let antes: Option<String> = sqlx::query_scalar(&format!("SELECT MAX({COLUMNA}) FROM ventas"))
-        .fetch_one(&pool)
-        .await?;
+    let antes: Option<String> =
+        sqlx::query_scalar(&format!("SELECT MAX({COLUMNA}) FROM ventas"))
+            .fetch_one(&pool)
+            .await?;
     let elapsed_antes = t0.elapsed();
     info!(
         "MAX({COLUMNA}) antes: {antes:?}   ({:.1}s)",
@@ -101,12 +102,16 @@ async fn main() -> Result<()> {
     .execute(&pool)
     .await
     .with_context(|| format!("creando {INDICE}"))?;
-    info!("  indice creado en {:.1}s", t1.elapsed().as_secs_f64());
+    info!(
+        "  indice creado en {:.1}s",
+        t1.elapsed().as_secs_f64()
+    );
 
     let t2 = Instant::now();
-    let despues: Option<String> = sqlx::query_scalar(&format!("SELECT MAX({COLUMNA}) FROM ventas"))
-        .fetch_one(&pool)
-        .await?;
+    let despues: Option<String> =
+        sqlx::query_scalar(&format!("SELECT MAX({COLUMNA}) FROM ventas"))
+            .fetch_one(&pool)
+            .await?;
     let elapsed_despues = t2.elapsed();
     info!(
         "MAX({COLUMNA}) despues: {despues:?}   ({:.3}s)",

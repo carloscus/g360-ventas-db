@@ -37,6 +37,7 @@ flowchart TD
 - [Descripción](#descripción)
 - [Objetivo](#objetivo)
 - [Arquitectura](#arquitectura)
+- [Contrato de datos](#contrato-de-datos)
 - [Pipeline de captura](#pipeline-de-captura)
 - [Esquema de datos](#esquema-de-datos)
 - [Campos derivados](#campos-derivados)
@@ -223,19 +224,27 @@ G360_INTRANET_USER=usuario_demo
 G360_INTRANET_PASS=password_demo
 ```
 
-### 2. Capturar ventas (sección 1 · DB Local)
+### 2. Capturar ventas
 
 1. Abre la app Tauri (`G360 DB Ventas.exe`).
-2. Define el rango (desde / hasta) y **⟳ Capturar rango** (o **↻ Sync última fecha** para incremental).
-3. El pipeline descarga cada mes y lo inserta en SQLite. No toca Supabase.
+2. En **🔄 Inicio rápido diario** presioná **Ejecutar**: descarga desde
+   (última fecha − 1 día) hasta hoy y lo inserta en SQLite. No toca Supabase
+   si el checkbox está desmarcado.
+3. Para una ventana más amplia (p. ej. primer uso), usá la CLI
+   (`importxls` / `recapture`) — ver [CLI](#cli).
 
-### 3. Sincronizar con Supabase (sección 2)
+### 3. Sincronizar con Supabase
 
-- Click **🔄 Reconciliar ahora**: calcula el checksum por mes, y solo purga + re-sube (en batches de 500) los meses que cambiaron. Sin duplicados (`Prefer: return=minimal`, purga por lotes de ids antes de re-subir). Resumible + circuit breaker.
+- Marcá el checkbox **"Incluir actualización Supabase"** en Inicio rápido:
+  al terminar la captura corre el sync incremental por día.
+- Para correcciones históricas (meses ya subidos), la reconciliación mes por
+  mes corre dentro de `sync_smart` (solo re-sube meses cuyo checksum cambió,
+  sin duplicados).
 
-### 4. Flujo completo (sección 3)
+### 4. Flujo completo
 
-- **▶ Ejecutar flujo completo** (usa el rango de la sección 1): descarga intranet → SQLite → reconcilia Supabase, en un solo paso.
+- **Ejecutar** con el checkbox marcado = captura + sync en un solo paso.
+  No hay botón aparte de "flujo completo".
 
 ### 5. Automatización diaria (Task Scheduler)
 
@@ -253,44 +262,36 @@ Con `--task-scheduler` la app ejecuta el pipeline completo (captura día anterio
 
 ## Interfaz de escritorio
 
-La UI está organizada en **3 secciones**:
+La UI es minimalista: **3 tarjetas de estado + 1 acción principal + 3 módulos** (se expanden al clickear; volver a clickear los cierra).
 
-### 1. DB Local
-Métricas del SQLite local: **registros**, **desde/hasta**, **meses**, **documentos**, **tamaño BD**, **últ. captura / verificación** y **relación de folios NC/NDB** (total, asociadas a factura, huérfanas). Incluye la descarga por rango (desde → hasta), captura, sync, verificación/checksum, respaldo y el menú de acciones (importar, gestionar meses, calidad de datos, limpiar caché).
-
-### 2. Supabase
-Estado del sync + **desde/hasta**, **filas** y **documentos** en Supabase, con botón **🔄 Reconciliar ahora** (sincroniza mes por mes sin re-subir lo que no cambió).
-
-> Los "documentos" de Supabase (`COUNT(DISTINCT folio_unico)`) usan la RPC `g360_ventas_stats()` (BLOQUE 8 de `supabase/RELOAD_CHECKLIST.sql`). Si no existe, se muestra "—" y el resto de métricas sigue funcionando. La RPC `g360_ventas_por_mes()` (BLOQUE 9) habilita el sembrado de reconciliación tras recrear la BD local.
-
-### 3. Flujo automatizado
-Un solo botón **▶ Ejecutar flujo completo** para un rango desde/hasta: descarga desde la intranet (si falta el mes) → crea/actualiza SQLite → reconcilia Supabase (verificando que no haya datos repetidos).
-
-### Acciones y utilidades
-
-| Elemento | Función |
-|----------|---------|
-| **⟳ Capturar rango** | descarga el rango desde la intranet → SQLite (no toca Supabase) |
-| **↻ Sync última fecha** | captura incremental local (no sube) |
-| **🔍 Verificar BD / 🔐 Checksum** | integridad y checksums mensuales |
-| **📂 Compartir / respaldar BD** | abre la carpeta de datos |
-| **⋯ más acciones** | Importar mes (XLS), Gestionar meses, Vista previa CSV, **📊 Monitor mensual**, 🚦 Calidad de datos, Limpiar caché |
-| **⏹ detener** | abortar captura en curso |
-
-### Monitor mensual (📊)
-
-Tabla **mes · filas · unidades · total soles** (mismo filtro de líneas del uploader) para comparar contra la intranet. Botón **⬇ Exportar XLSX** → `data/export/monitor_<fecha>.xlsx` (XLSX real generado en Rust, sin dependencias externas).
-
-### Modal de configuración
-
-| Sección | Campo |
+### Tarjetas de estado (siempre visibles)
+| Tarjeta | Datos |
 |---------|-------|
-| **Intranet CIPSA** | usuario, clave (con estado configuradas/verificadas) |
-| **Reporte** | generado por (responsable) |
-| **Destino Supabase** | habilitado (switch), URL, anon key, service role key |
-| **Comportamiento** | auto-sync al abrir, ventana Supabase (días), retención apps derivadas |
-| **Líneas permitidas** | sufijos de línea de producto (avanzado) |
-| **Operaciones avanzadas** | Reprocesar raw, Reconciliar, Recrear BD local |
+| **📦 Principal** | registros BD, última fecha, estado (✅ OK / ⚠️) |
+| **☁️ Supabase** | filas remotas, `% de 500 MB`, estado de conexión |
+| **🗄 Cartucho** | filas del último cartucho, fecha, versión de contrato (⚠️ si desincronizado) |
+
+### 🔄 Inicio rápido diario
+- Captura desde **(última fecha − 1 día)** → hoy (cubre documentos posteados con retraso).
+- **Checkbox "Incluir actualización Supabase"**: al marcar, el flujo termina con sync incremental; desmarcado = solo BD local. La preferencia persiste (localStorage).
+- **⏹ Detener** aparece durante la captura para abortarla.
+
+### Módulos
+| Módulo | Contenido |
+|--------|-----------|
+| **📊 Reportes** | Generar XLSX consolidado (2 hojas: resumen mensual + totales), Monitor mensual (tabla + export XLSX), Exportar NC/NDB (CSV), Calidad de datos |
+| **⚙️ Config Supabase** | URL, Service Role Key (se guarda si el campo tiene contenido), retención (días), recordatorio de backup (7/30/0), **allowlist como chips multiselección** (24 líneas + extra), **tarea programada** (hora + crear/eliminar, modo `--task-scheduler`) |
+| **🗄 Cartucho / Backup** | Generar cartucho (.db + manifest), Backup BD, **🗜️ Comprimir ZIP** (para transporte), Estado backup, Abrir carpeta, Verificar contrato |
+
+### Extras
+- **Alerta de backup**: banner en la vista principal si el backup supera el recordatorio (default 7 días) con botón "Hacer backup".
+- **Wizard de primer inicio**: si no hay `config.enc` (PC nueva), pide Supabase URL/keys + intranet y guarda encriptado con DPAPI.
+- **Supabase %**: se lee de la vista `vw_ventas_storage`.
+
+### Automatización diaria (Task Scheduler)
+En **⚙️ Config → Actualización automática**: define la hora (default 14:00) y crea/elimina la tarea `G360-Actualizar-Ventas`, que corre el exe con `--task-scheduler` en modo silencioso:
+captura (desde último día registrado − 1) → BD local → sync Supabase.
+Si la PC estuvo apagada, la próxima ejecución **recupera los días faltantes**.
 
 ---
 
@@ -390,40 +391,91 @@ Usado por el botón **"🔄 Reconciliar"** (y full syncs). Compara **checksums p
 
 En Configuración → **Destino Supabase** hay un switch **"Supabase habilitado"**. Si se desactiva, la app es **100% local**: captura, parseo, dims y checksums en SQLite; ninguna operación toca Supabase.
 
-### Flujo automático al abrir (`sync_smart`)
+### Flujo manual con Supabase opcional (`sync_smart`)
 
-1. Captura desde la última fecha local.
-2. Si Supabase está habilitado y configurado → `sync_incremental` (por día).
-3. Si no → solo captura local y termina.
+El flujo se lanza desde **🔄 Inicio rápido diario** (botón *Ejecutar*):
 
-No hace full-scans remotos: los checksums son locales y el display de Supabase usa `count=planned` (estimador del planner).
+1. Captura desde (última fecha local − 1 día) hasta hoy.
+2. Si el checkbox **"Incluir actualización Supabase"** está marcado → `sync_incremental` (por día) al terminar.
+3. Desmarcado → solo captura local y termina.
+
+La preferencia del checkbox persiste en `localStorage`. No hace full-scans
+remotos: los checksums son locales y el display de Supabase usa `count=planned`
+(estimador del planner).
+
+> Antes este flujo corría automático al abrir; ahora es **manual a propósito**
+> (control explícito del usuario + tarea programada `--task-scheduler` para la
+> ejecución diaria).
 
 ---
 
 ## Base canónica para otras apps
 
 `historial.db` es la **base canónica** de este proyecto. Otras apps consumen una
-**instantánea** en vez del SQLite en caliente: **⋯ más acciones → 🗄 Exportar base
-canónica** genera `base_canonica_<fecha>.db` (copia autocontenida vía `VACUUM INTO`)
+**instantánea** en vez del SQLite en caliente: **📦 Generar cartucho** (módulo
+🗄 Cartucho / Backup) genera `base_canonica_<fecha>.db` (copia autocontenida vía `VACUUM INTO`)
 + `base_canonica_<fecha>.manifest.json` (versiones, cobertura y checksums mensuales).
 La app consumidora importa el `.db` a su **propia copia**, valida contra el manifiesto
 y trabaja aislada (tablas/vistas con prefijo propio). No hay sync bidireccional.
 
 Protocolo completo, manifiesto, llaves de join y reglas: [`docs/base-canonica-consumo.md`](docs/base-canonica-consumo.md).
 
+### Cartucho (seed para clientes offline)
+
+El motor genera **cartuchos** (`.db` + `.manifest.json`) que se distribuyen a clientes
+offline por USB o red compartida. Cada cartucho incluye:
+
+- **SHA256** del archivo para verificación de integridad en transporte
+- **`contracto_version`** / **`dim_schema_version`** / **`normalizacion_version`** — el consumidor bloquea si no coincide
+- **`day_checksums`** y **`mes_checksums`** — baseline para detectar corrupción
+- **`data_quality`** — estado de calidad (excellent / good / needs_review)
+- **`attributes_applied`** — normalizaciones ejecutadas (id_pedido, mes_ref, fechas)
+
+**Uso desde CLI:**
+
+```powershell
+# Generar cartucho inicial desde una BD existente
+.\target\release\build_initial_cartucho.exe --db .\data\historial.db --output .\exports\base_canonica
+
+# Verificar integridad de un cartucho
+.\target\release\compare_checksums.exe --db .\exports\base_canonica.db --output check.json
+
+# Comparar dos cartuchos (offline)
+.\target\release\compare_checksums.exe --db cartucho1.db --output c1.json
+.\target\release\compare_checksums.exe --db cartucho2.db --output c2.json
+diff c1.json c2.json
+```
+
+**Flujo del cliente offline:**
+1. Recibe `.db` + `.manifest.json` por USB/red
+2. Copia a su directorio de datos
+3. Verifica SHA256 (opcional)
+4. Inicia app → `init_pool()` detecta versiones automáticamente
+5. `check_contract_version()` bloquea si la versión no es compatible
+
+> **Versión de contrato:** `CONTRACTO_VERSION = 4`. Si se bumpa, los consumidores
+> existentes bloquean hasta actualizarse. El frontend muestra una alerta en la
+> sección "DB Local" si detecta mismatch.
+
 ---
 
 ## Auditoría e integridad
 
-La app incluye un sistema de verificación de datos accesible desde **⋯ más acciones**:
+La verificación de datos opera en dos niveles:
+
+**En la UI** (módulo 📊 Reportes):
 
 | Botón / Comando | Función |
 |-----------------|---------|
-| **🔍 Verificar Integridad** (`verify_integrity`) | detecta duplicados por `(folio_unico, id_articulo)`, folios huérfanos y meses faltantes |
-| **🔐 Calcular Checksums** (`calculate_checksums`) | hash mensual por `(filas, soles, dolares)` — detecta cambios no autorizados |
 | **🚦 Calidad de datos** (`get_data_quality`) | reporte por severidad: **críticos** (campos requeridos vacíos, fechas inválidas, `mes_ref` inconsistente), **warnings** (NC/NDB sin referencia, precio 0, ventas negativas, fechas futuras, huecos de meses) e **info** (NC/NDB huérfanas, duplicados legítimos) |
-| **upload_dry_run** | preview de lo que se subiría (filas, totales, tamaño estimado) sin subir nada |
-| **upload_all_with_verify** | reconcilia con verificación: solo avanza los meses cuyo conteo/checksum cuadra |
+| **Monitor mensual** (`get_monthly_monitor`) | tabla mes/filas/unidades/total para comparar contra la intranet |
+
+**Automático (sin botón)**: los checksums por mes se calculan **dentro de los
+flujos de sync** (`sync_smart` y reconciliación), y el uploader bloquea la
+subida si detecta duplicados, folio nulo o negativos. Los comandos manuales
+`verify_integrity`, `calculate_checksums`, `upload_dry_run` y
+`upload_all_with_verify` fueron eliminados en el refactor `7f16491` (sin UI;
+ver `docs/REFACTOR_PLAN.md`).
 
 **Tablas de auditoría** (SQLite local):
 
@@ -518,15 +570,24 @@ query.exe                        # consulta la BD
 ## Desarrollo
 
 ```bash
-# Compilar binarios
+# 1. Frontend (OBLIGATORIO antes de tauri build: Tauri empaqueta frontend/dist)
+cd frontend && npm run build && cd ..   # copia index.html -> dist/
+
+# 2. Compilar binarios CLI
 cargo build --release
 
-# Compilar la app Tauri (frontend en frontend/dist)
+# 3. Compilar la app Tauri (usa frontend/dist — no frontend/index.html directo)
 cargo tauri build
 
-# Modo desarrollo
+# Modo desarrollo (sirve frontend/dist también)
 cargo tauri dev
+
+# Verificación completa (repo autosuficiente)
+cargo check --all-targets && cargo test && node frontend/build.js --check
 ```
+
+> ⚠️ Si editas `frontend/index.html` y no corres `npm run build`, el exe llevará
+> el HTML viejo embebido (la macro `generate_context!` lee `dist/` al compilar).
 
 ### Estructura
 
@@ -534,13 +595,22 @@ cargo tauri dev
 src/
 ├── browser/captor.rs      # login + descarga XLS (headless Chrome)
 ├── processor/             # xls→csv, parsing, derivación, upload
-├── db/                    # schema, writer, consultas
-├── capture.rs             # pipeline principal + lock RAII
-└── config.rs              # .env, config.json, líneas permitidas
-src-tauri/
-└── src/main.rs            # comandos Tauri (invoke_handler)
+├── db/                    # schema, writer, consultas, cartucho (zip/rotación)
+├── alerts.rs              # alertas estructuradas (Critical/Warning/Info)
+├── capture.rs             # pipeline principal + lock RAII + retry
+├── config.rs              # .env, config.enc (DPAPI), allowlist
+└── bin/                   # 13 bins CLI (upload, capture_daily, reparse...)
+src-tauri/src/main.rs      # ~60 comandos Tauri (invoke_handler)
 frontend/
-└── index.html             # interfaz estática
+├── index.html             # interfaz (fuente)
+├── build.js               # copia index.html -> dist/ (npm run build)
+└── dist/                  # lo que Tauri empaqueta (frontendDist)
+supabase/
+├── migrations/            # 17 migraciones (aplicar en orden)
+└── ACTIVATE_pg_cron_vacuum.sql  # VACUUM semanal (pegar 1 vez en Dashboard)
+docs/
+├── CONTRATO.md            # contrato para apps consumidoras (v4)
+└── LINEAMIENTOS.md        # decisiones de diseño internas
 ```
 
 ---
@@ -624,7 +694,40 @@ Proyecto interno del ecosistema **G360 - CIPSA**.
 
 ---
 
-## Cambios recientes (oct-2026)
+## Contrato de datos
+
+La documentación de contrato para apps consumidoras (cartucho offline y
+Supabase online) vive en **[`docs/CONTRATO.md`](docs/CONTRATO.md)**. Cubre:
+
+- Versionado (`CONTRACTO_VERSION = 4`) y reglas de compatibilidad
+- Estructura del manifest del cartucho + verificación con SHA256
+- Esquema de la tabla `ventas` (53 columnas, ★ = esencial para Supabase)
+- Reglas de normalización de IDs (`id_cliente` zfill8, `id_linea`/`id_vendedor` quitan `01`)
+- Clasificación de `tipo_operacion` (NCR/NDB/BDI/F01)
+- Endpoints Supabase (PostgREST + vistas)
+- Checklist de integración para app nueva
+
+## Cambios recientes (nov-2026)
+
+- **Config encriptada (DPAPI)**: credenciales en `config.enc` (Windows DPAPI,
+  solo esa PC/usuario). Migración automática desde `config.json` plano → `.enc`
+  + `.bak`. Wizard de primer inicio en PC nueva.
+- **Allowlist en cartucho**: `manifest.json` incluye `allowed_lines` y
+  `retention_days` para que el consumidor sepa el filtro aplicado.
+- **Buffer -1 día**: `sync_smart` captura desde (última fecha − 1 día) para no
+  perder documentos posteados con retraso en el ERP.
+- **UI minimalista**: 3 tarjetas de estado (Principal/Supabase/Cartucho),
+  inicio rápido diario, 3 módulos (Reportes XLSX, Config, Cartucho/Backup).
+- **Reporte XLSX**: `export_monitor_xlsx` genera consolidado por mes (2 hojas:
+  resumen mensual + totales) para análisis y auditoría.
+- **NDB → `ajuste_valor`**: notas de débito clasificadas igual que NCR sin
+  cantidad negativa (corrige vistas Supabase que no las reconocían).
+- **`normalize_query_id`**: normaliza IDs de entrada del usuario para que
+  búsquedas como `10214` encuentren `00010214` en la BD.
+- **Captura completa 2010-2026**: 203 meses, 2.8M filas, retry automático
+  ante `database is locked` (backoff 2s/4s/8s).
+- **Alertas estructuradas**: `AlertCollector` con severidad (Critical/
+  Warning/Info), acción sugerida y reporte JSON al final de cada corrida.
 
 - **Menos I/O en Supabase**: el chequeo mensual del resync ya no usa `count=exact`
   (un full-count por mes); la cobertura del dashboard se cachea 5 min por sesión
@@ -632,3 +735,10 @@ Proyecto interno del ecosistema **G360 - CIPSA**.
   borrado de retención subió a batches de 2000 con `order=id`.
 - **Fechas en UI**: display en `dd/mm/aaaa` (`fmtFecha()` en `index.html`); el
   proceso sigue en ISO (`fecha_orig` rechaza el archivo si hay fechas inválidas).
+- **Refactor de limpieza (5 pasos, `d34a207`…`7f16491`)**: `main.rs` →
+  `commands/`×8 (**2475 → ~215** líneas), `uploader.rs` → fachada + 4 módulos
+  (**1773 → 87**), ruta secuencial de captura delega en `process_month`
+  (−358 líneas) y **36 comandos sin UI eliminados** (62 → 26). Cableados
+  `abort_capture` (botón ⏹) y `save_service_role_key` (el campo de Config
+  existía pero nunca guardaba). Detalle en
+  [`docs/REFACTOR_PLAN.md`](docs/REFACTOR_PLAN.md).

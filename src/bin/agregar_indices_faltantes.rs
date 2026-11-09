@@ -20,7 +20,7 @@
 //     cargo run --release --bin agregar_indices_faltantes            # informa
 //     cargo run --release --bin agregar_indices_faltantes --aplicar  # crea
 //     cargo run --release --bin agregar_indices_faltantes --db RUTA  # otra base
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use std::str::FromStr;
 use std::time::{Duration, Instant};
@@ -44,11 +44,10 @@ const INDICES: &[(&str, &str, &str)] = &[
 ];
 
 async fn existe(pool: &SqlitePool, nombre: &str) -> Result<bool> {
-    let n: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?")
-            .bind(nombre)
-            .fetch_one(pool)
-            .await?;
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?")
+        .bind(nombre)
+        .fetch_one(pool)
+        .await?;
     Ok(n > 0)
 }
 
@@ -104,9 +103,10 @@ async fn main() -> Result<()> {
         warn!("--db: base indicada a mano, NO la de la app");
     }
 
-    let falta_columna: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info('ventas')")
-        .fetch_one(&pool)
-        .await?;
+    let falta_columna: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info('ventas')")
+            .fetch_one(&pool)
+            .await?;
     if falta_columna == 0 {
         bail!("la DB no tiene tabla `ventas`");
     }
@@ -128,20 +128,16 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     if !aplicar {
-        info!(
-            "\n{} indice(s) faltante(s). Para escribir: --aplicar",
-            faltantes.len()
-        );
+        info!("\n{} indice(s) faltante(s). Para escribir: --aplicar", faltantes.len());
         return Ok(());
     }
 
     for (nombre, sql, prueba) in &faltantes {
         info!("\ncreando {nombre}...");
         let t = Instant::now();
-        sqlx::query(sql)
-            .execute(&pool)
-            .await
-            .with_context(|| format!("creando {nombre} (cerrar la app: hay una DB abierta)"))?;
+        sqlx::query(sql).execute(&pool).await.with_context(|| {
+            format!("creando {nombre} (cerrar la app: hay una DB abierta)")
+        })?;
         info!("  creado en {:.1}s", t.elapsed().as_secs_f64());
 
         let s = medir(&pool, prueba).await;

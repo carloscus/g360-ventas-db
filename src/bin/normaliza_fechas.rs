@@ -27,7 +27,7 @@
 // ensayar sobre una copia:吹 uno cree que esta probando y esta tocando
 // produccion. El pool por defecto se resuelve igual que el de la app.
 use anyhow::Result;
-use sqlx::{sqlite::SqliteConnectOptions, Row, SqlitePool};
+use sqlx::{Row, sqlite::SqliteConnectOptions, SqlitePool};
 use std::str::FromStr;
 use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -96,11 +96,10 @@ async fn main() -> Result<()> {
         }
         None => g360_db_ventas::db::writer::init_pool().await?,
     };
-    let db_path: String =
-        sqlx::query_scalar("SELECT file FROM pragma_database_list WHERE name='main'")
-            .fetch_one(&pool)
-            .await
-            .unwrap_or_else(|_| "(desconocida)".to_string());
+    let db_path: String = sqlx::query_scalar("SELECT file FROM pragma_database_list WHERE name='main'")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|_| "(desconocida)".to_string());
     info!("DB: {db_path}");
     if db_override.is_some() {
         warn!("--db: se esta trabajando sobre una base indicada a mano, NO la de la app");

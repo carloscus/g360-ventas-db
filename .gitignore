@@ -18,6 +18,11 @@ Thumbs.db
 # Variables de entorno / secretos
 .env
 .env.*
+# El ejemplo sí se versiona (autosuficiencia: define las variables requeridas)
+!.env.example
+
+# Cache de Python / herramientas
+.ruff_cache/
 
 # Logs y salidas de depuración
 *.log

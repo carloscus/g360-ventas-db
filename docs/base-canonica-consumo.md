@@ -15,7 +15,7 @@ caliente: toman una **instantánea** y trabajan sobre su **propia copia**.
 
 ## Cómo exportar la instantánea
 
-En la app: **⋯ más acciones → 🗄 Exportar base canónica**. Genera en
+En la app: módulo **🗄 Cartucho / Backup → 📦 Generar cartucho**. Genera en
 `%APPDATA%\g360-db-ventas\data\export\`:
 
 - `base_canonica_<YYYYMMDD_HHMMSS>.db` — archivo autocontenido (`VACUUM INTO`, sin WAL).

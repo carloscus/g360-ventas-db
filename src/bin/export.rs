@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
     }
 
     info!("Exportando base canonica -> {}", target.display());
-    match g360_db_ventas::db::writer::export_canonical_snapshot(&target).await {
+    match g360_db_ventas::db::writer::export_canonical_snapshot(&target, None).await {
         Ok(info_json) => {
             println!(
                 "{}",

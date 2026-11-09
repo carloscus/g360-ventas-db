@@ -33,10 +33,8 @@ fn es_nc(tpo: &str) -> bool {
 fn esperadas_upload(vs: &[g360_db_ventas::Venta]) -> usize {
     let mut ref_ok: HashMap<(String, String), bool> = HashMap::new();
     for v in vs {
-        if !es_nc(&v.tpo_doc)
-            && is_allowed_line(&v.id_linea)
-            && !v.serie_doc.is_empty()
-            && !v.nro_doc.is_empty()
+        if !es_nc(&v.tpo_doc) && is_allowed_line(&v.id_linea)
+            && !v.serie_doc.is_empty() && !v.nro_doc.is_empty()
         {
             ref_ok.insert((v.serie_doc.clone(), v.nro_doc.clone()), true);
         }
@@ -55,45 +53,23 @@ fn esperadas_upload(vs: &[g360_db_ventas::Venta]) -> usize {
         .count()
 }
 
-/// Un directorio por test.
-///
-/// Con un directorio compartido, los dos tests de este archivo corren en paralelo
-/// (`cargo test` lanza un hilo por test) y ambos `fs::write` sobre el MISMO
-/// `ventas_2026_01.csv`: el segundo trunca el archivo mientras el primero lo esta
-/// leyendo y el parse ve un CSV a medias. No es un fallo del parser, es una carrera
-/// del fixture.
-fn dir_de(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("g360_raw_first_test_{tag}"));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-fn csv_de(tag: &str) -> std::path::PathBuf {
-    let csv = dir_de(tag).join("ventas_2026_01.csv");
-    std::fs::write(&csv, CSV).unwrap();
-    csv
-}
-
 #[test]
 fn parser_raw_first_conserva_todas_las_filas() {
-    let csv = csv_de("parser");
+    let dir = std::env::temp_dir().join("g360_raw_first_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let csv = dir.join("ventas_2026_01.csv");
+    std::fs::write(&csv, CSV).unwrap();
 
-    let ventas = parse_export_csv(&csv).expect("parse");
+    let (ventas, _stats) = parse_export_csv(&csv).expect("parse");
     // Las 6 filas deben llegar a la BD local, incluidas las de linea 0103
     // (fuera del allowlist por defecto) y la NC sin referencia.
-    assert_eq!(
-        ventas.len(),
-        6,
-        "raw-first: el parser NO debe filtrar por linea"
-    );
+    assert_eq!(ventas.len(), 6, "raw-first: el parser NO debe filtrar por linea");
     assert!(
         ventas.iter().any(|v| v.id_linea == "03" && v.tpo_doc == "F01"),
         "la fila de linea no permitida debe conservarse en el raw (id_linea normalizada sin prefijo)"
     );
     assert!(
-        ventas
-            .iter()
-            .any(|v| v.tpo_doc == "NCR" && v.factura_ref_serie.is_empty()),
+        ventas.iter().any(|v| v.tpo_doc == "NCR" && v.factura_ref_serie.is_empty()),
         "la NC sin factura referenciada debe conservarse en el raw"
     );
     // La regla NC/ND se sigue derivando igual (referencia -> serie/nro)
@@ -104,8 +80,11 @@ fn parser_raw_first_conserva_todas_las_filas() {
 
 #[tokio::test]
 async fn filtro_upload_sql_coincide_con_espejo_rust() {
-    let csv = csv_de("filtro");
-    let ventas = parse_export_csv(&csv).expect("parse");
+    let dir = std::env::temp_dir().join("g360_raw_first_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let csv = dir.join("ventas_2026_01.csv");
+    std::fs::write(&csv, CSV).unwrap();
+    let (ventas, _stats) = parse_export_csv(&csv).expect("parse");
 
     // BD en memoria con el schema real del proyecto
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -117,14 +96,8 @@ async fn filtro_upload_sql_coincide_con_espejo_rust() {
     for idx in CREATE_INDEXES_SQL {
         sqlx::query(idx).execute(&pool).await.unwrap();
     }
-    sqlx::query(CREATE_STATS_CACHE_SQL)
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(CREATE_AUDIT_TABLES_SQL)
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(CREATE_STATS_CACHE_SQL).execute(&pool).await.unwrap();
+    sqlx::query(CREATE_AUDIT_TABLES_SQL).execute(&pool).await.unwrap();
 
     g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, false)
         .await
@@ -135,19 +108,14 @@ async fn filtro_upload_sql_coincide_con_espejo_rust() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(
-        total as usize,
-        ventas.len(),
-        "la BD local debe tener TODO el raw"
-    );
+    assert_eq!(total as usize, ventas.len(), "la BD local debe tener TODO el raw");
 
     // El WHERE del upload (SQL) debe coincidir con el espejo Rust de la regla
     let upload_where = with_line_filter("");
-    let elegibles: i64 =
-        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ventas {}", upload_where))
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let elegibles: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ventas {}", upload_where))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(
         elegibles as usize,
         esperadas_upload(&ventas),
@@ -163,26 +131,21 @@ async fn filtro_upload_sql_coincide_con_espejo_rust() {
         assert_eq!(elegibles, 4, "escenario esperado con allowlist por defecto");
 
         // stats_cache alineada con lo vital (no con el raw)
-        g360_db_ventas::db::writer::refresh_stats_cache(&pool)
+        g360_db_ventas::db::writer::refresh_stats_cache(&pool).await.unwrap();
+        let st: f64 = sqlx::query_scalar("SELECT value FROM stats_cache WHERE key = 'total_records'")
+            .fetch_one(&pool)
             .await
             .unwrap();
-        let st: f64 =
-            sqlx::query_scalar("SELECT value FROM stats_cache WHERE key = 'total_records'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(
-            st as i64, 4,
-            "stats_cache debe reflejar lo que sube a Supabase"
-        );
+        assert_eq!(st as i64, 4, "stats_cache debe reflejar lo que sube a Supabase");
 
         // La combinacion con sync/retencion mantiene el filtro obligatorio
         let w = with_line_filter("WHERE mes_ref >= '2026-01'");
         assert!(w.starts_with("WHERE mes_ref >= '2026-01' AND ("));
-        let combinada: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ventas {}", w))
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let combinada: i64 =
+            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ventas {}", w))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(combinada, elegibles, "todas las filas son de 2026_01");
     }
 }
@@ -190,10 +153,7 @@ async fn filtro_upload_sql_coincide_con_espejo_rust() {
 #[test]
 fn with_line_filter_combina_y_falla_cerrado() {
     let f = supabase_line_filter_sql();
-    assert!(
-        f.contains("id_linea IN ("),
-        "filtro por linea permitida (exact-match 2 chars)"
-    );
+    assert!(f.contains("id_linea IN ("), "filtro por linea permitida (exact-match 2 chars)");
     assert!(f.contains("EXISTS (SELECT 1 FROM ventas f"), "regla NC/ND");
 
     assert!(with_line_filter("").starts_with("WHERE ("));

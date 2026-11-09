@@ -48,10 +48,11 @@ async fn main() -> Result<()> {
     let pool = init_pool(&db_path).await?;
 
     // Verificar versión de contrato
-    let version: Option<String> =
-        sqlx::query_scalar("SELECT value FROM g360_meta WHERE key = 'contracto_version'")
-            .fetch_optional(&pool)
-            .await?;
+    let version: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM g360_meta WHERE key = 'contracto_version'"
+    )
+    .fetch_optional(&pool)
+    .await?;
     match version {
         Some(v) => info!("Contracto version: v{}", v),
         None => error!("Advertencia: g360_meta no encontrado; la DB puede estar desactualizada"),
@@ -60,18 +61,19 @@ async fn main() -> Result<()> {
     // Volcar checksums mensuales
     let month_checksums: Vec<(String, String, i64, f64)> = query_as(
         "SELECT mes_ref, checksum, total_filas, total_soles \
-         FROM mes_checksums ORDER BY mes_ref",
+         FROM mes_checksums ORDER BY mes_ref"
     )
     .fetch_all(&pool)
     .await
     .context("Error al leer mes_checksums")?;
 
     // Volcar checksums diarios
-    let day_checksums: Vec<(String, i64, f64, String)> =
-        query_as("SELECT dia, filas, soles, checksum FROM day_checksums ORDER BY dia")
-            .fetch_all(&pool)
-            .await
-            .context("Error al leer day_checksums")?;
+    let day_checksums: Vec<(String, i64, f64, String)> = query_as(
+        "SELECT dia, filas, soles, checksum FROM day_checksums ORDER BY dia"
+    )
+    .fetch_all(&pool)
+    .await
+    .context("Error al leer day_checksums")?;
 
     // Metrics basicas
     let total_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas")
@@ -79,11 +81,12 @@ async fn main() -> Result<()> {
         .await
         .unwrap_or(0);
 
-    let rango: (Option<String>, Option<String>) =
-        sqlx::query_as("SELECT MIN(fecha_orig), MAX(fecha_orig) FROM ventas")
-            .fetch_one(&pool)
-            .await
-            .unwrap_or((None, None));
+    let rango: (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT MIN(fecha_orig), MAX(fecha_orig) FROM ventas"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap_or((None, None));
 
     let output = serde_json::json!({
         "total_rows": total_rows,
@@ -126,9 +129,8 @@ async fn init_pool(path: &str) -> Result<SqlitePool> {
         .filename(path)
         .journal_mode(SqliteJournalMode::Delete)
         .foreign_keys(true);
-    let pool = SqlitePool::connect_with(opts).await.context(format!(
-        "No se pudo conectar a {}: verifica que la ruta sea correcta",
-        path
-    ))?;
+    let pool = SqlitePool::connect_with(opts)
+        .await
+        .context(format!("No se pudo conectar a {}: verifica que la ruta sea correcta", path))?;
     Ok(pool)
 }

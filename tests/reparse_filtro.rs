@@ -6,7 +6,39 @@
 // hacía matchear y `insert_ventas` ejecutaba
 // `DELETE FROM ventas WHERE mes_ref = '2010-0'`: un mes inexistente, así que
 // no borraba nada e insertaba encima, duplicando ~2.8M de filas.
-use g360_db_ventas::processor::parser::mes_de_nombre_csv as mes_de_nombre;
+
+/// Extrae el mes (yyyy, mm) del nombre del archivo CSV mensual.
+/// Retorna None si no es un nombre valido de mes.
+fn mes_de_nombre(nome: &str) -> Option<(u32, u32)> {
+    if !nome.ends_with(".csv") {
+        return None;
+    }
+    let stem = nome.trim_end_matches(".csv");
+    let parts: Vec<&str> = stem.split('_').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    if parts[0] != "ventas" {
+        return None;
+    }
+    let date_part = parts[1];
+    let date_parts: Vec<&str> = date_part.split('-').collect();
+    if date_parts.len() != 2 {
+        return None;
+    }
+    let year: u32 = date_parts[0].parse().ok()?;
+    let month: u32 = date_parts[1].parse().ok()?;
+    if month < 1 || month > 12 {
+        return None;
+    }
+    if date_parts[0].len() != 4 {
+        return None;
+    }
+    if date_parts[1].len() != 2 {
+        return None;
+    }
+    Some((year, month))
+}
 
 #[test]
 fn acepta_los_mensuales_reales() {

@@ -21,7 +21,7 @@ fn test_xls_to_csv_humo() {
         "2026,01,00012345,12345678901,CLIENTE DOS,0102,LINEA B,SKU2,ARTICULO DOS,NCR,F02,900,F01/201-100,03/01/2026,Soles,-2,-2,-100.00,0.00\n",
     )).unwrap();
 
-    let ventas = g360_db_ventas::processor::parser::parse_export_csv(&csv)
+    let (ventas, _stats) = g360_db_ventas::processor::parser::parse_export_csv(&csv)
         .map_err(|e| eprintln!("parse: {e}"))
         .expect("parse");
     assert_eq!(ventas.len(), 3, "deben parsearse las 3 filas");
@@ -81,7 +81,18 @@ fn test_parser_descarta_fecha_invalida() {
     )
     .unwrap();
 
-    let error = g360_db_ventas::processor::parser::parse_export_csv(&csv)
-        .expect_err("una fecha invalida debe bloquear el archivo completo");
-    assert!(error.to_string().contains("fecha_orig invalida"));
+    // NUEVO comportamiento: el parser NO bloquea el archivo entero.
+    // Cuenta las filas inválidas en QualityStats y devuelve las válidas.
+    let (rows, stats) =
+        g360_db_ventas::processor::parser::parse_export_csv(&csv).expect("parse debe completarse");
+    assert_eq!(
+        rows.len(),
+        1,
+        "solo 1 fila valida (la otra tiene fecha 32/01)"
+    );
+    assert_eq!(
+        stats.invalid_dates, 1,
+        "la fila con fecha 32/01 se cuenta como inválida"
+    );
+    assert_eq!(stats.total_rows, 2, "total leído = 2 filas");
 }

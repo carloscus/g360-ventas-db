@@ -34,7 +34,7 @@ fn test_fechas_de_texto_quedan_en_iso() {
     )
     .unwrap();
 
-    let ventas = g360_db_ventas::processor::parser::parse_export_csv(&csv)
+    let (ventas, _stats) = g360_db_ventas::processor::parser::parse_export_csv(&csv)
         .map_err(|e| eprintln!("parse: {e}"))
         .expect("parse");
     assert_eq!(ventas.len(), 5, "deben parsearse las 5 filas");

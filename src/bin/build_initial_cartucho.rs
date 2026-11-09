@@ -44,12 +44,8 @@ async fn main() -> Result<()> {
     if help || db_path.is_none() || output_path.is_none() {
         eprintln!("Usage: build_initial_cartucho --db <ruta_db> --output <ruta_output>");
         eprintln!();
-        eprintln!(
-            "Generates a canonical cartridge (.db + manifest.json) from an existing database."
-        );
-        eprintln!(
-            "This is the command to prepare the base data for distribution to offline clients."
-        );
+        eprintln!("Generates a canonical cartridge (.db + manifest.json) from an existing database.");
+        eprintln!("This is the command to prepare the base data for distribution to offline clients.");
         eprintln!();
         eprintln!("Options:");
         eprintln!("  --db, -d    Path to the source SQLite database");
@@ -57,9 +53,7 @@ async fn main() -> Result<()> {
         eprintln!("  --help, -h  Show this help");
         eprintln!();
         eprintln!("Example:");
-        eprintln!(
-            "  build_initial_cartucho --db ./data/ventas.db --output ./exports/base_canonica.db"
-        );
+        eprintln!("  build_initial_cartucho --db ./data/ventas.db --output ./exports/base_canonica.db");
         std::process::exit(1);
     }
 
@@ -74,10 +68,7 @@ async fn main() -> Result<()> {
 
     // Inicializar pool apuntando a la DB de entrada (read-write porque
     // calculate_day_checksums y calculate_monthly_checksums necesitan escribir)
-    use sqlx::{
-        sqlite::{SqliteConnectOptions, SqliteJournalMode},
-        Pool,
-    };
+    use sqlx::{sqlite::{SqliteConnectOptions, SqliteJournalMode}, Pool};
     let opts = SqliteConnectOptions::new()
         .filename(&db_path)
         .journal_mode(SqliteJournalMode::Wal)
@@ -96,9 +87,7 @@ async fn main() -> Result<()> {
     }
 
     // Verificar que tenga datos
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas")
-        .fetch_one(&source_pool)
-        .await?;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas").fetch_one(&source_pool).await?;
     info!("Source DB has {} rows", count);
     if count == 0 {
         error!("ERROR: Source DB is empty. Cannot build cartridge from empty database.");
@@ -106,15 +95,10 @@ async fn main() -> Result<()> {
     }
 
     // Verificar rango de fechas
-    let rango: (Option<String>, Option<String>) =
-        sqlx::query_as("SELECT MIN(fecha_orig), MAX(fecha_orig) FROM ventas")
-            .fetch_one(&source_pool)
-            .await?;
-    info!(
-        "Date range: {} to {}",
-        rango.0.clone().unwrap_or_default(),
-        rango.1.clone().unwrap_or_default()
-    );
+    let rango: (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT MIN(fecha_orig), MAX(fecha_orig) FROM ventas"
+    ).fetch_one(&source_pool).await?;
+    info!("Date range: {} to {}", rango.0.clone().unwrap_or_default(), rango.1.clone().unwrap_or_default());
 
     // Calcular checksums antes del export
     info!("Calculating checksums...");
@@ -142,9 +126,7 @@ async fn main() -> Result<()> {
     let mut buffer = [0u8; 8192];
     loop {
         let n = file.read(&mut buffer)?;
-        if n == 0 {
-            break;
-        }
+        if n == 0 { break; }
         hasher.update(&buffer[..n]);
     }
     let sha256 = format!("{:x}", hasher.finalize());
@@ -155,11 +137,9 @@ async fn main() -> Result<()> {
         "SELECT MIN(mes_ref), MAX(mes_ref), COUNT(DISTINCT mes_ref) FROM ventas WHERE length(mes_ref)=7"
     ).fetch_one(&source_pool).await?;
 
-    let contract_ver: String =
-        sqlx::query_scalar("SELECT value FROM g360_meta WHERE key = 'contracto_version'")
-            .fetch_one(&source_pool)
-            .await
-            .unwrap_or(g360_db_ventas::db::schema::CONTRACTO_VERSION.to_string());
+    let contract_ver: String = sqlx::query_scalar(
+        "SELECT value FROM g360_meta WHERE key = 'contracto_version'"
+    ).fetch_one(&source_pool).await.unwrap_or(g360_db_ventas::db::schema::CONTRACTO_VERSION.to_string());
 
     let manifest = serde_json::json!({
         "version": contract_ver.parse::<i64>().unwrap_or(0),
@@ -188,22 +168,12 @@ async fn main() -> Result<()> {
     std::fs::write(&output_manifest, serde_json::to_string_pretty(&manifest)?)?;
 
     info!("Initial cartridge built successfully!");
-    info!(
-        "  DB:     {} ({:.1} MB)",
-        output_db,
-        std::fs::metadata(&output_db)
-            .map(|m| m.len() as f64 / 1024.0 / 1024.0)
-            .unwrap_or(0.0)
-    );
+    info!("  DB:     {} ({:.1} MB)", output_db,
+        std::fs::metadata(&output_db).map(|m| m.len() as f64 / 1024.0 / 1024.0).unwrap_or(0.0));
     info!("  Manifest: {}", output_manifest);
     info!("  SHA256: {}", sha256);
-    info!(
-        "  Rows: {}, Months: {}, Range: {} to {}",
-        total_rows,
-        mm.2,
-        rango.0.clone().unwrap_or_default(),
-        rango.1.clone().unwrap_or_default()
-    );
+    info!("  Rows: {}, Months: {}, Range: {} to {}", total_rows, mm.2,
+        rango.0.clone().unwrap_or_default(), rango.1.clone().unwrap_or_default());
 
     Ok(())
 }
