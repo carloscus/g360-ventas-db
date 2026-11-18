@@ -634,6 +634,38 @@ def generate(output_path):
     min_f = c.execute("SELECT MIN(fecha_orig) FROM ventas").fetchone()[0] or ""
     max_f = c.execute("SELECT MAX(fecha_orig) FROM ventas").fetchone()[0] or ""
     total_soles = c.execute("SELECT ROUND(SUM(soles),2) FROM ventas").fetchone()[0] or 0
+
+    # Construir manifiesto conforme al contrato v4 del consumidor.
+    dias_list = c.execute(
+        "SELECT dia, filas, soles, checksum FROM day_checksums ORDER BY dia"
+    ).fetchall()
+    dias_dict = {d: [int(f), float(s)] for d, f, s, _ in dias_list}
+
+    # data_quality: calcular desde la DB real (bug fijado en CONTRATO.md §2).
+    total_registros = total
+    invalid_dates = c.execute(
+        "SELECT COUNT(*) FROM ventas WHERE fecha_orig NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'"
+    ).fetchone()[0]
+    future_dates = c.execute(
+        "SELECT COUNT(*) FROM ventas WHERE fecha_orig > date('now')"
+    ).fetchone()[0]
+    empty_ids = c.execute(
+        "SELECT COUNT(*) FROM ventas WHERE id_cliente = '' OR id_articulo = ''"
+    ).fetchone()[0]
+    valid_records = total_registros - invalid_dates - future_dates - empty_ids
+    pct_valid = (valid_records / total_registros * 100.0) if total_registros > 0 else 0.0
+    if pct_valid > 99.0:
+        data_quality_status = "excellent"
+    elif pct_valid > 95.0:
+        data_quality_status = "good"
+    else:
+        data_quality_status = "needs_review"
+
+    precio_recalc = c.execute(
+        "SELECT COUNT(*) FROM ventas WHERE precio_unitario IS NULL OR precio_unitario = 0"
+    ).fetchone()[0]
+    precio_status = "ok" if precio_recalc == 0 else "needs_recalc"
+
     conn.close()
 
     with open(output_path, "rb") as f:
@@ -645,17 +677,46 @@ def generate(output_path):
         "dim_schema_version": "3",
         "normalizacion_version": "1",
         "format": "g360-ventas-cartucho-v2",
-        "tipo": "ejemplo",
+        "tipo": "semilla",
         "generado_en": datetime.now(timezone.utc).isoformat(),
         "generado_por": "generate_sample_cartucho.py/0.1.0",
         "rango": {"desde": min_f, "hasta": max_f},
         "sha256": sha256,
+        "db_size_bytes": os.path.getsize(output_path),
         "quick_check": {
             "ok": True,
             "filas": total,
             "soles": total_soles,
             "meses": meses,
         },
+        "data_quality": {
+            "status": data_quality_status,
+            "total_records": total_registros,
+            "valid_records": valid_records,
+            "invalid_records": invalid_dates + future_dates + empty_ids,
+            "invalid_reasons": {
+                "invalid_dates": invalid_dates,
+                "future_dates": future_dates,
+                "empty_ids": empty_ids,
+            },
+            "price_unitario_status": precio_status,
+            "price_units_recalc_needed": precio_recalc,
+        },
+        "attributes_applied": [
+            "id_pedido_normalized",
+            "mes_ref_from_fecha_orig",
+            "anio_mes_from_fecha_orig",
+            "future_date_filtered",
+            "linea_id_normalized",
+            "vendedor_id_normalized",
+            "cliente_id_normalized",
+            "precio_unitario_recalculated",
+        ],
+        "dias": dias_list,
+        "day_checksums": [
+            {d: {"filas": int(f), "soles": float(s), "checksum": c_val}}
+            for d, f, s, c_val in dias_list
+        ],
         "espejo_completo": True,
         "contenido": "ejemplo sintetico para desarrollo de apps cliente",
     }
