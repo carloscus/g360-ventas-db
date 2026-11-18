@@ -519,6 +519,18 @@ pub async fn export_canonical_snapshot(target: &std::path::Path, stats: Option<&
             "desde": rango_desde,
             "hasta": rango_hasta
         },
+        "db": {
+            "archivo": null,
+            "sha256": sha256,
+            "bytes": size,
+            "ventas_filas": total_rows,
+            "filas": total_rows,
+            "soles_total": checksums.iter().map(|(_, _, _, s)| s).sum::<f64>(),
+            "fecha_min": rango_desde,
+            "fecha_max": rango_hasta,
+            "incremental": false,
+            "rango_solicitado": null
+        },
         "allowed_lines": crate::config::effective_allowed_lines(),
         "retention_days": crate::config::load_config().supabase_retention_days_effective(),
         "sha256": sha256,
