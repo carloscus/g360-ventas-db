@@ -532,7 +532,7 @@ pub async fn export_canonical_snapshot(target: &std::path::Path, stats: Option<&
             "rango_solicitado": null
         },
         "allowed_lines": crate::config::effective_allowed_lines(),
-        "retention_days": crate::config::load_config().supabase_retention_days_effective(),
+        "supabase_retention_days": crate::config::load_config().supabase_retention_days_effective(),
         "sha256": sha256,
         "db_size_bytes": size,
         "quick_check": {
