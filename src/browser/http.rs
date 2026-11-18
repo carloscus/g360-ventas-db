@@ -269,6 +269,7 @@ impl CipsaHttp {
                             ok_all = false;
                             break;
                         }
+    // BDI: contar documentos BDI en este bucket (diagnostico sub-captura)
                         part_csvs.push(csv_p);
                     }
                     Err(e) => {
