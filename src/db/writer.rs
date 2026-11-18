@@ -404,6 +404,24 @@ pub async fn calculate_day_checksums(pool: &SqlitePool, timestamp: &str) -> Resu
 ///   4. Opcional: check_contract_version() para validar compatibilidad
 pub async fn export_canonical_snapshot(target: &std::path::Path, stats: Option<&crate::processor::parser::QualityStats>) -> Result<serde_json::Value> {
     let pool = init_pool().await?;
+
+    // Calcular QualityStats desde la DB si no se proporcionaron
+    let computed_stats = if stats.is_none() {
+        let total_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas").fetch_one(&pool).await.unwrap_or(0);
+        let invalid_dates: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE fecha_orig NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'").fetch_one(&pool).await.unwrap_or(0);
+        let future_dates: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE fecha_orig > date('now')").fetch_one(&pool).await.unwrap_or(0);
+        let empty_ids: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE id_cliente = '' OR id_articulo = ''").fetch_one(&pool).await.unwrap_or(0);
+        Some(crate::processor::parser::QualityStats {
+            total_rows: total_rows as u64,
+            invalid_dates: invalid_dates as u64,
+            future_dates: future_dates as u64,
+            empty_ids: empty_ids as u64,
+        })
+    } else {
+        None
+    };
+    let stats = stats.or(computed_stats.as_ref());
+
     let _ = ensure_dims_fresh(&pool).await;
     let _ = recalculate_missing_checksums(&pool).await;
     let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
