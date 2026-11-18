@@ -493,7 +493,7 @@ pub async fn export_canonical_snapshot(target: &std::path::Path, stats: Option<&
         "unknown".to_string()
     };
 
-    let attributes_applied: Vec<&str> = vec![
+    let mut attributes_applied: Vec<&str> = vec![
         "id_pedido_normalized",
         "mes_ref_from_fecha_orig",
         "anio_mes_from_fecha_orig",
@@ -501,8 +501,10 @@ pub async fn export_canonical_snapshot(target: &std::path::Path, stats: Option<&
         "linea_id_normalized",
         "vendedor_id_normalized",
         "cliente_id_normalized",
-        "precio_unitario_recalculated",
     ];
+    if precio_status == "ok" {
+        attributes_applied.push("precio_unitario_recalculated");
+    }
 
     let manifest = serde_json::json!({
         "version": contract_ver.parse::<i64>().unwrap_or(0),
