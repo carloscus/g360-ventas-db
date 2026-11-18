@@ -681,6 +681,18 @@ def generate(output_path):
         "generado_en": datetime.now(timezone.utc).isoformat(),
         "generado_por": "generate_sample_cartucho.py/0.1.0",
         "rango": {"desde": min_f, "hasta": max_f},
+        "db": {
+            "archivo": None,
+            "sha256": sha256,
+            "bytes": os.path.getsize(output_path),
+            "ventas_filas": total,
+            "filas": total,
+            "soles_total": total_soles,
+            "fecha_min": min_f,
+            "fecha_max": max_f,
+            "incremental": False,
+            "rango_solicitado": None,
+        },
         "sha256": sha256,
         "db_size_bytes": os.path.getsize(output_path),
         "quick_check": {
