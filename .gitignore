@@ -31,6 +31,7 @@ debug_output*.txt
 
 # Datos locales de la empresa (no versionar)
 data/raw/
+data/export/
 
 # Cache de Python
 __pycache__/
