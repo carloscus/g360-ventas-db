@@ -583,7 +583,7 @@ def generate(output_path):
         [
             ("contracto_version", "4", now),
             ("dim_schema_version", "3", now),
-            ("normalizacion_version", "1", now),
+            ("normalizacion_version", "2", now),
         ],
     )
 
@@ -675,7 +675,7 @@ def generate(output_path):
         "version": 4,
         "contracto_version": "4",
         "dim_schema_version": "3",
-        "normalizacion_version": "1",
+        "normalizacion_version": "2",
         "format": "g360-ventas-cartucho-v2",
         "tipo": "semilla",
         "generado_en": datetime.now(timezone.utc).isoformat(),
