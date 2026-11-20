@@ -366,16 +366,43 @@ impl CipsaSession {
         Ok(xls)
     }
 
+    /// Cuenta líneas de un CSV ya convertido. Se usa para la aserción de no-pérdida:
+    /// si el día fusionado tiene menos filas que la referencia sin split, hay sub-captura BDI.
+    fn contar_lineas_csv(path: &Path) -> std::io::Result<usize> {
+        use std::io::{BufRead, BufReader};
+        let n = BufReader::new(std::fs::File::open(path)?)
+            .lines()
+            .filter(|l| l.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false))
+            .count();
+        Ok(n.saturating_sub(1)) // descontar cabecera
+    }
+
     /// Para dias muy extensos (ej 19/01 12k filas) — split ADAPTATIVO por rango de Articulo:
-    /// prueba 2 partes -> 4 -> 8, con rangos lexicograficos que cubren IDs alfanumericos (011019..CE005)
+    /// prueba 2 partes -> 4 -> 8, con rangos lexicograficos que cubren IDs alfanumericos (011019..CE005).
+    ///
+    /// # Aserción de abort (P0)
+    /// La ruta de referencia es la descarga SIN split de artículo
+    /// (`captor.rs:230 download_xls`, `accion=D0` con `valueArtI=` y `valueArtF=` vacíos).
+    /// Si esa referencia falla, se aborta: nunca se degrada a éxito con 0 filas.
+    /// Tras el split, si el día fusionado tiene MENOS filas que la referencia,
+    /// se aborta para no ocultar pérdida de datos (sub-captura BDI).
     pub async fn download_day_split(&self, day: &MonthRange, output_dir: &Path) -> Result<PathBuf> {
-        // Intentar normal primero
-        if let Ok(p) = self.download(day, output_dir).await {
-            if std::fs::metadata(&p).map(|m| m.len()>5000).unwrap_or(false) {
-                return Ok(p);
-            }
+        // Referencia: descarga sin split de artículo. Es el conteo de verdad.
+        let referencia = match self.download(day, output_dir).await {
+            Ok(p) => p,
+            Err(e) => return Err(anyhow!("abort: descarga de referencia sin split falló para {}: {}", day.label, e)),
+        };
+        // Si la referencia es completa (archivo sustancial), no hay split: retorna directamente.
+        if std::fs::metadata(&referencia).map(|m| m.len() > 5000).unwrap_or(false) {
+            return Ok(referencia);
         }
         warn!("  Dia {} muy extenso — split Art adaptativo (2->4->8)", day.label);
+        // Conteo de filas de la referencia para la aserción de no-pérdida.
+        let referencia_csv = output_dir.join(format!("ventas_{}_referencia.csv", day.label));
+        let n_referencia = crate::processor::xls::xls_to_csv(&referencia, &referencia_csv)
+            .ok()
+            .and_then(|_| Self::contar_lineas_csv(&referencia_csv).ok())
+            .unwrap_or(0);
         // Rangos lexicograficos: ':' es el char siguiente a '9' en ASCII, cubre letras
         let schemes: Vec<Vec<(&str, &str)>> = vec![
             vec![("", "5ZZZZZ"), ("6", "ZZZZZ")],
@@ -424,6 +451,10 @@ impl CipsaSession {
                     if !xls_final.exists() {
                         let _ = std::fs::copy(&part_csvs[0].with_extension("xls"), &xls_final);
                     }
+                    // Aserción de no-pérdida: el split no puede entregar menos filas
+                    // que la descarga sin split (evita ocultar BDI perdido).
+                    let n_merged = Self::contar_lineas_csv(&merged_csv).unwrap_or(0);
+                    crate::capture::validar_no_perdida_split(&day.label, n_merged, n_referencia)?;
                     info!("  split {} partes OK para {}", buckets.len(), day.label);
                     return Ok(xls_final);
                 }

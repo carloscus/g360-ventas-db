@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
     for (i, csv) in files.iter().enumerate() {
         match g360_db_ventas::processor::parser::parse_export_csv_with_cross(csv, &pool).await {
             Ok(ventas) if !ventas.is_empty() => {
-                match g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, false).await {
+                match g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, g360_db_ventas::db::writer::ModoInsert::Mes, false).await {
                     Ok(n) => total += n,
                     Err(e) => error!("insert {}: {}", csv.display(), e),
                 }

@@ -63,7 +63,7 @@ async fn main() -> Result<()> {
         .fetch_one(&pool)
         .await
         .unwrap_or(0);
-    let n = g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, true).await?;
+    let n = g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, g360_db_ventas::db::writer::ModoInsert::Mes, true).await?;
     let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE mes_ref = ?")
         .bind(&month)
         .fetch_one(&pool)

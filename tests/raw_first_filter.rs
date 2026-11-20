@@ -99,7 +99,7 @@ async fn filtro_upload_sql_coincide_con_espejo_rust() {
     sqlx::query(CREATE_STATS_CACHE_SQL).execute(&pool).await.unwrap();
     sqlx::query(CREATE_AUDIT_TABLES_SQL).execute(&pool).await.unwrap();
 
-    g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, false)
+    g360_db_ventas::db::writer::insert_ventas(&pool, &ventas, g360_db_ventas::db::writer::ModoInsert::Mes, false)
         .await
         .expect("insert_ventas");
 

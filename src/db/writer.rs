@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use sqlx::SqlitePool;
 use std::sync::Mutex;
 use std::io::Read;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Columnas del INSERT de `ventas` (mismo orden que los binds de `insert_ventas`).
 const INSERT_COLS: &str = "id_articulo,original_sku,nom_articulo,id_linea,nom_linea,id_grupo,nom_grupo,id_tipo,nom_tipo,id_familia,nom_familia,id_cliente,doc_cliente,nom_cliente,tpo_doc,serie_doc,nro_doc,referencia,moneda,cantidad,cantidad_fae,soles,dolares,precio_unitario,anho,mes,fecha_orig,fecha_ref,fecha_venc,cod_sucursal,nom_sucursal,departamento,provincia,distrito,id_vendedor,nom_vendedor,id_pedido,ord_compra,file_source,mes_ref,tipo_operacion,factura_ref_serie,factura_ref_nro,folio_unico,id_ubigeo,canal_distribucion,nom_condicion_pago,estado_linea,division,fec_cargo,id_guia";
@@ -276,30 +276,96 @@ pub async fn check_contract_version(pool: &SqlitePool) -> Result<()> {
 
 // ─── Insert/Update ───────────────────────────────────────────────────────────
 
-pub async fn insert_ventas(pool: &SqlitePool, ventas: &[Venta], refresh_stats: bool) -> Result<usize> {
+/// Modo de insercion: se deriva del ORIGEN real de los datos, nunca de
+/// `len(mes_ref)`. Un lote diario borra solo el rango de fechas del lote;
+/// un lote mensual borra todo el mes_ref.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ModoInsert {
+    Dia,
+    Mes,
+}
+
+/// Dedup semántico por fila completa (4-tupla): `(folio_unico, id_articulo,
+/// cantidad, soles)`. `folio_unico` identifica el DOCUMENTO, no la fila: una
+/// factura legítima puede tener varias líneas con el mismo folio y mismo
+/// `id_articulo` pero distinto `cantidad`/`soles`. Conservamos la primera
+/// aparición de cada 4-tupla y descartamos el resto con log de advertencia,
+/// para no borrar datos válidos ni colapsar líneas legítimas en un solo bucket.
+fn dedup_por_fila(ventas: &[Venta]) -> Vec<Venta> {
+    let mut visto: std::collections::HashSet<(String, String, u64, u64)> =
+        std::collections::HashSet::new();
+    let mut out = Vec::with_capacity(ventas.len());
+    for v in ventas {
+        let clave = (
+            v.folio_unico.clone(),
+            v.id_articulo.clone(),
+            v.cantidad.to_bits(),
+            v.soles.to_bits(),
+        );
+        if visto.insert(clave.clone()) {
+            out.push(v.clone());
+        } else {
+            warn!(
+                "Dedup: descarta fila duplicada folio={} articulo={} cantidad={} soles={}",
+                v.folio_unico, v.id_articulo, v.cantidad, v.soles
+            );
+        }
+    }
+    out
+}
+
+pub async fn insert_ventas(
+    pool: &SqlitePool,
+    ventas: &[Venta],
+    modo: ModoInsert,
+    refresh_stats: bool,
+) -> Result<usize> {
+    // Dedup semántico por 4-tupla antes de cualquier escritura.
+    let ventas = dedup_por_fila(ventas);
     if ventas.is_empty() {
         return Ok(0);
     }
     let mut tx = pool.begin().await?;
-    if let Some(first) = ventas.first() {
-        let is_daily = first.mes_ref.len() == 10 && first.mes_ref.chars().filter(|c| *c == '-').count() == 2;
-        if is_daily {
-            let min_d = ventas.iter().map(|v| v.fecha_orig).min().unwrap_or(first.fecha_orig);
-            let max_d = ventas.iter().map(|v| v.fecha_orig).max().unwrap_or(first.fecha_orig);
-            sqlx::query("DELETE FROM ventas WHERE fecha_orig BETWEEN ? AND ?")
-                .bind(min_d.to_string()).bind(max_d.to_string())
-                .execute(&mut *tx).await?;
-        } else {
-            let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE mes_ref = ?")
-                .bind(&first.mes_ref).fetch_one(&mut *tx).await?;
+    // Modo deriva del origen real: día → DELETE por rango de fechas; mes → DELETE por mes_ref.
+    match modo {
+        ModoInsert::Dia => {
+            let min_d = ventas.iter().map(|v| v.fecha_orig).min().unwrap_or(ventas[0].fecha_orig);
+            let max_d = ventas.iter().map(|v| v.fecha_orig).max().unwrap_or(ventas[0].fecha_orig);
+            let existing: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM ventas WHERE fecha_orig BETWEEN ? AND ?",
+            )
+            .bind(min_d.to_string())
+            .bind(max_d.to_string())
+            .fetch_one(&mut *tx)
+            .await?;
             if existing > 1000 && (ventas.len() as f64) < (existing as f64) * 0.5 {
                 return Err(anyhow::anyhow!(
-                    "Guard de integridad: {} filas nuevas < 50% de {} existentes en '{}'. No se reemplaza el mes.",
+                    "Guard de integridad (dia): {} filas nuevas < 50% de {} existentes en el rango {}-{}. No se reemplaza.",
+                    ventas.len(), existing, min_d, max_d
+                ));
+            }
+            sqlx::query("DELETE FROM ventas WHERE fecha_orig BETWEEN ? AND ?")
+                .bind(min_d.to_string())
+                .bind(max_d.to_string())
+                .execute(&mut *tx)
+                .await?;
+        }
+        ModoInsert::Mes => {
+            let first = &ventas[0];
+            let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ventas WHERE mes_ref = ?")
+                .bind(&first.mes_ref)
+                .fetch_one(&mut *tx)
+                .await?;
+            if existing > 1000 && (ventas.len() as f64) < (existing as f64) * 0.5 {
+                return Err(anyhow::anyhow!(
+                    "Guard de integridad (mes): {} filas nuevas < 50% de {} existentes en '{}'. No se reemplaza el mes.",
                     ventas.len(), existing, first.mes_ref
                 ));
             }
             sqlx::query("DELETE FROM ventas WHERE mes_ref = ?")
-                .bind(&first.mes_ref).execute(&mut *tx).await?;
+                .bind(&first.mes_ref)
+                .execute(&mut *tx)
+                .await?;
         }
     }
     let mut n = 0usize;
@@ -327,7 +393,7 @@ pub async fn insert_ventas(pool: &SqlitePool, ventas: &[Venta], refresh_stats: b
         n += chunk.len();
     }
     tx.commit().await?;
-    info!("Inserted {} rows", n);
+    info!("Inserted {} rows (modo {:?})", n, modo);
     if refresh_stats {
         let _ = refresh_stats_cache(pool).await;
     }
@@ -402,6 +468,19 @@ pub async fn calculate_day_checksums(pool: &SqlitePool, timestamp: &str) -> Resu
 ///   2. Opcional: verificar SHA256 del .db contra el manifiesto
 ///   3. Abrir la DB -> init_pool() detectara versiones automaticamente
 ///   4. Opcional: check_contract_version() para validar compatibilidad
+/// Invariante del contrato v4: la suma de filas por día debe igualar el total
+/// de ventas. Se expone para poder verificarla con un test puro, sin abrir la
+/// DB de producción.
+pub fn validar_invariante_checksums(sum_dias: i64, total_db: i64) -> Result<()> {
+    if sum_dias != total_db {
+        return Err(anyhow::anyhow!(
+            "checksums inconsistentes: SUM(day_checksums.filas)={} != COUNT(ventas)={}; no se exporta cartucho",
+            sum_dias, total_db
+        ));
+    }
+    Ok(())
+}
+
 pub async fn export_canonical_snapshot(target: &std::path::Path, stats: Option<&crate::processor::parser::QualityStats>) -> Result<serde_json::Value> {
     let pool = init_pool().await?;
 
@@ -425,7 +504,17 @@ pub async fn export_canonical_snapshot(target: &std::path::Path, stats: Option<&
     let _ = ensure_dims_fresh(&pool).await;
     let _ = recalculate_missing_checksums(&pool).await;
     let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let _ = calculate_day_checksums(&pool, &ts).await;
+    calculate_day_checksums(&pool, &ts).await?;
+
+    // Invariante del contrato v4: la suma de filas por día debe igualar el
+    // COUNT(*) de ventas. Si no, el cartucho tendría checksums contradictorios
+    // (el defecto que invalidó el cartucho anterior). Se verifica ANTES del
+    // VACUUM INTO para no dejar un .db inconsistente ya escrito en disco.
+    let (sum_dias, total_db): (i64, i64) = sqlx::query_as(
+        "SELECT COALESCE((SELECT SUM(filas) FROM day_checksums), 0), \
+                (SELECT COUNT(*) FROM ventas)"
+    ).fetch_one(&pool).await?;
+    validar_invariante_checksums(sum_dias, total_db)?;
 
     let _ = sqlx::query("VACUUM INTO ?")
         .bind(target.to_string_lossy().to_string())

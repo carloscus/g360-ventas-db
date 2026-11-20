@@ -8,7 +8,7 @@ use tracing::{info, warn};
 
 use crate::browser::captor::MonthRange;
 use crate::config::{raw_dir, SLEEP_BETWEEN_MONTHS};
-use crate::db::writer::{init_pool, insert_ventas};
+use crate::db::writer::{init_pool, insert_ventas, ModoInsert};
 use crate::processor::parser::parse_export_csv_with_cross;
 use crate::capture_state::{CapturePhase, SharedProgress, now_secs};
 
@@ -24,15 +24,29 @@ pub static CAPTURE_ABORT_GLOBAL: std::sync::atomic::AtomicBool = std::sync::atom
 /// SQLite usa file-locking: si dos workers escriben al mismo tiempo, uno
 /// pierde el lock. Sin retry el mes se descarta silenciosamente.
 /// Con backoff exponencial (2s, 4s, 8s) el lock se libera y el insert entra.
+/// Aserción de no-pérdida del split por artículo, compartida por ambos
+/// transportes (Chrome y HTTP): la garantía no debe depender del transporte
+/// elegido en la configuración.
+pub fn validar_no_perdida_split(label: &str, n_merged: usize, n_referencia: usize) -> Result<()> {
+    if n_referencia > 0 && n_merged < n_referencia {
+        return Err(anyhow!(
+            "abort: split de {} entregó {} filas < referencia sin split {} (pérdida BDI)",
+            label, n_merged, n_referencia
+        ));
+    }
+    Ok(())
+}
+
 async fn insert_with_retry(
     pool: &sqlx::SqlitePool,
     ventas: &[crate::models::Venta],
+    modo: ModoInsert,
     label: &str,
 ) -> Result<usize> {
     const MAX_RETRY: u32 = 3;
     let mut intento = 0u32;
     loop {
-        match insert_ventas(pool, ventas, false).await {
+        match insert_ventas(pool, ventas, modo, false).await {
             Ok(n) => return Ok(n),
             Err(e) if e.to_string().contains("database is locked") && intento < MAX_RETRY => {
                 intento += 1;
@@ -321,6 +335,10 @@ async fn process_month(
     ok: &mut Vec<String>,
     fail: &mut Vec<(String, String)>,
 ) -> Result<bool> {
+    // Modo derivado del ORIGEN real: un rango de un solo día borra solo ese
+    // rango de fechas; un rango mensual borra todo el mes_ref. Derivarlo de
+    // len(mes_ref) sería incorrecto (siempre tiene 7 caracteres).
+    let modo = if m.start == m.end { ModoInsert::Dia } else { ModoInsert::Mes };
     let pct = (idx as f32 / total as f32) * 0.85;
     let t_item = Instant::now();
     let aborted = abort_flag.map(|f| f.load(Ordering::Relaxed)).unwrap_or(false)
@@ -374,14 +392,14 @@ async fn process_month(
                     }
                     if csv_path.exists() {
                         let pool = init_pool().await?;
-                        if let Ok(ventas) = parse_export_csv_with_cross(&csv_path, &pool).await {
-                            let n = insert_with_retry(&pool, &ventas, &m.label).await?;
-                            info!("  Normalizado: {} filas -> {}", m.label, n);
-                            {
-                                let mut s = shared.lock().unwrap();
-                                s.set_phase(CapturePhase::Parsing, format!("Insertadas {} filas", n));
-                                s.update_progress(pct + 0.03, format!("[{}/{}] {} filas insertadas", idx + 1, total, n));
-                            }
+                        let ventas = parse_export_csv_with_cross(&csv_path, &pool).await
+                            .context(format!("parseo fallido para {}", m.label))?;
+                        let n = insert_with_retry(&pool, &ventas, modo, &m.label).await?;
+                        info!("  Normalizado: {} filas -> {}", m.label, n);
+                        {
+                            let mut s = shared.lock().unwrap();
+                            s.set_phase(CapturePhase::Parsing, format!("Insertadas {} filas", n));
+                            s.update_progress(pct + 0.03, format!("[{}/{}] {} filas insertadas", idx + 1, total, n));
                         }
                     }
                     let _ = std::fs::remove_file(raw.join(format!("failed_{}.json", m.label)));
@@ -444,7 +462,7 @@ async fn process_month(
                 if merge_csvs(&parts0, &merged).is_ok() && merged.exists() && std::fs::metadata(&merged).map(|mm| mm.len()>1000).unwrap_or(false) {
                     let pool = init_pool().await?;
                     match parse_export_csv_with_cross(&merged, &pool).await {
-                        Ok(ventas) => match insert_with_retry(&pool, &ventas, &m.label).await {
+                        Ok(ventas) => match insert_with_retry(&pool, &ventas, modo, &m.label).await {
                             Ok(n) => {
                                 info!("  merge directo {} filas -> {}", m.label, n);
                                 recovered = true;
@@ -506,7 +524,7 @@ async fn process_month(
                             Ok(ventas) if !ventas.is_empty() => {
                                 match init_pool().await {
                                     Ok(pool) => {
-                                        match insert_with_retry(&pool, &ventas, &m.label).await {
+                                        match insert_with_retry(&pool, &ventas, modo, &m.label).await {
                                             Ok(n) => {
                                                 info!("  granular insert {} filas -> {}", m.label, n);
                                                 recovered = true;
@@ -617,16 +635,21 @@ async fn process_month(
                     let pool = init_pool().await?;
                     match parse_export_csv_with_cross(&merged, &pool).await {
                         Ok(ventas) => {
-                            match insert_with_retry(&pool, &ventas, &m.label).await {
-                                Ok(n) => info!("  dia-a-dia insert {} filas -> {}", m.label, n),
+                            match insert_with_retry(&pool, &ventas, modo, &m.label).await {
+                                Ok(n) => {
+                                    info!("  dia-a-dia insert {} filas -> {}", m.label, n);
+                                    let _ = std::fs::remove_file(raw.join(format!("failed_{}.json", m.label)));
+                                    recovered = true;
+                                    info!("  dia-a-dia OK {} ({}/{})", m.label, day_ok, day_total);
+                                }
                                 Err(e) => warn!("  dia-a-dia insert fail {}: {}", m.label, e),
                             }
                         }
+                        // Un parseo fallido NO es recuperación: se deja recovered=false
+                        // para caer al fallback HTML y, si todo falla, reportar el mes
+                        // como fallido en vez de darlo por éxito con datos parciales.
                         Err(e) => warn!("  dia-a-dia parse fail {}: {}", m.label, e),
                     }
-                    let _ = std::fs::remove_file(raw.join(format!("failed_{}.json", m.label)));
-                    recovered = true;
-                    info!("  dia-a-dia OK {} ({}/{})", m.label, day_ok, day_total);
                 }
             } else {
                 let mut faltantes: Vec<String> = Vec::new();
@@ -652,7 +675,7 @@ async fn process_month(
                             let pool = init_pool().await?;
                             match parse_export_csv_with_cross(&csv, &pool).await {
                                 Ok(ventas) if !ventas.is_empty() => {
-                                    match insert_with_retry(&pool, &ventas, &m.label).await {
+                                    match insert_with_retry(&pool, &ventas, modo, &m.label).await {
                                         Ok(n) => { info!("  HTML fallback insert {} filas -> {}", m.label, n); recovered = true; let _ = std::fs::remove_file(raw.join(format!("failed_{}.json", m.label))); },
                                         Err(e) => warn!("  HTML insert fail: {}", e),
                                     }

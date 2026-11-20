@@ -237,12 +237,33 @@ impl CipsaHttp {
 
     /// Split adaptativo por Articulo (2->4->8) sobre transporte HTTP.
     /// Misma estrategia que captor.rs pero sin navegacion Chrome.
+    /// Cuenta filas de un CSV convertido (descontando cabecera). Misma aserción
+    /// que el transporte Chrome: el split no puede entregar menos filas que la
+    /// referencia sin split, porque eso significaría BDI sub-capturado.
+    fn contar_lineas_csv(path: &Path) -> std::io::Result<usize> {
+        use std::io::{BufRead, BufReader};
+        let n = BufReader::new(std::fs::File::open(path)?)
+            .lines()
+            .filter(|l| l.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false))
+            .count();
+        Ok(n.saturating_sub(1))
+    }
+
     pub async fn download_day_split(&self, day: &MonthRange, output_dir: &Path) -> Result<std::path::PathBuf> {
-        if let Ok(p) = self.download(day, output_dir).await {
-            if std::fs::metadata(&p).map(|m| m.len() > 5000).unwrap_or(false) {
-                return Ok(p);
-            }
+        // Referencia: descarga SIN filtro de artículo. Es el conteo de verdad.
+        // Si falla, se aborta: nunca se degrada a éxito ocultando BDI perdido.
+        let referencia = match self.download(day, output_dir).await {
+            Ok(p) => p,
+            Err(e) => return Err(anyhow!("abort: descarga de referencia sin split falló para {}: {}", day.label, e)),
+        };
+        if std::fs::metadata(&referencia).map(|m| m.len() > 5000).unwrap_or(false) {
+            return Ok(referencia);
         }
+        let referencia_csv = output_dir.join(format!("ventas_{}_referencia.csv", day.label));
+        let n_referencia = crate::processor::xls::xls_to_csv(&referencia, &referencia_csv)
+            .ok()
+            .and_then(|_| Self::contar_lineas_csv(&referencia_csv).ok())
+            .unwrap_or(0);
         warn!("  Dia {} muy extenso — split Art adaptativo via HTTP", day.label);
         let schemes: Vec<Vec<(&str, &str)>> = vec![
             vec![("", "5ZZZZZ"), ("6", "ZZZZZ")],
@@ -292,6 +313,9 @@ impl CipsaHttp {
                     if !xls_final.exists() {
                         let _ = std::fs::copy(&part_csvs[0].with_extension("xls"), &xls_final);
                     }
+                    // Aserción de no-pérdida: menos filas que la referencia = BDI perdido.
+                    let n_merged = Self::contar_lineas_csv(&merged_csv).unwrap_or(0);
+                    crate::capture::validar_no_perdida_split(&day.label, n_merged, n_referencia)?;
                     info!("  split {} partes OK para {}", buckets.len(), day.label);
                     return Ok(xls_final);
                 }
